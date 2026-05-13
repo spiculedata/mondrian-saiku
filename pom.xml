@@ -6,7 +6,7 @@
   <groupId>pentaho</groupId>
   <artifactId>mondrian</artifactId>
   <version>4.8.1.0-SAIKU-jakarta</version>
-  <name>mondrian</name>
+<name>mondrian</name>
   <description>Mondrian OLAP engine (Saiku fork, modernized for Java 8+)</description>
   <url>https://github.com/OSBI/mondrian</url>
 
@@ -379,4 +379,32 @@ class MondrianServerVersion {
       </build>
     </profile>
   </profiles>
+
+  <!--
+    GitHub Packages publish target. The `id` MUST stay as "github" — it matches the
+    server-id that actions/setup-java@v4 wires up via GITHUB_TOKEN in publish.yml.
+
+    NOTE on dependency resolution: the build needs three artifact families that are
+    not on any public Maven repo:
+      - eigenbase-xom/resgen/properties → committed to lib/eigenbase/ and installed
+        into the CI runner's local M2 cache by the publish workflow.
+      - org.olap4j:olap4j[-xmla] (1.2.0-spicule-1) → built from spiculedata/olap4j
+        and installed by the publish workflow.
+      - org.olap4j:olap4j-xmlaserver (1.3.0-spicule-jakarta) → built from
+        spiculedata/olap4j-xmlaserver and installed by the publish workflow.
+    Downstream consumers of THIS published JAR will need to provide those same
+    artifacts in their own resolution path until follow-up workflows publish them.
+  -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages - mondrian-saiku</name>
+      <url>https://maven.pkg.github.com/spiculedata/mondrian-saiku</url>
+    </repository>
+    <snapshotRepository>
+      <id>github</id>
+      <name>GitHub Packages - mondrian-saiku (snapshots)</name>
+      <url>https://maven.pkg.github.com/spiculedata/mondrian-saiku</url>
+    </snapshotRepository>
+  </distributionManagement>
 </project>

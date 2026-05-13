@@ -1,0 +1,186 @@
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional Maven version override (only used for dry runs; must end in -SNAPSHOT to be re-publishable)"
+        required: false
+
+env:
+  OWNER: spiculedata
+  # Pin to commit SHAs once the olap4j source-of-truth repos are tag-stable.
+  OLAP4J_REF: master
+  OLAP4J_XMLASERVER_REF: master
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Deploy mondrian-saiku to GitHub Packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout mondrian-saiku
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          # Generates ~/.m2/settings.xml binding <id>github</id> to GITHUB_TOKEN.
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      # --------------------------------------------------------------------
+      # Install eigenbase JARs that ship in lib/eigenbase/. Public Pentaho /
+      # Hitachi Vantara repos have all gone behind auth or returned dead
+      # redirects (verified 2026-05-13 — 401 / 301-to-nowhere). The JARs are
+      # frozen at eigenbase-xom 1.3.1 / eigenbase-resgen 1.3.1 /
+      # eigenbase-properties 1.1.2 and tracked in git alongside their
+      # SHA256SUMS file for provenance.
+      # --------------------------------------------------------------------
+      - name: Verify eigenbase JAR checksums
+        run: |
+          set -euo pipefail
+          if [ -f lib/eigenbase/SHA256SUMS ]; then
+            (cd lib/eigenbase && shasum -a 256 -c SHA256SUMS)
+          else
+            echo "::warning::lib/eigenbase/SHA256SUMS not found — skipping checksum verification"
+          fi
+
+      - name: Install eigenbase JARs into local Maven repository
+        run: |
+          set -euo pipefail
+          mvn -B -ntp install:install-file \
+            -Dfile=lib/eigenbase/eigenbase-xom-1.3.1.jar \
+            -DgroupId=eigenbase -DartifactId=eigenbase-xom \
+            -Dversion=1.3.1 -Dpackaging=jar -DgeneratePom=true
+          mvn -B -ntp install:install-file \
+            -Dfile=lib/eigenbase/eigenbase-resgen-1.3.1.jar \
+            -DgroupId=eigenbase -DartifactId=eigenbase-resgen \
+            -Dversion=1.3.1 -Dpackaging=jar -DgeneratePom=true
+          mvn -B -ntp install:install-file \
+            -Dfile=lib/eigenbase/eigenbase-properties-1.1.2.jar \
+            -DgroupId=eigenbase -DartifactId=eigenbase-properties \
+            -Dversion=1.1.2 -Dpackaging=jar -DgeneratePom=true
+
+      # --------------------------------------------------------------------
+      # BLOCKER FIX: the Spicule-built olap4j artifacts are not published to
+      # any reachable Maven repo. We rebuild them from their Ant source
+      # trees and `install-file` into the runner's local ~/.m2 cache so
+      # Maven can resolve them when we deploy mondrian-saiku.
+      #
+      # Limitation: downstream consumers of the published mondrian-saiku
+      # JAR will hit the same resolution wall. Follow-up: publish olap4j to
+      # GitHub Packages as a separate workflow and add a <repositories>
+      # entry to pom.xml. Until then this gap MUST be called out in release
+      # notes.
+      # --------------------------------------------------------------------
+
+      - name: Checkout olap4j (Spicule fork) source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/olap4j
+          ref: ${{ env.OLAP4J_REF }}
+          path: olap4j-src
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build olap4j JARs (Ant)
+        working-directory: olap4j-src
+        # Adjust the target name (`jar`/`dist`/`all`) if the sibling repo uses a different one.
+        run: ant -noinput jar
+
+      - name: Install olap4j JARs into local Maven repository
+        working-directory: olap4j-src
+        run: |
+          set -euo pipefail
+          OLAP4J_JAR=$(ls dist/olap4j-*.jar target/olap4j-*.jar 2>/dev/null | grep -v xmla | head -n1 || true)
+          OLAP4J_XMLA_JAR=$(ls dist/olap4j-xmla-*.jar target/olap4j-xmla-*.jar 2>/dev/null | head -n1 || true)
+          if [ -z "$OLAP4J_JAR" ] || [ -z "$OLAP4J_XMLA_JAR" ]; then
+            echo "::error::Could not locate built olap4j JARs. Listing dist/ and target/:"
+            ls -la dist/ target/ 2>/dev/null || true
+            exit 1
+          fi
+          mvn -B -ntp install:install-file \
+            -Dfile="$OLAP4J_JAR" \
+            -DgroupId=org.olap4j -DartifactId=olap4j \
+            -Dversion=1.2.0-spicule-1 -Dpackaging=jar -DgeneratePom=true
+          mvn -B -ntp install:install-file \
+            -Dfile="$OLAP4J_XMLA_JAR" \
+            -DgroupId=org.olap4j -DartifactId=olap4j-xmla \
+            -Dversion=1.2.0-spicule-1 -Dpackaging=jar -DgeneratePom=true
+
+      # olap4j-xmlaserver lives in a separate source tree (the -jakarta
+      # suffix implies a Jakarta-namespaced fork distinct from olap4j proper).
+      # If the olap4j Ant build above actually produces this JAR too, delete
+      # this checkout/build/install trio and add a third install-file call
+      # to the previous step.
+      - name: Checkout olap4j-xmlaserver source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OWNER }}/olap4j-xmlaserver
+          ref: ${{ env.OLAP4J_XMLASERVER_REF }}
+          path: olap4j-xmlaserver-src
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build olap4j-xmlaserver JAR
+        working-directory: olap4j-xmlaserver-src
+        # If this project uses Maven instead of Ant, swap to:
+        #   mvn -B -ntp -DskipTests package
+        run: ant -noinput jar
+
+      - name: Install olap4j-xmlaserver JAR into local Maven repository
+        working-directory: olap4j-xmlaserver-src
+        run: |
+          set -euo pipefail
+          XMLASERVER_JAR=$(ls dist/olap4j-xmlaserver-*.jar target/olap4j-xmlaserver-*.jar 2>/dev/null | head -n1 || true)
+          if [ -z "$XMLASERVER_JAR" ]; then
+            echo "::error::Could not locate built olap4j-xmlaserver JAR. Listing dist/ and target/:"
+            ls -la dist/ target/ 2>/dev/null || true
+            exit 1
+          fi
+          mvn -B -ntp install:install-file \
+            -Dfile="$XMLASERVER_JAR" \
+            -DgroupId=org.olap4j -DartifactId=olap4j-xmlaserver \
+            -Dversion=1.3.0-spicule-jakarta -Dpackaging=jar -DgeneratePom=true
+
+      # --------------------------------------------------------------------
+      # Optional: rewrite the pom version when invoked via workflow_dispatch
+      # with a `version` input. Used only for SNAPSHOT dry runs — GitHub
+      # Packages disallows overwriting released versions.
+      # --------------------------------------------------------------------
+      - name: Apply version override (dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        run: mvn -B -ntp versions:set -DnewVersion="${{ inputs.version }}" -DgenerateBackupPoms=false
+
+      - name: Deploy to GitHub Packages
+        env:
+          # setup-java's generated settings.xml references ${env.GITHUB_TOKEN}.
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # -Dmaven.test.skip=true (not just -DskipTests) prevents test-scope
+        # dependency resolution, dodging the unpublished
+        # mondrian-data-foodmart-hsql:0.1 fixture entirely.
+        run: mvn -B -ntp -Dmaven.test.skip=true deploy
+
+      - name: Upload built JARs as workflow artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mondrian-saiku-jars
+          path: |
+            target/mondrian-*.jar
+          retention-days: 14
+          if-no-files-found: error
