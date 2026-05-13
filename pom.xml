@@ -8,7 +8,7 @@
   <version>4.8.1.0-SAIKU-jakarta</version>
   <name>mondrian</name>
   <description>Mondrian OLAP engine (Saiku fork, modernized for Java 8+)</description>
-  <url>https://github.com/OSBI/mondrian</url>
+  <url>https://github.com/spiculedata/mondrian-saiku</url>
 
   <licenses>
     <license>
@@ -418,4 +418,26 @@ class MondrianServerVersion {
       </build>
     </profile>
   </profiles>
+
+  <!--
+    GitHub Packages publish target. The `id` MUST stay as "github" — it matches
+    the server-id that actions/setup-java@v4 wires up via GITHUB_TOKEN in publish.yml.
+
+    Vendored deps (eigenbase-*, org.olap4j:olap4j[-xmla], org.olap4j:olap4j-xmlaserver)
+    resolve from lib/repo/ via the <repositories> block above. Downstream consumers
+    of this published JAR need their own resolution path for those artifacts until
+    a follow-up workflow publishes them to GitHub Packages.
+  -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages - mondrian-saiku</name>
+      <url>https://maven.pkg.github.com/spiculedata/mondrian-saiku</url>
+    </repository>
+    <snapshotRepository>
+      <id>github</id>
+      <name>GitHub Packages - mondrian-saiku (snapshots)</name>
+      <url>https://maven.pkg.github.com/spiculedata/mondrian-saiku</url>
+    </snapshotRepository>
+  </distributionManagement>
 </project>
