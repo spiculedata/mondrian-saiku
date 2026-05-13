@@ -10,6 +10,11 @@
 */
 package mondrian.rolap.agg;
 
+import mondrian.calcite.CalcitePlannerAdapters;
+import mondrian.calcite.CalcitePlannerCache;
+import mondrian.calcite.CalciteSqlPlanner;
+import mondrian.calcite.MondrianBackend;
+import mondrian.calcite.PlannerRequest;
 import mondrian.olap.MondrianException;
 import mondrian.olap.MondrianProperties;
 import mondrian.olap.Util;
@@ -61,6 +66,44 @@ public class SegmentLoader {
      */
     public SegmentLoader(SegmentCacheManager cacheMgr) {
         this.cacheMgr = cacheMgr;
+    }
+
+    private static final boolean CALCITE_PROFILE =
+        Boolean.getBoolean("harness.calcite.profile");
+
+    /**
+     * Dispatches to {@link CalcitePlannerCache} keyed on JDBC identity
+     * ({@code url, catalog, schema, user}) rather than on the
+     * {@link RolapStar}. Mondrian's per-query schema-cache flush churns
+     * the star; keying on the star invalidated a warm
+     * {@code CalciteMondrianSchema} on every query, forcing JDBC
+     * metadata reflection (~1.5 s on Postgres) per query. See
+     * {@code docs/reports/perf-investigation-y1.md} (Fix #1).
+     */
+    private static CalciteSqlPlanner plannerFor(RolapStar star) {
+        long t0 = CALCITE_PROFILE ? System.nanoTime() : 0L;
+        CalciteSqlPlanner planner =
+            CalcitePlannerCache.plannerFor(
+                star.getDataSource(), star.getSchema());
+        if (CALCITE_PROFILE) {
+            // We no longer distinguish hit/miss here — the cache probe is
+            // a quick DatabaseMetaData read and the planner build happens
+            // once per JVM per JDBC identity. Record total under the
+            // legacy bucket name for continuity with Y.1 reports.
+            mondrian.calcite.CalciteProfile.record(
+                "SegmentLoader.plannerFor", System.nanoTime() - t0);
+        }
+        return planner;
+    }
+
+    /**
+     * Test-only: drop the shared Calcite planner cache. Delegates to
+     * {@link CalcitePlannerCache#clear()}; the SegmentLoader-level cache
+     * no longer exists (keyed on {@code RolapStar}, it invalidated on
+     * every Mondrian schema flush and so never hit).
+     */
+    public static void clearCalcitePlannerCache() {
+        CalcitePlannerCache.clear();
     }
 
     /**
@@ -123,6 +166,38 @@ public class SegmentLoader {
                 }
             }
         }
+        // Under backend=calcite, translate the request on the submitter
+        // thread rather than the sqlExecutor worker. Two reasons, both
+        // load-bearing:
+        //   (a) The per-star CalciteSqlPlanner reflects JDBC metadata on
+        //       first touch — a one-shot ~tens-of-ms cost. Letting that
+        //       land on a worker creates a race where the "loser" of the
+        //       schema-init commits its ResultSet second instead of
+        //       first, flipping SqlCapture's seq assignment and tripping
+        //       LEGACY_DRIFT in the equivalence harness.
+        //   (b) More generally, Calcite's RelBuilder/unparse is heavier
+        //       than the legacy SQL generator. Any per-task overhead on
+        //       the worker perturbs thread interleaving; performing the
+        //       translation before submit() collapses worker runtime back
+        //       to "just JDBC", matching what legacy has always done.
+        //
+        // Task M (TupleFilter) exposed this by making a previously
+        // UnsupportedTranslation shape translatable, so two segment-load
+        // calls now race where before only one completed.
+        String precomputedCalciteSql = null;
+        if (MondrianBackend.current().isCalcite()
+            && !groupingSets.isEmpty())
+        {
+            List<Segment> segs = groupingSets.get(0).getSegments();
+            if (!segs.isEmpty()) {
+                RolapStar star = segs.get(0).aggMeasure.getStar();
+                PlannerRequest req =
+                    CalcitePlannerAdapters.fromSegmentLoad(
+                        new GroupingSetsList(groupingSets),
+                        compoundPredicateList);
+                precomputedCalciteSql = plannerFor(star).plan(req);
+            }
+        }
         try {
             segmentFutures.add(
                 cacheMgr.sqlExecutor.submit(
@@ -131,7 +206,8 @@ public class SegmentLoader {
                         this,
                         cellRequestCount,
                         groupingSets,
-                        compoundPredicateList)));
+                        compoundPredicateList,
+                        precomputedCalciteSql)));
         } catch (Exception e) {
             throw new MondrianException(e);
         }
@@ -145,19 +221,27 @@ public class SegmentLoader {
         private final int cellRequestCount;
         private final List<GroupingSet> groupingSets;
         private final List<StarPredicate> compoundPredicateList;
+        /** Pre-translated Calcite SQL, or {@code null} if backend=legacy.
+         *  Computed on the submitter thread in
+         *  {@link SegmentLoader#load} so the worker only runs JDBC.
+         *  See the long-form comment at the compute site for why this
+         *  matters for ordering. */
+        private final String precomputedCalciteSql;
 
         public SegmentLoadCommand(
             Locus locus,
             SegmentLoader segmentLoader,
             int cellRequestCount,
             List<GroupingSet> groupingSets,
-            List<StarPredicate> compoundPredicateList)
+            List<StarPredicate> compoundPredicateList,
+            String precomputedCalciteSql)
         {
             this.locus = locus;
             this.segmentLoader = segmentLoader;
             this.cellRequestCount = cellRequestCount;
             this.groupingSets = groupingSets;
             this.compoundPredicateList = compoundPredicateList;
+            this.precomputedCalciteSql = precomputedCalciteSql;
         }
 
         public Map<Segment, SegmentWithData> call() throws Exception {
@@ -166,7 +250,8 @@ public class SegmentLoader {
                 return segmentLoader.loadImpl(
                     cellRequestCount,
                     groupingSets,
-                    compoundPredicateList);
+                    compoundPredicateList,
+                    precomputedCalciteSql);
             } finally {
                 Locus.pop(locus);
             }
@@ -177,6 +262,16 @@ public class SegmentLoader {
         int cellRequestCount,
         List<GroupingSet> groupingSets,
         List<StarPredicate> compoundPredicateList)
+    {
+        return loadImpl(
+            cellRequestCount, groupingSets, compoundPredicateList, null);
+    }
+
+    protected Map<Segment, SegmentWithData> loadImpl(
+        int cellRequestCount,
+        List<GroupingSet> groupingSets,
+        List<StarPredicate> compoundPredicateList,
+        String precomputedCalciteSql)
     {
         SqlStatement stmt = null;
         GroupingSetsList groupingSetsList =
@@ -195,7 +290,8 @@ public class SegmentLoader {
             stmt = createExecuteSql(
                 cellRequestCount,
                 groupingSetsList,
-                compoundPredicateList);
+                compoundPredicateList,
+                precomputedCalciteSql);
 
             if (stmt == null) {
                 // Nothing to do. We're done here.
@@ -565,6 +661,19 @@ public class SegmentLoader {
         final GroupingSetsList groupingSetsList,
         List<StarPredicate> compoundPredicateList)
     {
+        return createExecuteSql(
+            cellRequestCount,
+            groupingSetsList,
+            compoundPredicateList,
+            null);
+    }
+
+    SqlStatement createExecuteSql(
+        int cellRequestCount,
+        final GroupingSetsList groupingSetsList,
+        List<StarPredicate> compoundPredicateList,
+        String precomputedCalciteSql)
+    {
         RolapStar star = groupingSetsList.getStar();
         Pair<String, List<SqlStatement.Type>> pair =
             AggregationManager.generateSql(
@@ -629,10 +738,39 @@ public class SegmentLoader {
                     }
             };
 
+        // Under backend=calcite, the Calcite path owns the SQL string
+        // end-to-end. UnsupportedTranslation is a hard failure that
+        // propagates to the caller: no fallback to legacy SqlQuery,
+        // because once worktree #4 deletes those classes there is no
+        // fallback to fall back to. The RolapUtil.executeQuery /
+        // SqlInterceptor seam below is unchanged: both backends feed the
+        // same JDBC call.
+        String sql = pair.left;
+        if (MondrianBackend.current().isCalcite()) {
+            String calciteSql;
+            if (precomputedCalciteSql != null) {
+                // Fast path: translation was done on the submitter
+                // thread in load() — see the acquisition-site comment.
+                calciteSql = precomputedCalciteSql;
+            } else {
+                PlannerRequest req =
+                    CalcitePlannerAdapters.fromSegmentLoad(
+                        groupingSetsList, compoundPredicateList);
+                calciteSql = plannerFor(star).plan(req);
+            }
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(
+                    "Calcite backend: segment-load translated.\n"
+                    + "  legacy: " + sql + "\n"
+                    + "  calcite: " + calciteSql);
+            }
+            sql = calciteSql;
+        }
+
         try {
             return RolapUtil.executeQuery(
                 star.getDataSource(),
-                pair.left,
+                sql,
                 pair.right,
                 0,
                 0,

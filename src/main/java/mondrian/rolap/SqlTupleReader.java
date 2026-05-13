@@ -14,6 +14,11 @@ package mondrian.rolap;
 import mondrian.calc.TupleList;
 import mondrian.calc.impl.ListTupleList;
 import mondrian.calc.impl.UnaryTupleList;
+import mondrian.calcite.CalcitePlannerAdapters;
+import mondrian.calcite.CalcitePlannerCache;
+import mondrian.calcite.CalciteSqlPlanner;
+import mondrian.calcite.MondrianBackend;
+import mondrian.calcite.PlannerRequest;
 import mondrian.olap.*;
 import mondrian.olap.fun.FunUtil;
 import mondrian.resource.MondrianResource;
@@ -79,6 +84,24 @@ import static mondrian.rolap.LevelColumnLayout.OrderKeySource.*;
 public class SqlTupleReader implements TupleReader {
     private static final Logger LOGGER =
         Logger.getLogger(SqlTupleReader.class);
+
+    /**
+     * Test-only: drop the shared Calcite planner cache. Delegates to
+     * {@link CalcitePlannerCache#clear()}. The per-DataSource cache was
+     * replaced by JDBC-identity keying (see
+     * {@code docs/reports/perf-investigation-y1.md} Fix #1) so the warm
+     * {@code CalciteMondrianSchema} survives {@code RolapStar} churn.
+     */
+    public static void clearCalcitePlannerCache() {
+        CalcitePlannerCache.clear();
+    }
+
+    private static CalciteSqlPlanner plannerFor(
+        DataSource dataSource, RolapSchema schema)
+    {
+        return CalcitePlannerCache.plannerFor(dataSource, schema);
+    }
+
     protected final TupleConstraint constraint;
     protected final List<Target> targets = new ArrayList<Target>();
     int maxRows = 0;
@@ -494,6 +517,42 @@ public class SqlTupleReader implements TupleReader {
                 String sql = pair.left;
                 List<SqlStatement.Type> types = pair.right;
                 assert sql != null && !sql.equals("");
+
+                // Under backend=calcite, the Calcite path owns the SQL
+                // string end-to-end. UnsupportedTranslation propagates to
+                // the caller — no fallback to the legacy SqlQuery-built
+                // string, because once worktree #4 deletes those classes
+                // there is no fallback. Translator coverage gaps surface as
+                // hard failures: that is the worktree-#2 shopping list.
+                if (MondrianBackend.current().isCalcite()) {
+                    List<RolapCubeLevel> readLevels =
+                        new ArrayList<RolapCubeLevel>(partialTargets.size());
+                    for (Target t : partialTargets) {
+                        readLevels.add(t.getLevel());
+                    }
+                    PlannerRequest req =
+                        CalcitePlannerAdapters.fromTupleRead(
+                            readLevels, constraint);
+                    RolapSchema schema =
+                        readLevels.isEmpty()
+                            ? null
+                            : readLevels.get(0).getHierarchy()
+                                .getRolapSchema();
+                    CalciteSqlPlanner planner =
+                        plannerFor(dataSource, schema);
+                    String calciteSql = planner.plan(req);
+                    if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                        System.err.println(
+                            "[calcite-ok tuple] " + calciteSql);
+                    }
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug(
+                            "Calcite backend: tuple-read translated.\n"
+                            + "  legacy:  " + sql + "\n"
+                            + "  calcite: " + calciteSql);
+                    }
+                    sql = calciteSql;
+                }
 
                 stmt = RolapUtil.executeQuery(
                     dataSource, sql, types, maxRows, 0,

@@ -13,13 +13,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
+import mondrian.calcite.CalciteSqlPlanner;
 import mondrian.rolap.sql.SqlInterceptor;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Three-gate pipeline that detects drift introduced by inserting a
@@ -27,9 +32,23 @@ import java.util.Objects;
  *
  * <p>Gates, in order:
  * <ol>
- *   <li><b>BASELINE_DRIFT:</b> classic Mondrian (no interceptor) produces a
- *       cell-set + per-execution SQL/checksum sequence that must match the
- *       recorded golden under {@code goldenDir}.</li>
+ *   <li><b>LEGACY_DRIFT:</b> classic Mondrian (no interceptor) produces a
+ *       cell-set + per-execution rowCount/checksum sequence that must match
+ *       the recorded golden under {@code goldenDir}. Hard gate — always
+ *       fires on mismatch.</li>
+ *   <li><b>SQL_DRIFT:</b> cell-set / rowCount / checksum all match the
+ *       golden but the SQL string emitted for one of the executions differs.
+ *       Soft gate — governed by {@code -Dharness.sqlCompare=MODE}:
+ *       <ul>
+ *         <li>{@code strict}   — SQL mismatch fails the test (legacy
+ *             behaviour, kept for regression on legacy backend).</li>
+ *         <li>{@code advisory} — <b>default.</b> SQL mismatch is surfaced
+ *             via {@link HarnessReporter} but the test still passes. Enables
+ *             Calcite's ANSI-join SQL to be validated against comma-join
+ *             legacy goldens on cell-set parity alone.</li>
+ *         <li>{@code off}      — SQL string is not compared at all.</li>
+ *       </ul>
+ *   </li>
  *   <li><b>CELL_SET_DRIFT:</b> with the interceptor installed, the MDX cell
  *       set must still equal Run A's.</li>
  *   <li><b>SQL_ROWSET_DRIFT:</b> pairing captured SQL executions by seq,
@@ -39,10 +58,103 @@ import java.util.Objects;
  * <p>The harness installs the interceptor via the {@code mondrian.sqlInterceptor}
  * system property — deliberately the production wiring — and restores the
  * prior value in a {@code finally} block.
+ *
+ * <p>A fifth gate, {@link FailureClass#PLAN_DRIFT}, is scaffolded via
+ * {@link #comparePlanSnapshot(String, String, Path)} but not yet wired into
+ * the pipeline — see TODO below.
  */
 public final class EquivalenceHarness {
 
     public static final String SYS_PROP = FoodMartCapture.INTERCEPTOR_SYS_PROP;
+
+    /**
+     * System-property key controlling the hardness of the SQL-string
+     * comparison in {@link #compareAgainstGolden}. See the class-level
+     * javadoc for mode semantics.
+     */
+    public static final String SQL_COMPARE_SYS_PROP = "harness.sqlCompare";
+
+    /**
+     * System-property key controlling the hardness of the plan-snapshot
+     * comparison (PLAN_DRIFT gate). Mirrors {@link #SQL_COMPARE_SYS_PROP}
+     * but governs {@code golden-plans/<name>.plan} drift detection. Same
+     * {@link SqlCompareMode} tri-state applies: {@code strict} fails,
+     * {@code advisory} (default) records via {@link HarnessReporter},
+     * {@code off} skips the comparison entirely.
+     */
+    public static final String PLAN_COMPARE_SYS_PROP = "harness.planCompare";
+
+    /**
+     * System-property flag ({@code -Dharness.replan=true}) that rebaselines
+     * plan-snapshot goldens. When set, any query whose plan golden file is
+     * missing has one written from the captured plan text; queries with
+     * an existing golden are OVERWRITTEN with the current capture (i.e.
+     * full rebase). Off by default — the harness only reads goldens.
+     */
+    public static final String REPLAN_SYS_PROP = "harness.replan";
+
+    /** Separator used when concatenating per-execution plans into a
+     *  single {@code <query>.plan} file. Mirrors the unified-diff hunk
+     *  marker so reviewers recognise the multi-plan layout immediately. */
+    public static final String PLAN_SNAPSHOT_SEPARATOR = "\n---\n";
+
+    /** See {@link EquivalenceHarness} class-level javadoc. */
+    public enum SqlCompareMode {
+        /** SQL mismatch tripped as a hard failure (legacy behaviour). */
+        STRICT,
+        /** SQL mismatch recorded via HarnessReporter but test still passes. */
+        ADVISORY,
+        /** SQL string is not compared. */
+        OFF
+    }
+
+    /**
+     * Reads {@link #SQL_COMPARE_SYS_PROP}; defaults to {@link SqlCompareMode#ADVISORY}.
+     * Unknown values fall back to {@code ADVISORY} — conservative for the
+     * rewrite transition, where the worst outcome is a drift going unlogged.
+     */
+    public static SqlCompareMode sqlCompareMode() {
+        return parseCompareMode(System.getProperty(SQL_COMPARE_SYS_PROP));
+    }
+
+    /**
+     * Reads {@link #PLAN_COMPARE_SYS_PROP}; defaults to
+     * {@link SqlCompareMode#ADVISORY}. Same parse rules as
+     * {@link #sqlCompareMode()}.
+     */
+    public static SqlCompareMode planCompareMode() {
+        return parseCompareMode(System.getProperty(PLAN_COMPARE_SYS_PROP));
+    }
+
+    /** Returns true when {@code -Dharness.replan=true} — triggers
+     *  rewrite of {@code golden-plans/<name>.plan} from the captured
+     *  plan text. */
+    public static boolean replanRequested() {
+        return Boolean.parseBoolean(System.getProperty(REPLAN_SYS_PROP));
+    }
+
+    private static SqlCompareMode parseCompareMode(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            return SqlCompareMode.ADVISORY;
+        }
+        String v = raw.trim().toLowerCase();
+        if ("strict".equals(v)) {
+            return SqlCompareMode.STRICT;
+        }
+        if ("off".equals(v) || "none".equals(v) || "false".equals(v)) {
+            return SqlCompareMode.OFF;
+        }
+        return SqlCompareMode.ADVISORY;
+    }
+
+    /**
+     * Default location of plan-snapshot goldens. The directory exists (a
+     * {@code .gitkeep} placeholder is committed) but is empty in worktree #1;
+     * the snapshot comparator is therefore a no-op for every query until
+     * worktree #2 starts populating {@code <name>.plan} files.
+     */
+    public static final Path DEFAULT_GOLDEN_PLANS_DIR =
+        Paths.get("src/test/resources/calcite-harness/golden-plans");
 
     private final Path goldenDir;
     private final ObjectMapper mapper;
@@ -61,24 +173,82 @@ public final class EquivalenceHarness {
         Objects.requireNonNull(interceptorClass, "interceptorClass");
 
         // --- Run A: classic Mondrian, no interceptor ---
-        FoodMartCapture.CapturedRun runA =
-            FoodMartCapture.executeCold(mdx, null);
+        // Plan-snapshot capture wraps the whole Run A. Under
+        // backend=calcite every SqlTupleReader / SegmentLoader /
+        // SqlStatisticsProvider call site pushes through
+        // CalciteSqlPlanner.plan(), which appends the captured
+        // RelOptUtil.toString to the thread-local sink. No-op when the
+        // backend is LEGACY (no planner.plan() calls happen).
+        CalciteSqlPlanner.beginCapture();
+        FoodMartCapture.CapturedRun runA;
+        List<String> capturedPlans;
+        try {
+            runA = FoodMartCapture.executeCold(mdx, null);
+        } finally {
+            capturedPlans = CalciteSqlPlanner.endCapture();
+        }
 
-        // --- Gate 1: BASELINE_DRIFT ---
+        // --- Gate 1: LEGACY_DRIFT ---
         Path goldenFile = goldenDir.resolve(mdx.name + ".json");
         if (!Files.exists(goldenFile)) {
             return new HarnessResult(
-                FailureClass.BASELINE_DRIFT,
+                FailureClass.LEGACY_DRIFT,
                 "golden not found: " + goldenFile,
                 runA.cellSet, runA.executions, null, null);
         }
         JsonNode golden = mapper.readTree(goldenFile.toFile());
-        String baselineDetail = compareAgainstGolden(golden, runA);
-        if (baselineDetail != null) {
+        HarnessResult.Comparison cmp = compareAgainstGolden(golden, runA);
+        if (cmp.failureClass != null) {
             return new HarnessResult(
-                FailureClass.BASELINE_DRIFT,
-                baselineDetail,
+                cmp.failureClass,
+                cmp.detail,
                 runA.cellSet, runA.executions, null, null);
+        }
+        if (cmp.sqlDriftDetail != null) {
+            // Advisory SQL drift — record and proceed.
+            HarnessReporter.record(
+                mdx.name,
+                new HarnessResult(
+                    FailureClass.SQL_DRIFT,
+                    cmp.sqlDriftDetail,
+                    runA.cellSet, runA.executions, null, null));
+        }
+
+        // --- Plan-snapshot gate (advisory by default) ---
+        // If Calcite produced any plans during Run A, either rebase the
+        // golden (-Dharness.replan=true) or compare against it. Absent
+        // golden + no replan = silently skip (first-run convenience).
+        if (!capturedPlans.isEmpty()) {
+            String planText = joinPlans(capturedPlans);
+            Path planFile = DEFAULT_GOLDEN_PLANS_DIR.resolve(
+                mdx.name + ".plan");
+            if (replanRequested()) {
+                writePlanGolden(planFile, planText);
+            } else {
+                Optional<String> planDrift = comparePlanSnapshot(
+                    mdx.name, planText, DEFAULT_GOLDEN_PLANS_DIR);
+                if (planDrift.isPresent()) {
+                    switch (planCompareMode()) {
+                    case STRICT:
+                        return new HarnessResult(
+                            FailureClass.PLAN_DRIFT,
+                            planDrift.get(),
+                            runA.cellSet, runA.executions, null, null);
+                    case ADVISORY:
+                        HarnessReporter.record(
+                            mdx.name,
+                            new HarnessResult(
+                                FailureClass.PLAN_DRIFT,
+                                planDrift.get(),
+                                runA.cellSet, runA.executions, null, null));
+                        break;
+                    case OFF:
+                    default:
+                        // drop
+                        break;
+                    }
+                }
+            }
         }
 
         // --- Run B: interceptor installed via system property ---
@@ -134,50 +304,192 @@ public final class EquivalenceHarness {
     }
 
     /**
-     * Returns {@code null} if runA matches the golden; otherwise a human-
-     * readable description of the first mismatch.
+     * Pure-text plan-snapshot comparator for the upcoming PLAN_DRIFT gate.
+     *
+     * <p>Resolves {@code <baseDir>/<queryName>.plan}. If the file is absent
+     * (the worktree-#1 default for every query) the method returns
+     * {@link Optional#empty()} — i.e. "no drift, harness silent". If
+     * present, both the on-disk plan and {@code planText} are stripped of
+     * trailing whitespace and compared verbatim. On mismatch the returned
+     * Optional carries a one-line diff summary suitable for the
+     * {@link HarnessResult#detail} field.
+     *
+     * <p>{@code baseDir} is a parameter (not hard-coded to
+     * {@link #DEFAULT_GOLDEN_PLANS_DIR}) so unit tests can point at a
+     * scratch dir without writing into {@code src/test/resources}.
      */
-    private static String compareAgainstGolden(
+    public static Optional<String> comparePlanSnapshot(
+        String queryName,
+        String planText,
+        Path baseDir)
+        throws IOException
+    {
+        Objects.requireNonNull(queryName, "queryName");
+        Objects.requireNonNull(planText, "planText");
+        Objects.requireNonNull(baseDir, "baseDir");
+        Path planFile = baseDir.resolve(queryName + ".plan");
+        if (!Files.exists(planFile)) {
+            return Optional.empty();
+        }
+        String onDisk = new String(
+            Files.readAllBytes(planFile), StandardCharsets.UTF_8);
+        String left = stripTrailingWhitespace(onDisk);
+        String right = stripTrailingWhitespace(planText);
+        if (left.equals(right)) {
+            return Optional.empty();
+        }
+        return Optional.of(
+            "plan snapshot differs for " + queryName
+            + " (file=" + planFile + ")"
+            + "\n--- golden ---\n" + left
+            + "\n--- captured ---\n" + right);
+    }
+
+    /** Joins captured plan snapshots into a single reviewable document
+     *  using {@link #PLAN_SNAPSHOT_SEPARATOR}. Single-plan queries produce
+     *  the plan verbatim (no leading/trailing separators). */
+    static String joinPlans(List<String> plans) {
+        if (plans.isEmpty()) {
+            return "";
+        }
+        if (plans.size() == 1) {
+            return plans.get(0);
+        }
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < plans.size(); i++) {
+            if (i > 0) {
+                b.append(PLAN_SNAPSHOT_SEPARATOR);
+            }
+            b.append(plans.get(i));
+        }
+        return b.toString();
+    }
+
+    /** Writes {@code planText} to {@code planFile}, creating parent dirs
+     *  as needed. Used only under {@code -Dharness.replan=true}. */
+    private static void writePlanGolden(Path planFile, String planText)
+        throws IOException
+    {
+        Path parent = planFile.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        Files.write(planFile, planText.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String stripTrailingWhitespace(String s) {
+        int end = s.length();
+        while (end > 0) {
+            char c = s.charAt(end - 1);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                end--;
+            } else {
+                break;
+            }
+        }
+        return s.substring(0, end);
+    }
+
+    /**
+     * Two-stage golden comparator:
+     * <ol>
+     *   <li>Cell-set / sqlExecutions count / per-execution seq+rowCount+
+     *       checksum match. Any mismatch is {@link FailureClass#LEGACY_DRIFT}
+     *       and fails the harness.</li>
+     *   <li>Per-execution SQL-string match, gated on
+     *       {@link #sqlCompareMode()}. {@code STRICT} → hard fail as
+     *       {@link FailureClass#SQL_DRIFT}; {@code ADVISORY} → returned as
+     *       {@link HarnessResult.Comparison#sqlDriftDetail} for the caller
+     *       to log via {@link HarnessReporter}; {@code OFF} → not compared.</li>
+     * </ol>
+     */
+    private static HarnessResult.Comparison compareAgainstGolden(
         JsonNode golden,
         FoodMartCapture.CapturedRun run)
     {
+        // --- Stage 1: cell-set parity ---
         String goldenCellSet = golden.path("cellSet").asText();
         if (!Objects.equals(goldenCellSet, run.cellSet)) {
-            return "cellSet differs from golden\n--- golden ---\n"
-                + goldenCellSet
-                + "\n--- runA ---\n" + run.cellSet;
+            return HarnessResult.Comparison.fail(
+                FailureClass.LEGACY_DRIFT,
+                "cellSet differs from golden\n--- golden ---\n"
+                    + goldenCellSet
+                    + "\n--- runA ---\n" + run.cellSet);
         }
         JsonNode execs = golden.path("sqlExecutions");
         if (!execs.isArray()) {
-            return "golden missing sqlExecutions array";
+            return HarnessResult.Comparison.fail(
+                FailureClass.LEGACY_DRIFT,
+                "golden missing sqlExecutions array");
         }
         if (execs.size() != run.executions.size()) {
-            return "sqlExecutions count differs: golden="
-                + execs.size() + " runA=" + run.executions.size();
+            return HarnessResult.Comparison.fail(
+                FailureClass.LEGACY_DRIFT,
+                "sqlExecutions count differs: golden="
+                    + execs.size() + " runA=" + run.executions.size());
         }
+        // Stage 1 continued: seq / rowCount / checksum — these are cell-set-
+        // level signals (row shape, content hash) and remain hard gates.
+        // Also collect first SQL mismatch for stage 2.
+        int sqlMismatchIndex = -1;
+        String sqlMismatchDetail = null;
         for (int i = 0; i < execs.size(); i++) {
             JsonNode ge = execs.get(i);
             CapturedExecution ae = run.executions.get(i);
             int gSeq = ge.path("seq").asInt(-1);
-            String gSql = ge.path("sql").asText();
             int gRowCount = ge.path("rowCount").asInt(-1);
             String gChecksum = ge.path("checksum").asText();
             if (gSeq != ae.seq
-                || !Objects.equals(gSql, ae.sql)
                 || gRowCount != ae.rowCount
                 || !Objects.equals(gChecksum, ae.checksum))
             {
-                return "sqlExecution[" + i + "] differs\n"
-                    + "  golden seq=" + gSeq
-                    + " rowCount=" + gRowCount
-                    + " checksum=" + gChecksum
-                    + "\n  runA  seq=" + ae.seq
-                    + " rowCount=" + ae.rowCount
-                    + " checksum=" + ae.checksum
-                    + "\n  golden sql=" + gSql
-                    + "\n  runA  sql=" + ae.sql;
+                return HarnessResult.Comparison.fail(
+                    FailureClass.LEGACY_DRIFT,
+                    "sqlExecution[" + i + "] differs (cell-set signals)\n"
+                        + "  golden seq=" + gSeq
+                        + " rowCount=" + gRowCount
+                        + " checksum=" + gChecksum
+                        + "\n  runA  seq=" + ae.seq
+                        + " rowCount=" + ae.rowCount
+                        + " checksum=" + ae.checksum);
+            }
+            if (sqlMismatchIndex < 0) {
+                String gSql = ge.path("sql").asText();
+                if (!Objects.equals(gSql, ae.sql)) {
+                    sqlMismatchIndex = i;
+                    sqlMismatchDetail =
+                        "sqlExecution[" + i + "] SQL string differs\n"
+                            + "  golden sql=" + gSql
+                            + "\n  runA  sql=" + ae.sql;
+                }
             }
         }
-        return null;
+
+        // --- Stage 2: SQL-string parity (gated) ---
+        if (sqlMismatchIndex < 0) {
+            return HarnessResult.Comparison.pass();
+        }
+        switch (sqlCompareMode()) {
+        case STRICT:
+            return HarnessResult.Comparison.fail(
+                FailureClass.SQL_DRIFT, sqlMismatchDetail);
+        case OFF:
+            return HarnessResult.Comparison.pass();
+        case ADVISORY:
+        default:
+            return HarnessResult.Comparison.advisorySqlDrift(sqlMismatchDetail);
+        }
+    }
+
+    /**
+     * Package-private test hook for {@link HarnessSqlDriftTest}. Kept
+     * deliberately narrow — just delegates to the private comparator so
+     * tests don't need MDX round-trips to exercise the mode machinery.
+     */
+    static HarnessResult.Comparison compareAgainstGoldenForTest(
+        JsonNode golden,
+        FoodMartCapture.CapturedRun run)
+    {
+        return compareAgainstGolden(golden, run);
     }
 }
