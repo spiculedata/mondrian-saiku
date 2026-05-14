@@ -10,6 +10,8 @@
 package mondrian.calcite;
 
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlDialectFactoryImpl;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.log4j.Logger;
@@ -26,12 +28,24 @@ import javax.sql.DataSource;
  * {@link SqlDialect} instances configured for SQL emission compatible with
  * Mondrian's FoodMart fixture.
  *
- * <p>Worktree #1 supports HSQLDB only. The returned dialect is a subclass
- * of {@link HsqldbSqlDialect} that forces double-quoting of all identifiers
- * — the FoodMart HSQLDB fixture is populated via Mondrian's legacy
- * {@code SqlQuery} builder, which also quotes every identifier, so the
- * physical tables are stored in case-sensitive (delimited) form. Without
- * quoting, HSQLDB case-folds the identifier to UPPER and fails to resolve.
+ * <p>Resolution order:
+ * <ol>
+ *   <li>Hand-curated entries for HSQLDB and PostgreSQL — these get special
+ *       dialect subclasses that the legacy code paths assumed (HSQLDB needs
+ *       forced quoting because the FoodMart fixture is populated via
+ *       Mondrian's legacy SqlQuery builder, which quotes every identifier;
+ *       Postgres uses Calcite's stock {@code PostgresqlSqlDialect.DEFAULT}).
+ *   <li>Calcite's built-in {@link SqlDialectFactoryImpl}, which auto-resolves
+ *       MySQL, Oracle, MS SQL Server, BigQuery, Snowflake, Redshift,
+ *       ClickHouse, DB2, Vertica, Hive, Spark, Derby, H2, DuckDB, and more.
+ *       The auto-detected dialect is wrapped to force quoting on every
+ *       identifier — case-folding databases (Oracle, HSQLDB, DB2 → UPPER;
+ *       Postgres, MySQL → LOWER) would otherwise case-mangle the FoodMart
+ *       fixture's lowercase table names.
+ *   <li>Truly unknown products (Calcite returns {@code AnsiSqlDialect} as its
+ *       "I don't know" sentinel) → {@code null}, signalling per-datasource
+ *       fallback to the legacy Mondrian SQL builder.
+ * </ol>
  */
 public final class CalciteDialectMap {
     private static final Logger LOGGER =
@@ -68,12 +82,24 @@ public final class CalciteDialectMap {
             DatabaseMetaData md = conn.getMetaData();
             String product = md.getDatabaseProductName();
             SqlDialect dialect = forProductNameOrNull(product);
+            if (dialect == null) {
+                // Fall through to Calcite's built-in dialect factory so we
+                // don't have to hand-curate every database. The factory
+                // returns AnsiSqlDialect as its "I don't know" sentinel.
+                SqlDialect autoDetected =
+                    SqlDialectFactoryImpl.INSTANCE.create(md);
+                if (autoDetected != null
+                    && !(autoDetected instanceof AnsiSqlDialect))
+                {
+                    dialect = forceQuoting(autoDetected);
+                }
+            }
             if (dialect == null && WARNED_PRODUCTS.add(product)) {
                 LOGGER.warn(
                     "No Calcite SqlDialect mapping for JDBC product '"
-                    + product + "' — falling back to the legacy Mondrian "
-                    + "backend for this datasource. Supported Calcite "
-                    + "dialects: HSQLDB, PostgreSQL.");
+                    + product + "' (neither hand-curated nor recognised by "
+                    + "Calcite's SqlDialectFactoryImpl) — falling back to "
+                    + "the legacy Mondrian backend for this datasource.");
             }
             return dialect;
         } catch (SQLException e) {
@@ -81,6 +107,39 @@ public final class CalciteDialectMap {
                 "CalciteDialectMap.forDataSource: failed to read "
                 + "DatabaseMetaData.getDatabaseProductName()", e);
         }
+    }
+
+    /**
+     * Wraps a Calcite-auto-detected dialect in a thin subclass that forces
+     * quoting on every identifier. The FoodMart fixture uses lowercase
+     * delimited table names; case-folding databases (Oracle, HSQLDB, DB2)
+     * would otherwise look for UPPER-CASE versions and fail. Quoted
+     * identifiers preserve case on every database, matching what Mondrian's
+     * legacy {@code SqlQuery} builder has always done.
+     *
+     * <p>{@link SqlDialect#getContext()} is not public in Calcite 1.41, so
+     * we synthesize a fresh {@link SqlDialect.Context} from
+     * {@link SqlDialect#EMPTY_CONTEXT}, copying over the database product
+     * and the few introspectable properties from {@code base} that
+     * downstream Calcite code may check. Class-level overrides on {@code base}
+     * (custom function unparse, dialect-specific pagination syntax, etc.) are
+     * <em>not</em> inherited — for FoodMart SELECT/GROUP BY/WHERE/JOIN that
+     * is sufficient. Add a hand-curated entry in {@link #forProductNameOrNull}
+     * above for any database that needs richer dialect-specific unparse.
+     */
+    private static SqlDialect forceQuoting(SqlDialect base) {
+        SqlDialect.Context ctx = SqlDialect.EMPTY_CONTEXT
+            .withDatabaseProduct(base.getDatabaseProduct())
+            .withNullCollation(base.getNullCollation())
+            .withConformance(base.getConformance())
+            .withIdentifierQuoteString("\"")
+            .withCaseSensitive(true);
+        return new SqlDialect(ctx) {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
     }
 
     /**
@@ -94,9 +153,11 @@ public final class CalciteDialectMap {
         SqlDialect dialect = forProductNameOrNull(product);
         if (dialect == null) {
             throw new IllegalArgumentException(
-                "No Calcite SqlDialect mapping for JDBC product '" + product
-                + "'. Supported: HSQLDB, PostgreSQL. Extend "
-                + "CalciteDialectMap to add more.");
+                "No hand-curated Calcite SqlDialect mapping for JDBC product '"
+                + product + "'. The hand-curated table covers HSQLDB and "
+                + "PostgreSQL; for any other product call forDataSource(ds) "
+                + "instead — it delegates to Calcite's SqlDialectFactoryImpl "
+                + "for auto-detection.");
         }
         return dialect;
     }
