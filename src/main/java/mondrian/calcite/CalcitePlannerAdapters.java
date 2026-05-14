@@ -1559,6 +1559,56 @@ public final class CalcitePlannerAdapters {
         String tableAlias = t.tableAlias;
         RolapAttribute attribute = t.attribute;
 
+        // 0) Ancestor-level key columns (root → target, excluding target
+        //    itself). Mondrian's SqlTupleReader expects the column layout
+        //    to start with every ancestor level's keys so it can construct
+        //    the parent member context — without these, getLevelMembers()
+        //    of a non-root level explodes with
+        //      AssertionError: types [null, ...] cardinality != column count N
+        //    against the Calcite-generated SELECT (which previously only
+        //    projected the target level's own keys).
+        //    Mirrors the root-down walk in
+        //    translateDescendantsConstraintTupleRead. Flat hierarchies have
+        //    every level's keys on tableAlias; snowflakes would need
+        //    per-ancestor joins (deferred — throw UnsupportedTranslation so
+        //    the caller falls back to legacy SQL).
+        java.util.List<? extends RolapCubeLevel> hierarchyLevels =
+            t.level.getHierarchy().getLevelList();
+        for (int i = 0; i < t.level.getDepth(); i++) {
+            RolapCubeLevel anc = hierarchyLevels.get(i);
+            if (anc.isAll()) {
+                continue;
+            }
+            RolapAttribute ancAttr = anc.getAttribute();
+            for (RolapSchema.PhysColumn akc : ancAttr.getKeyList()) {
+                if (akc.relation == null
+                    || !tableAlias.equals(akc.relation.getAlias()))
+                {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: ancestor level "
+                        + anc.getUniqueName()
+                        + " key column lives on "
+                        + (akc.relation == null
+                            ? "null"
+                            : akc.relation.getAlias())
+                        + " but target dim table is " + tableAlias
+                        + " (snowflake ancestor projection not yet "
+                        + "supported)");
+                }
+                PlannerRequest.Column akp =
+                    asProjection(akc, tableAlias, "ancestor-key");
+                if (seen.add(tableAlias + "." + akp.name)) {
+                    b.addProjection(akp);
+                    // Note: no addOrderBy here. Step 1's keyList loop is the
+                    // authoritative ORDER BY emitter — for composite-key dims
+                    // (Product Category) it already projects+orders by the
+                    // ancestor cols, so doubling that here would duplicate
+                    // ORDER BY entries (caught by
+                    // TupleReadCompositeKeyProjectionTest).
+                }
+            }
+        }
+
         // 1) Key columns (full list, parent-most to leaf-most — composite
         // keys emit every key column, and every one contributes to the
         // ORDER BY so cell-set key ordering matches legacy).
