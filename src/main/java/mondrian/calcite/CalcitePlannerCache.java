@@ -13,9 +13,11 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import javax.sql.DataSource;
+import org.apache.calcite.sql.SqlDialect;
 
 /**
  * Process-wide cache of {@link CalciteSqlPlanner} instances keyed on JDBC
@@ -41,6 +43,16 @@ public final class CalcitePlannerCache {
 
     private static final ConcurrentMap<Key, CalciteSqlPlanner> CACHE =
         new ConcurrentHashMap<>();
+
+    /**
+     * JDBC identities whose product has no Calcite dialect mapping. Callers
+     * are expected to fall back to the legacy SQL builder for these.
+     * Caching here means the {@link DatabaseMetaData#getDatabaseProductName()}
+     * probe runs at most once per identity even when the lookup miss path is
+     * the steady state.
+     */
+    private static final Set<Key> UNSUPPORTED =
+        ConcurrentHashMap.newKeySet();
 
     private CalcitePlannerCache() {
         // utility
@@ -72,8 +84,22 @@ public final class CalcitePlannerCache {
         mondrian.rolap.RolapSchema rolapSchema)
     {
         Key key = Key.from(ds);
-        CalciteSqlPlanner planner = CACHE.computeIfAbsent(
-            key, k -> build(ds, rolapSchema));
+        if (UNSUPPORTED.contains(key)) {
+            return null;
+        }
+        CalciteSqlPlanner planner = CACHE.get(key);
+        if (planner == null) {
+            SqlDialect dialect = CalciteDialectMap.forDataSource(ds);
+            if (dialect == null) {
+                UNSUPPORTED.add(key);
+                return null;
+            }
+            // Race-tolerant: putIfAbsent picks a winner if two threads
+            // hit this branch simultaneously for the same key.
+            CalciteSqlPlanner built = build(ds, rolapSchema, dialect);
+            CalciteSqlPlanner prior = CACHE.putIfAbsent(key, built);
+            planner = prior != null ? prior : built;
+        }
         // Late-bind the registry if the first caller didn't have a
         // RolapSchema (e.g. SqlStatisticsProvider's cardinality probe
         // fires before any tuple-read or segment-load). Otherwise
@@ -106,12 +132,13 @@ public final class CalcitePlannerCache {
 
     private static CalciteSqlPlanner build(
         DataSource ds,
-        mondrian.rolap.RolapSchema rolapSchema)
+        mondrian.rolap.RolapSchema rolapSchema,
+        SqlDialect dialect)
     {
         CalciteMondrianSchema schema =
             new CalciteMondrianSchema(ds, "mondrian");
         CalciteSqlPlanner planner = new CalciteSqlPlanner(
-            schema, CalciteDialectMap.forDataSource(ds));
+            schema, dialect);
         if (rolapSchema != null) {
             try {
                 planner.attachMvRegistry(
@@ -124,9 +151,10 @@ public final class CalcitePlannerCache {
         return planner;
     }
 
-    /** Test seam: drop every cached planner. */
+    /** Test seam: drop every cached planner and unsupported-key entry. */
     public static void clear() {
         CACHE.clear();
+        UNSUPPORTED.clear();
     }
 
     /** Test seam: how many planners are currently cached. */

@@ -530,9 +530,6 @@ public class SqlTupleReader implements TupleReader {
                     for (Target t : partialTargets) {
                         readLevels.add(t.getLevel());
                     }
-                    PlannerRequest req =
-                        CalcitePlannerAdapters.fromTupleRead(
-                            readLevels, constraint);
                     RolapSchema schema =
                         readLevels.isEmpty()
                             ? null
@@ -540,18 +537,25 @@ public class SqlTupleReader implements TupleReader {
                                 .getRolapSchema();
                     CalciteSqlPlanner planner =
                         plannerFor(dataSource, schema);
-                    String calciteSql = planner.plan(req);
-                    if (Boolean.getBoolean("mondrian.calcite.trace")) {
-                        System.err.println(
-                            "[calcite-ok tuple] " + calciteSql);
+                    if (planner != null) {
+                        PlannerRequest req =
+                            CalcitePlannerAdapters.fromTupleRead(
+                                readLevels, constraint);
+                        String calciteSql = planner.plan(req);
+                        if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                            System.err.println(
+                                "[calcite-ok tuple] " + calciteSql);
+                        }
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug(
+                                "Calcite backend: tuple-read translated.\n"
+                                + "  legacy:  " + sql + "\n"
+                                + "  calcite: " + calciteSql);
+                        }
+                        sql = calciteSql;
                     }
-                    if (LOGGER.isDebugEnabled()) {
-                        LOGGER.debug(
-                            "Calcite backend: tuple-read translated.\n"
-                            + "  legacy:  " + sql + "\n"
-                            + "  calcite: " + calciteSql);
-                    }
-                    sql = calciteSql;
+                    // planner == null => dialect not in Calcite map; fall
+                    // back to the legacy sql string built above.
                 }
 
                 stmt = RolapUtil.executeQuery(
