@@ -538,21 +538,48 @@ public class SqlTupleReader implements TupleReader {
                     CalciteSqlPlanner planner =
                         plannerFor(dataSource, schema);
                     if (planner != null) {
-                        PlannerRequest req =
-                            CalcitePlannerAdapters.fromTupleRead(
-                                readLevels, constraint);
-                        String calciteSql = planner.plan(req);
-                        if (Boolean.getBoolean("mondrian.calcite.trace")) {
-                            System.err.println(
-                                "[calcite-ok tuple] " + calciteSql);
+                        // Calcite translator coverage gaps used to surface
+                        // as hard 500s to the user. For production
+                        // robustness, any failure from the Calcite path
+                        // falls back to the legacy SQL string already built
+                        // above. UnsupportedTranslation is the explicit
+                        // fallback signal; the broader RuntimeException
+                        // catch also covers Calcite-internal errors like
+                        // IllegalArgumentException from RelBuilder.field
+                        // on a snowflake mid-chain join.
+                        try {
+                            PlannerRequest req =
+                                CalcitePlannerAdapters.fromTupleRead(
+                                    readLevels, constraint);
+                            String calciteSql = planner.plan(req);
+                            if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                                System.err.println(
+                                    "[calcite-ok tuple] " + calciteSql);
+                            }
+                            if (LOGGER.isDebugEnabled()) {
+                                LOGGER.debug(
+                                    "Calcite backend: tuple-read translated.\n"
+                                    + "  legacy:  " + sql + "\n"
+                                    + "  calcite: " + calciteSql);
+                            }
+                            sql = calciteSql;
+                        } catch (mondrian.calcite.UnsupportedTranslation
+                                 | RuntimeException ex) {
+                            if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                                System.err.println(
+                                    "[calcite-fallback tuple] "
+                                    + ex.getClass().getSimpleName()
+                                    + ": " + ex.getMessage());
+                            }
+                            if (LOGGER.isDebugEnabled()) {
+                                LOGGER.debug(
+                                    "Calcite backend: tuple-read fallback "
+                                    + "to legacy SQL ("
+                                    + ex.getClass().getSimpleName()
+                                    + "): " + ex.getMessage());
+                            }
+                            // sql is already the legacy string built above.
                         }
-                        if (LOGGER.isDebugEnabled()) {
-                            LOGGER.debug(
-                                "Calcite backend: tuple-read translated.\n"
-                                + "  legacy:  " + sql + "\n"
-                                + "  calcite: " + calciteSql);
-                        }
-                        sql = calciteSql;
                     }
                     // planner == null => dialect not in Calcite map; fall
                     // back to the legacy sql string built above.
