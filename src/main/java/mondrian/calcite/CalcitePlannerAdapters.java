@@ -1377,22 +1377,6 @@ public final class CalcitePlannerAdapters {
         // = "product_class"."product_class_id").
         List<PlannerRequest.Join> dimChain =
             computeTupleReadDimChain(level, table);
-        // Snowflake mid-chain tuple-reads (e.g. [Product].[Product Class] —
-        // fact → product → product_class) still crash in build() at
-        // RelBuilder.field(...) because the dim-table scan-then-join plan
-        // doesn't preserve the FK column lookup correctly: the LHS frame
-        // ends up empty when the planner reaches the second-hop join's
-        // factKey resolution. Falling back to legacy SQL is correct for
-        // these — Mondrian's SqlMemberSource handles the snowflake chain
-        // natively. Flat hierarchies (Store, Time, Customer) skip this
-        // guard and stay on the Calcite path.
-        if (!dimChain.isEmpty()) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: snowflake dim chain (" + dimChain.size()
-                + " mid-chain hop" + (dimChain.size() == 1 ? "" : "s")
-                + ") not yet supported for level "
-                + level.getUniqueName() + "; falling back to legacy SQL");
-        }
         return new TargetShape(level, attribute, table, dimChain);
     }
 
