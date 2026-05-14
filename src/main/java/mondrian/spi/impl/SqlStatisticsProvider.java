@@ -148,21 +148,25 @@ public class SqlStatisticsProvider implements StatisticsProvider {
         // can't handle, that's a hard-fail bug to surface, not a silent
         // downgrade.
         if (MondrianBackend.current().isCalcite()) {
-            PlannerRequest req =
-                CalcitePlannerAdapters.fromCardinalityProbe(
-                    schema, table, column);
             CalciteSqlPlanner planner = plannerFor(dataSource);
-            String calciteSql = planner.plan(req);
-            if (Boolean.getBoolean("mondrian.calcite.trace")) {
-                System.err.println("[calcite-ok-probe] " + calciteSql);
+            if (planner != null) {
+                PlannerRequest req =
+                    CalcitePlannerAdapters.fromCardinalityProbe(
+                        schema, table, column);
+                String calciteSql = planner.plan(req);
+                if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                    System.err.println("[calcite-ok-probe] " + calciteSql);
+                }
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug(
+                        "Calcite backend: cardinality probe translated.\n"
+                        + "  legacy: " + sql + "\n"
+                        + "  calcite: " + calciteSql);
+                }
+                sql = calciteSql;
             }
-            if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug(
-                    "Calcite backend: cardinality probe translated.\n"
-                    + "  legacy: " + sql + "\n"
-                    + "  calcite: " + calciteSql);
-            }
-            sql = calciteSql;
+            // planner == null => CalciteDialectMap returned no mapping for
+            // this datasource; fall through to the legacy probe SQL.
         }
         SqlStatement stmt =
             RolapUtil.executeQuery(

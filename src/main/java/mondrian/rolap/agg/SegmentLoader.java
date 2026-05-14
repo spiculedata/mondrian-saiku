@@ -191,11 +191,17 @@ public class SegmentLoader {
             List<Segment> segs = groupingSets.get(0).getSegments();
             if (!segs.isEmpty()) {
                 RolapStar star = segs.get(0).aggMeasure.getStar();
-                PlannerRequest req =
-                    CalcitePlannerAdapters.fromSegmentLoad(
-                        new GroupingSetsList(groupingSets),
-                        compoundPredicateList);
-                precomputedCalciteSql = plannerFor(star).plan(req);
+                CalciteSqlPlanner planner = plannerFor(star);
+                if (planner != null) {
+                    PlannerRequest req =
+                        CalcitePlannerAdapters.fromSegmentLoad(
+                            new GroupingSetsList(groupingSets),
+                            compoundPredicateList);
+                    precomputedCalciteSql = planner.plan(req);
+                }
+                // planner == null => dialect not in Calcite map; leave
+                // precomputedCalciteSql null and the worker will fall back
+                // to the legacy SQL string below.
             }
         }
         try {
@@ -747,24 +753,32 @@ public class SegmentLoader {
         // same JDBC call.
         String sql = pair.left;
         if (MondrianBackend.current().isCalcite()) {
-            String calciteSql;
+            String calciteSql = null;
             if (precomputedCalciteSql != null) {
                 // Fast path: translation was done on the submitter
                 // thread in load() — see the acquisition-site comment.
                 calciteSql = precomputedCalciteSql;
             } else {
-                PlannerRequest req =
-                    CalcitePlannerAdapters.fromSegmentLoad(
-                        groupingSetsList, compoundPredicateList);
-                calciteSql = plannerFor(star).plan(req);
+                CalciteSqlPlanner planner = plannerFor(star);
+                if (planner != null) {
+                    PlannerRequest req =
+                        CalcitePlannerAdapters.fromSegmentLoad(
+                            groupingSetsList, compoundPredicateList);
+                    calciteSql = planner.plan(req);
+                }
             }
-            if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug(
-                    "Calcite backend: segment-load translated.\n"
-                    + "  legacy: " + sql + "\n"
-                    + "  calcite: " + calciteSql);
+            if (calciteSql != null) {
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug(
+                        "Calcite backend: segment-load translated.\n"
+                        + "  legacy: " + sql + "\n"
+                        + "  calcite: " + calciteSql);
+                }
+                sql = calciteSql;
             }
-            sql = calciteSql;
+            // calciteSql == null => dialect not in Calcite map for this
+            // datasource; fall back to the legacy sql string already in
+            // `sql` from pair.left.
         }
 
         try {
