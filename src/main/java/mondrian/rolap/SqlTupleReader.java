@@ -563,8 +563,7 @@ public class SqlTupleReader implements TupleReader {
                                     + "  calcite: " + calciteSql);
                             }
                             sql = calciteSql;
-                        } catch (mondrian.calcite.UnsupportedTranslation
-                                 | RuntimeException ex) {
+                        } catch (RuntimeException ex) {
                             if (Boolean.getBoolean("mondrian.calcite.trace")) {
                                 System.err.println(
                                     "[calcite-fallback tuple] "
