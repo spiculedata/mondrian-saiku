@@ -227,7 +227,32 @@ public class SqlTupleReader implements TupleReader {
             if (getCurrMember() != null) {
                 setCurrMember(member);
             } else {
-                for (int i = 0; i <= levelDepth; i++) {
+                try {
+                    member = readLevelsForRow(stmt);
+                } catch (NullPointerException npe) {
+                    // saiku-fork guard: SqlMemberSource/SqlTupleReader have many
+                    // unguarded `accessors.get(ord).get()` sites. When the SQL
+                    // builder mishandles a column ordinal (snowflake dim with a
+                    // sibling-hierarchy slicer is the known trigger — saiku#787)
+                    // the map lookup returns null and the whole query dies. Skip
+                    // the bad row instead of poisoning the result.
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug(
+                            "Skipping row in SqlTupleReader.Target("
+                            + level.getUniqueName() + "): missing accessor ("
+                            + npe.getMessage() + ") (saiku-fork guard)");
+                    }
+                    return;
+                }
+            }
+            getList().add(member);
+        }
+
+        private RolapMember readLevelsForRow(SqlStatement stmt)
+            throws SQLException
+        {
+            RolapMember member = null;
+            for (int i = 0; i <= levelDepth; i++) {
                     RolapCubeLevel childLevel = levels[i];
                     final LevelColumnLayout<Integer> layout =
                         columnLayout.levelLayoutMap.get(childLevel);
@@ -389,9 +414,8 @@ public class SqlTupleReader implements TupleReader {
                         }
                     }
                 }
-                setCurrMember(member);
-            }
-            getList().add(member);
+            setCurrMember(member);
+            return member;
         }
 
         public void setColumnLayout(ColumnLayout columnLayout) {

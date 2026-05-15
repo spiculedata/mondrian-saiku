@@ -193,17 +193,24 @@ public class SegmentLoader {
                 RolapStar star = segs.get(0).aggMeasure.getStar();
                 CalciteSqlPlanner planner = plannerFor(star);
                 if (planner != null) {
-                    PlannerRequest req =
-                        CalcitePlannerAdapters.fromSegmentLoad(
-                            new GroupingSetsList(groupingSets),
-                            compoundPredicateList);
+                    // Wrap BOTH fromSegmentLoad (PlannerRequest builder)
+                    // and planner.plan in the fallback try. Some measure
+                    // shapes — notably CASE-expression measures like
+                    // Foodmart's "Promotion Sales" — make fromSegmentLoad
+                    // throw UnsupportedTranslation directly, before we even
+                    // reach planner.plan (saiku#805).
                     try {
+                        PlannerRequest req =
+                            CalcitePlannerAdapters.fromSegmentLoad(
+                                new GroupingSetsList(groupingSets),
+                                compoundPredicateList);
                         precomputedCalciteSql = planner.plan(req);
                     } catch (RuntimeException ex) {
                         // Calcite translator gap (e.g. snowflake mid-chain
-                        // scan returning empty fields). Leave
-                        // precomputedCalciteSql null so the worker falls
-                        // back to the legacy SQL string in pair.left.
+                        // scan returning empty fields, or a measure with a
+                        // CASE expression). Leave precomputedCalciteSql
+                        // null so the worker falls back to the legacy SQL
+                        // string in pair.left.
                         if (LOGGER.isDebugEnabled()) {
                             LOGGER.debug(
                                 "Calcite segment-load translation failed; "
@@ -775,14 +782,19 @@ public class SegmentLoader {
             } else {
                 CalciteSqlPlanner planner = plannerFor(star);
                 if (planner != null) {
-                    PlannerRequest req =
-                        CalcitePlannerAdapters.fromSegmentLoad(
-                            groupingSetsList, compoundPredicateList);
+                    // Wrap BOTH fromSegmentLoad (PlannerRequest builder) and
+                    // planner.plan in the fallback try. CASE-expression
+                    // measures (saiku#805) throw UnsupportedTranslation
+                    // from fromSegmentLoad itself, before reaching plan().
                     try {
+                        PlannerRequest req =
+                            CalcitePlannerAdapters.fromSegmentLoad(
+                                groupingSetsList, compoundPredicateList);
                         calciteSql = planner.plan(req);
                     } catch (RuntimeException ex) {
-                        // Translator gap — leave calciteSql null so the
-                        // legacy `sql` from pair.left is used below.
+                        // Translator gap (snowflake mid-chain, CASE-expr
+                        // measure) — leave calciteSql null so the legacy
+                        // `sql` from pair.left is used below.
                         if (LOGGER.isDebugEnabled()) {
                             LOGGER.debug(
                                 "Calcite segment-load translation failed "
