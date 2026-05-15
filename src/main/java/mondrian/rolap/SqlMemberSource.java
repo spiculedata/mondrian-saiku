@@ -23,6 +23,7 @@ import mondrian.server.monitor.SqlStatementEvent;
 import mondrian.spi.Dialect;
 import mondrian.util.*;
 
+import org.apache.log4j.Logger;
 import org.eigenbase.util.property.StringProperty;
 
 import java.sql.*;
@@ -42,6 +43,8 @@ import static mondrian.rolap.LevelColumnLayout.OrderKeySource.*;
 public class SqlMemberSource
     implements MemberReader, SqlTupleReader.MemberBuilder
 {
+    private static final Logger LOGGER =
+        Logger.getLogger(SqlMemberSource.class);
     private final SqlConstraintFactory sqlConstraintFactory =
         SqlConstraintFactory.instance();
     protected final RolapCubeHierarchy hierarchy;
@@ -1244,10 +1247,25 @@ public class SqlMemberSource
         for (RolapProperty property
             : childLevel.attribute.getExplicitProperties())
         {
-            member.setProperty(
-                property,
-                getPooledValue(
-                    accessors.get(layout.getPropertyKeys().get(j++)).get()));
+            // saiku-fork guard: when a query mixes multiple levels of the
+            // same dimension with a measure, the SQL builder occasionally
+            // registers a property column under an ordinal the accessor
+            // map doesn't carry — we'd dereference null and crash the
+            // whole query. Skip the missing property and log so the bug
+            // stays visible while the result still completes.
+            Object propertyKey = layout.getPropertyKeys().get(j++);
+            SqlStatement.Accessor acc = accessors.get(propertyKey);
+            if (acc == null) {
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug(
+                        "Skipping property '" + property.getName()
+                        + "' on level '" + childLevel.getName()
+                        + "' — no accessor for key " + propertyKey
+                        + " (saiku-fork guard)");
+                }
+                continue;
+            }
+            member.setProperty(property, getPooledValue(acc.get()));
         }
         cache.putMember(member.getLevel(), key, member);
         return member;
