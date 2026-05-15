@@ -153,17 +153,35 @@ public class SqlStatisticsProvider implements StatisticsProvider {
                 PlannerRequest req =
                     CalcitePlannerAdapters.fromCardinalityProbe(
                         schema, table, column);
-                String calciteSql = planner.plan(req);
-                if (Boolean.getBoolean("mondrian.calcite.trace")) {
-                    System.err.println("[calcite-ok-probe] " + calciteSql);
+                try {
+                    String calciteSql = planner.plan(req);
+                    if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                        System.err.println("[calcite-ok-probe] " + calciteSql);
+                    }
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug(
+                            "Calcite backend: cardinality probe translated.\n"
+                            + "  legacy: " + sql + "\n"
+                            + "  calcite: " + calciteSql);
+                    }
+                    sql = calciteSql;
+                } catch (IllegalArgumentException e) {
+                    // saiku#781: Calcite's RelBuilder.field throws this when a
+                    // star-schema cardinality probe asks for a column the
+                    // inferred input rowType doesn't carry (Warehouse cube's
+                    // Country level is the known trigger — "field
+                    // [warehouse_country] not found; input fields are: []").
+                    // Cardinality is an optimizer hint; a hard-fail at this
+                    // depth kills the whole user query. Fall back to the
+                    // legacy probe SQL — the planner-side bug is still worth
+                    // fixing but it shouldn't sink the request.
+                    if (LOGGER.isDebugEnabled()) {
+                        LOGGER.debug(
+                            "Calcite cardinality probe failed for "
+                            + table + "." + column + " — falling back to "
+                            + "legacy SQL: " + e.getMessage());
+                    }
                 }
-                if (LOGGER.isDebugEnabled()) {
-                    LOGGER.debug(
-                        "Calcite backend: cardinality probe translated.\n"
-                        + "  legacy: " + sql + "\n"
-                        + "  calcite: " + calciteSql);
-                }
-                sql = calciteSql;
             }
             // planner == null => CalciteDialectMap returned no mapping for
             // this datasource; fall through to the legacy probe SQL.
