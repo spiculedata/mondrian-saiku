@@ -486,10 +486,15 @@ public class SolveOrderScopeIsolationTest extends FoodMartTestCase {
             + "{[Time].[Time].[Total1]}\n"
             + "{[Time].[Time].[1997].[Q1]}\n"
             + "{[Time].[Time].[1997].[Q2]}\n"
-            + "Row #0: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            // MONDRIAN-1294: post-fix, Aggregate({...}) over a calc-measure
+            // falls back to Sum instead of throwing, so the calc-time-member
+            // rows now produce a numeric ratio rolled up across Q1+Q2 rather
+            // than #ERR. Total picks up ratio1's format; Total1 picks its own
+            // (higher solve-order) format.
+            + "Row #0: 6.14\n"
             + "Row #0: 128,901\n"
             + "Row #0: 41,956\n"
-            + "Row #1: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            + "Row #1: 6\n"
             + "Row #1: 128,901\n"
             + "Row #1: 41,956\n"
             + "Row #2: 3.07\n"
@@ -576,10 +581,13 @@ public class SolveOrderScopeIsolationTest extends FoodMartTestCase {
             + "{[Time].[Time].[Total1]}\n"
             + "{[Time].[Time].[1997].[Q1]}\n"
             + "{[Time].[Time].[1997].[Q2]}\n"
-            + "Row #0: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            // MONDRIAN-1294: see testAggregateMemberEvalAfterOtherMembersAbsolute.
+            // ratio1 has no FORMAT_STRING here so the rolled-up value rounds
+            // to integer display via the default integer formatter.
+            + "Row #0: 6\n"
             + "Row #0: 128,901\n"
             + "Row #0: 41,956\n"
-            + "Row #1: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            + "Row #1: 6\n"
             + "Row #1: 128,901\n"
             + "Row #1: 41,956\n"
             + "Row #2: 3\n"
@@ -665,7 +673,10 @@ public class SolveOrderScopeIsolationTest extends FoodMartTestCase {
             + "{[Time].[Time].[Total]}\n"
             + "{[Time].[Time].[1997].[Q1]}\n"
             + "{[Time].[Time].[1997].[Q2]}\n"
-            + "Row #0: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            // MONDRIAN-1294: see testAggregateMemberEvalAfterOtherMembersAbsolute.
+            // StrToMember-resolved aggregate over the calc ratio1 now produces
+            // a numeric Sum-rollup instead of #ERR.
+            + "Row #0: 6.14\n"
             + "Row #0: 128,901\n"
             + "Row #0: 41,956\n"
             + "Row #1: 3.07\n"

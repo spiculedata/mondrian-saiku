@@ -130,6 +130,41 @@ public class VisualTotalsTest extends TestCase {
         assertEquals("*Subtotal - Bread", member.getName());
         assertEquals("*Subtotal - Bread", member.getCaption());
     }
+
+    /**
+     * Regression test for upstream
+     * <a href="https://jira.pentaho.com/browse/MONDRIAN-1294">MONDRIAN-1294</a>:
+     * <em>VisualTotals throws error on calculated members</em>. Before the
+     * Sum-fallback in {@code AggregateFunDef.AggregateCalc.aggregate}, this
+     * MDX threw {@code MondrianEvaluationException: Could not find an
+     * aggregator in the current evaluation context} on the {@code *Subtotal -
+     * Bread} cell because {@code [Measures].[Profit]} is a schema-level
+     * calculated measure ({@code Store Sales - Store Cost}) and so carries no
+     * declared aggregator. With the fix the visual-total cell evaluates as
+     * {@code Sum(children, Profit)} — i.e. the sum of Bagels' and Muffins'
+     * profit, which is what an analyst toggling "subtotals" expects.
+     */
+    public void testVisualTotalsOverCalculatedMeasure_MONDRIAN_1294() {
+        TestContext.instance().assertQueryReturns(
+            "select {[Measures].[Profit]} on columns,\n"
+            + " VisualTotals(\n"
+            + "   {[Product].[Products].[Food].[Baked Goods].[Bread],\n"
+            + "    [Product].[Products].[Food].[Baked Goods].[Bread].[Bagels],\n"
+            + "    [Product].[Products].[Food].[Baked Goods].[Bread].[Muffins]},\n"
+            + "   \"**Subtotal - *\") on rows\n"
+            + "from [Sales]",
+            "Axis #0:\n"
+            + "{}\n"
+            + "Axis #1:\n"
+            + "{[Measures].[Profit]}\n"
+            + "Axis #2:\n"
+            + "{[Product].[Products].[Food].[Baked Goods].[*Subtotal - Bread]}\n"
+            + "{[Product].[Products].[Food].[Baked Goods].[Bread].[Bagels]}\n"
+            + "{[Product].[Products].[Food].[Baked Goods].[Bread].[Muffins]}\n"
+            + "Row #0: $5,367.00\n"
+            + "Row #1: $1,123.10\n"
+            + "Row #2: $4,243.90\n");
+    }
 }
 
 // End VisualTotalsTest.java
