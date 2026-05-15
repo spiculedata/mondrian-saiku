@@ -133,10 +133,18 @@ public class AggregateFunDef extends AbstractAggregateFunDef {
             Aggregator aggregator =
                 (Aggregator) evaluator.getProperty(
                     Property.AGGREGATION_TYPE, null);
-            if (aggregator == null) {
-                throw newEvalException(
-                    null,
-                    "Could not find an aggregator in the current evaluation context");
+            final boolean sumFallback = aggregator == null;
+            if (sumFallback) {
+                // MONDRIAN-1294: the current measure has no schema-declared
+                // aggregator. This is the calc-measure path — there's nothing
+                // wrong with the query, the schema just can't tell us how to
+                // roll up. Sum is the natural rollup for additive scalars and
+                // matches the intent already documented in the 2-arg compile
+                // path (see {@link #getMember(Exp)}, which warns "summing"
+                // when the scalar is a calc-member but never actually sums).
+                // Without this fallback VisualTotals over a calc-measure
+                // always throws — the original defect from the upstream Jira.
+                aggregator = RolapAggregator.Sum;
             }
             Aggregator rollup = aggregator.getRollup();
             if (rollup == null) {
@@ -154,6 +162,20 @@ public class AggregateFunDef extends AbstractAggregateFunDef {
                         rollup.aggregate(
                             evaluator, tupleList, calc);
                     return o;
+                } catch (ClassCastException e) {
+                    if (sumFallback) {
+                        // MONDRIAN-1294 corner: the calc-measure is non-numeric
+                        // (e.g. a string concat) so the Sum fallback can't roll
+                        // it. Surface a per-cell error rather than letting the
+                        // unchecked CCE blow up the whole result set — matches
+                        // the legacy behaviour for the unsalvageable case.
+                        throw newEvalException(
+                            null,
+                            "Could not find an aggregator in the current"
+                            + " evaluation context (non-numeric calc-measure"
+                            + " under Aggregate)");
+                    }
+                    throw e;
                 } finally {
                     evaluator.restore(savepoint);
                 }

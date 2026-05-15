@@ -11008,7 +11008,7 @@ public class FunctionTest extends FoodMartTestCase {
             + "Row #1: 7,870\n"
             + "Row #1: Bread : Product Category\n"
             + "Row #2: 4,312\n"
-            + "Row #2: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context\n"
+            + "Row #2: #ERR: mondrian.olap.fun.MondrianEvaluationException: Could not find an aggregator in the current evaluation context (non-numeric calc-measure under Aggregate)\n"
             + "Row #3: 815\n"
             + "Row #3: Bagels : Product Subcategory\n"
             + "Row #4: 3,497\n"
