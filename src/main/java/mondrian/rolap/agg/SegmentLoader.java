@@ -197,7 +197,20 @@ public class SegmentLoader {
                         CalcitePlannerAdapters.fromSegmentLoad(
                             new GroupingSetsList(groupingSets),
                             compoundPredicateList);
-                    precomputedCalciteSql = planner.plan(req);
+                    try {
+                        precomputedCalciteSql = planner.plan(req);
+                    } catch (RuntimeException ex) {
+                        // Calcite translator gap (e.g. snowflake mid-chain
+                        // scan returning empty fields). Leave
+                        // precomputedCalciteSql null so the worker falls
+                        // back to the legacy SQL string in pair.left.
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug(
+                                "Calcite segment-load translation failed; "
+                                + "falling back to legacy SQL: "
+                                + ex.getMessage());
+                        }
+                    }
                 }
                 // planner == null => dialect not in Calcite map; leave
                 // precomputedCalciteSql null and the worker will fall back
@@ -744,13 +757,14 @@ public class SegmentLoader {
                     }
             };
 
-        // Under backend=calcite, the Calcite path owns the SQL string
-        // end-to-end. UnsupportedTranslation is a hard failure that
-        // propagates to the caller: no fallback to legacy SqlQuery,
-        // because once worktree #4 deletes those classes there is no
-        // fallback to fall back to. The RolapUtil.executeQuery /
-        // SqlInterceptor seam below is unchanged: both backends feed the
-        // same JDBC call.
+        // Under backend=calcite, the Calcite path tries to own the SQL
+        // string end-to-end, but the legacy SqlQuery in pair.left is
+        // always built. If the Calcite translator hits a gap (unsupported
+        // shape, snowflake mid-chain scan returning empty fields, etc.)
+        // we silently fall back to the legacy SQL rather than failing the
+        // segment load. Calcite is an optimisation, not a correctness
+        // requirement. The RolapUtil.executeQuery / SqlInterceptor seam
+        // below is unchanged: both backends feed the same JDBC call.
         String sql = pair.left;
         if (MondrianBackend.current().isCalcite()) {
             String calciteSql = null;
@@ -764,7 +778,18 @@ public class SegmentLoader {
                     PlannerRequest req =
                         CalcitePlannerAdapters.fromSegmentLoad(
                             groupingSetsList, compoundPredicateList);
-                    calciteSql = planner.plan(req);
+                    try {
+                        calciteSql = planner.plan(req);
+                    } catch (RuntimeException ex) {
+                        // Translator gap — leave calciteSql null so the
+                        // legacy `sql` from pair.left is used below.
+                        if (LOGGER.isDebugEnabled()) {
+                            LOGGER.debug(
+                                "Calcite segment-load translation failed "
+                                + "on worker; falling back to legacy SQL: "
+                                + ex.getMessage());
+                        }
+                    }
                 }
             }
             if (calciteSql != null) {
