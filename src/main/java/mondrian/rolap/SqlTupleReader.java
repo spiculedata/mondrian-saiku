@@ -601,6 +601,18 @@ public class SqlTupleReader implements TupleReader {
                                     + ex.getClass().getSimpleName()
                                     + "): " + ex.getMessage());
                             }
+                            // saiku#809-followup: strict mode is ON by
+                            // default — Calcite gaps surface as hard
+                            // failures instead of silently passing through
+                            // to the legacy Mondrian planner (which masks
+                            // bugs). Escape hatch:
+                            // -Dmondrian.calcite.strict=false reverts to
+                            // legacy fallback.
+                            if (!"false".equals(
+                                System.getProperty("mondrian.calcite.strict")))
+                            {
+                                throw ex;
+                            }
                             // sql is already the legacy string built above.
                         }
                     }
