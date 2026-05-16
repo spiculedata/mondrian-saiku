@@ -851,6 +851,19 @@ public final class CalcitePlannerAdapters {
             throw new UnsupportedTranslation(
                 "fromTupleRead: FilterConstraint has no filter expression");
         }
+        // Mondrian wraps `(expr)` in a ResolvedFunCall with op name '()'.
+        // Unwrap any number of nested parens so the inner comparison is
+        // reachable. Filter([Set], (([X] > 5))) parses as ()-((>)).
+        while (filterExpr instanceof mondrian.mdx.ResolvedFunCall
+            && "()".equals(
+                ((mondrian.mdx.ResolvedFunCall) filterExpr)
+                    .getFunDef().getName())
+            && ((mondrian.mdx.ResolvedFunCall) filterExpr).getArgs().length
+                == 1)
+        {
+            filterExpr =
+                ((mondrian.mdx.ResolvedFunCall) filterExpr).getArgs()[0];
+        }
         if (!(filterExpr instanceof mondrian.mdx.ResolvedFunCall)) {
             throw new UnsupportedTranslation(
                 "fromTupleRead: FilterConstraint filter expression "
