@@ -702,8 +702,16 @@ public final class CalcitePlannerAdapters {
         // Per-target shape pre-computation.
         TargetShape[] shapes = new TargetShape[levels.size()];
         for (int i = 0; i < levels.size(); i++) {
+            RolapCubeLevel lvl = levels.get(i);
+            // All-level targets contribute no projections, no joins,
+            // and no filter. The MDX engine pairs each result row with
+            // the (All) member implicitly. Leave shapes[i] == null as
+            // the "all-level skip" marker.
+            if (lvl != null && lvl.isAll()) {
+                continue;
+            }
             try {
-                shapes[i] = shapeFor(levels.get(i));
+                shapes[i] = shapeFor(lvl);
             } catch (UnsupportedTranslation ex) {
                 throw new UnsupportedTranslation(
                     "fromTupleRead: SetConstraint target[" + i
@@ -719,6 +727,9 @@ public final class CalcitePlannerAdapters {
         // ensureJoinedChain picks up intermediates like product_class.
         for (int i = 0; i < shapes.length; i++) {
             TargetShape shape = shapes[i];
+            if (shape == null) {
+                continue;
+            }
             for (RolapSchema.PhysRelation rel :
                 collectNecjRelations(shape))
             {
@@ -743,6 +754,9 @@ public final class CalcitePlannerAdapters {
         Set<String> orderedKeys = new LinkedHashSet<>();
         for (int i = 0; i < levels.size(); i++) {
             TargetShape shape = shapes[i];
+            if (shape == null) {
+                continue;
+            }
             CrossJoinArg arg = args[i];
             emitNecjTargetProjections(b, projectedKeys, shape);
             addCrossJoinArgFilter(b, shape, arg);
@@ -816,6 +830,9 @@ public final class CalcitePlannerAdapters {
         }
 
         for (int i = 0; i < levels.size(); i++) {
+            if (shapes[i] == null) {
+                continue;
+            }
             addNecjOrderBy(b, orderedKeys, shapes[i]);
         }
 
@@ -997,6 +1014,16 @@ public final class CalcitePlannerAdapters {
                 + "' arity " + args.length + " not yet supported "
                 + "(expected 2)");
         }
+        // If the comparison is literal-vs-measure (e.g. 5 > [Measure]),
+        // swap operands and invert the comparison so the downstream
+        // measure-on-lhs path takes over.
+        if (args[0] instanceof mondrian.olap.Literal
+            && args[1] instanceof mondrian.mdx.MemberExpr)
+        {
+            mondrian.olap.Exp tmp = args[0];
+            args = new mondrian.olap.Exp[] { args[1], tmp };
+            cmp = invertComparisonOperands(cmp);
+        }
         // Left side: measure reference.
         if (!(args[0] instanceof mondrian.mdx.MemberExpr)) {
             throw new UnsupportedTranslation(
@@ -1069,6 +1096,23 @@ public final class CalcitePlannerAdapters {
         case LE: return PlannerRequest.Comparison.GT;
         case EQ: return PlannerRequest.Comparison.NE;
         case NE: return PlannerRequest.Comparison.EQ;
+        default:
+            throw new IllegalStateException("unhandled comparison " + c);
+        }
+    }
+
+    /** Mirror a comparison around operand swap: GT↔LT, GE↔LE, EQ/NE
+     *  unchanged. Used by the FilterConstraint lhs-literal swap. */
+    private static PlannerRequest.Comparison invertComparisonOperands(
+        PlannerRequest.Comparison c)
+    {
+        switch (c) {
+        case GT: return PlannerRequest.Comparison.LT;
+        case LT: return PlannerRequest.Comparison.GT;
+        case GE: return PlannerRequest.Comparison.LE;
+        case LE: return PlannerRequest.Comparison.GE;
+        case EQ: return PlannerRequest.Comparison.EQ;
+        case NE: return PlannerRequest.Comparison.NE;
         default:
             throw new IllegalStateException("unhandled comparison " + c);
         }
