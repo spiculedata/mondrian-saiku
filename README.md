@@ -34,11 +34,91 @@ All flags are `-D` system properties; defaults are production-safe.
 | Flag | Default | What it does |
 |---|---|---|
 | `mondrian.backend` | `calcite` | Pick the SQL emitter. Set to `legacy` to route through the original Mondrian SQL builder — useful as a kill switch while shadow-evaluating the new path. |
+| `mondrian.calcite.strict` | `true` | When a Calcite translator gap is hit (an MDX shape the new translator doesn't cover yet), rethrow the failure instead of silently falling back to the legacy SQL builder. Set to `false` to revert to silent fallback for any deployment that still needs it. Strict mode is what gives the "Calcite path is the correctness path" guarantee — every silent passthrough that previously masked a result-divergence bug now surfaces in CI. |
 | `mondrian.calcite.mvMatch` | `true` | Hand-rolled MV matcher that rewrites segment-load requests onto declared aggregate tables when the query shape matches. Runs even when Mondrian's `UseAggregates` is off — this is the main "aggregates just work" win. |
 | `mondrian.calcite.volcano` | `true` | Use Calcite's `VolcanoPlanner` to apply a curated rule set during SQL generation. When false, falls back to the `HepPlanner`-only path. |
 | `mondrian.calcite.calcConsume` | `false` | **Experimental.** When on, arithmetic calc members (e.g. `SUM(x) / SUM(y)`) are emitted as SQL expressions in the SELECT list instead of being recomputed in Java. Off by default because the SegmentLoader path that consumes the computed column is still behind a profiler-required investigation — see "Known issues" below. |
 | `mondrian.calcite.mvMaxSubsetSize` | `4` | Size cap on power-set enumeration of aggregate-table shapes. Each declared aggregate generates candidate shapes for the MV matcher; this bounds combinatorial blowup. |
-| `mondrian.calcite.trace` | `false` | Dumps per-request matcher + SQL capture to stderr. Use for debugging MV rewrites. |
+| `mondrian.calcite.trace` | `false` | Dumps per-request matcher + SQL capture to stderr. Use for debugging MV rewrites. Also emits `[calcite-cache]` and `[calcite-ok]`/`[calcite-fallback]` lines so you can confirm Calcite is engaging for a given DataSource. |
+| `mondrian.foodmart.jdbcURL` | unset | Override the test JDBC URL. Used by the multi-DB validation; e.g. `-Dmondrian.foodmart.jdbcURL=jdbc:duckdb:/tmp/foodmart.duckdb` to run the FoodMart test suite against DuckDB instead of the default HSQLDB fixture. |
+
+### Enabling / disabling Calcite
+
+```bash
+# Default (Calcite ON, strict ON):
+mvn test
+# equivalent:
+mvn test -Dmondrian.backend=calcite -Dmondrian.calcite.strict=true
+
+# Legacy SQL builder, no Calcite:
+mvn test -Dmondrian.backend=legacy
+
+# Calcite engaged but with old silent-fallback behaviour (not recommended;
+# masks translator gaps as silent legacy execution):
+mvn test -Dmondrian.calcite.strict=false
+```
+
+## Supported databases
+
+The Calcite SQL backend works automatically against any database in the
+list below. The "How" column describes whether Calcite's own
+auto-detection from JDBC product-name strings handles the database, or
+whether `mondrian.calcite.CalciteDialectMap` hand-curates an entry
+because Calcite's pattern matcher misses the real driver's product name.
+
+| Database | How resolved |
+|---|---|
+| HSQLDB | hand-curated (`QUOTING_HSQLDB`) |
+| PostgreSQL | hand-curated (`PostgresqlSqlDialect.DEFAULT`) |
+| DuckDB | hand-curated (`QUOTING_DUCKDB`) |
+| Amazon Redshift | hand-curated (`QUOTING_REDSHIFT`) — auto-detect misses |
+| Apache Hive | hand-curated (`QUOTING_HIVE`) — auto-detect misses |
+| Trino | hand-curated (`QUOTING_TRINO` via `PrestoSqlDialect`) — auto-detect misses |
+| Exasol | hand-curated (`QUOTING_EXASOL`) — auto-detect misses |
+| Google BigQuery | Calcite auto-detect |
+| Snowflake | Calcite auto-detect |
+| ClickHouse | Calcite auto-detect |
+| Microsoft SQL Server | Calcite auto-detect |
+| Oracle | Calcite auto-detect |
+| MySQL | Calcite auto-detect |
+| Presto | Calcite auto-detect |
+| IBM DB2 | Calcite auto-detect |
+| Apache Derby | Calcite auto-detect |
+| H2 | Calcite auto-detect |
+| Netezza | Calcite auto-detect |
+| Sybase ASE | Calcite auto-detect |
+| Teradata | Calcite auto-detect |
+| Vertica | Calcite auto-detect |
+| Firebird | Calcite auto-detect |
+| Informix | Calcite auto-detect |
+
+Calcite ships dialect classes for **Apache Spark**, **Apache Phoenix**,
+and **LucidDB** as well, but their JDBC drivers return product-name
+strings that Calcite's `SqlDialectFactoryImpl` doesn't recognise (e.g.
+Spark returns `"Spark SQL"`, Phoenix returns `"Apache Phoenix"`). These
+fall through to the unrecognised-database path until a hand-curated
+entry is added — please file an issue if you hit one in production.
+
+### Behaviour for unrecognised databases
+
+If neither the hand-curated map nor Calcite's auto-detect recognises the
+JDBC product name, the planner cache returns `null` and queries silently
+fall back to the legacy Mondrian SQL builder. A one-shot warning is
+emitted to both `LOGGER.warn` and `System.err` with the unrecognised
+product name and a pointer to `CalciteDialectMap.forProductNameOrNull`,
+so the silent skip is at least observable. Multi-DB Calcite features
+(strict mode, structured translator coverage, portable `LIMIT n` emission,
+MV rewrite) are NOT active for unrecognised backends — please file an
+issue with the JDBC product-name string so we can add a hand-curated entry.
+
+To check whether Calcite is engaging for your DataSource, run with
+`-Dmondrian.calcite.trace=true` and look for a line like:
+
+```
+[calcite-cache] dialect=mondrian.calcite.CalciteDialectMap$3 for ...
+```
+
+A `dialect=null` line means the backend was silently skipped.
 
 ## Quick start
 
