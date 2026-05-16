@@ -521,20 +521,20 @@ public final class CalcitePlannerAdapters {
                     + "column " + pc.getClass().getName() + " is not "
                     + "a PhysRealColumn");
             }
-            if (pc.relation == null
-                || !shape.tableAlias.equals(pc.relation.getAlias()))
-            {
+            if (pc.relation == null) {
                 throw new UnsupportedTranslation(
                     "fromTupleRead: DescendantsConstraint parent key "
                     + "column " + ((RolapSchema.PhysRealColumn) pc).name
-                    + " lives on "
-                    + (pc.relation == null ? "null" : pc.relation.getAlias())
-                    + " but target dim table is " + shape.tableAlias
-                    + " (snowflake parent filter not yet supported)");
+                    + " has null relation");
             }
+            // Parent key may live on an ancestor relation in a snowflake
+            // (e.g. product_family on product_class while target table
+            // is product). The dim chain emitted alongside the
+            // TargetShape covers the join; the filter column just needs
+            // to reference the actual relation alias.
             filterCols.add(
                 new PlannerRequest.Column(
-                    shape.tableAlias,
+                    pc.relation.getAlias(),
                     ((RolapSchema.PhysRealColumn) pc).name));
         }
 
@@ -581,9 +581,16 @@ public final class CalcitePlannerAdapters {
             RolapAttribute attr = cur.getAttribute();
             List<RolapSchema.PhysColumn> keyList = attr.getKeyList();
             for (RolapSchema.PhysColumn kc : keyList) {
+                // Snowflake: key column may live on an ancestor relation
+                // already joined into the chain. Use its actual relation
+                // alias instead of forcing the target's leaf alias.
+                String kcAlias =
+                    kc.relation == null
+                        ? shape.tableAlias
+                        : kc.relation.getAlias();
                 PlannerRequest.Column kp =
-                    asProjection(kc, shape.tableAlias, "key");
-                if (seen.add(shape.tableAlias + "." + kp.name)) {
+                    asProjection(kc, kcAlias, "key");
+                if (seen.add(kcAlias + "." + kp.name)) {
                     b.addProjection(kp);
                 }
                 if (orderedKeys.add(kp.name)) {
@@ -874,12 +881,13 @@ public final class CalcitePlannerAdapters {
     {
         mondrian.olap.Exp orderByExpr = constraint.getOrderByExpr();
         if (orderByExpr == null) {
-            // TopCount without an explicit sort expression (3-arg form
-            // elided). Goldens always carry the third arg; rejecting here
-            // keeps the surface honest.
-            throw new UnsupportedTranslation(
-                "fromTupleRead: TopCountConstraint has no orderBy expression "
-                + "(2-arg TopCount form not yet supported)");
+            // TopCount without an explicit sort expression (2-arg form
+            // TopCount(<set>, <count>)). The SetEvaluator's setMaxRows
+            // trims the result to <count> rows; no ORDER BY needs to
+            // be added here — the per-target key ORDER BY emitted by
+            // emitNecjTargetProjections is enough to make the prefix
+            // deterministic.
+            return;
         }
         if (!(orderByExpr instanceof mondrian.mdx.MemberExpr)) {
             throw new UnsupportedTranslation(
@@ -997,6 +1005,69 @@ public final class CalcitePlannerAdapters {
         mondrian.mdx.ResolvedFunCall call =
             (mondrian.mdx.ResolvedFunCall) filterExpr;
         String opName = call.getFunDef().getName();
+        // IsEmpty(measure) — unary; semantically "measure IS NULL".
+        // The NOT-unwrap above already inverted via `negate`, so
+        // NOT IsEmpty(measure) becomes IS_NOT_NULL.
+        if ("IsEmpty".equalsIgnoreCase(opName)
+            && call.getArgs().length == 1)
+        {
+            mondrian.olap.Exp[] argsIE = call.getArgs();
+            if (!(argsIE[0] instanceof mondrian.mdx.MemberExpr)) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: FilterConstraint IsEmpty arg shape "
+                    + argsIE[0].getClass().getName()
+                    + " not yet supported (expected MemberExpr)");
+            }
+            mondrian.olap.Member memberIE =
+                ((mondrian.mdx.MemberExpr) argsIE[0]).getMember();
+            if (!(memberIE instanceof mondrian.rolap.RolapStoredMeasure)) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: FilterConstraint IsEmpty arg member "
+                    + (memberIE == null
+                        ? "null"
+                        : memberIE.getClass().getName())
+                    + " is not a RolapStoredMeasure");
+            }
+            mondrian.rolap.RolapStoredMeasure measureIE =
+                (mondrian.rolap.RolapStoredMeasure) memberIE;
+            RolapSchema.PhysColumn exprIE = measureIE.getExpr();
+            if (!(exprIE instanceof RolapSchema.PhysRealColumn)) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: FilterConstraint IsEmpty measure "
+                    + "expression "
+                    + (exprIE == null
+                        ? "null"
+                        : exprIE.getClass().getName())
+                    + " is not a real column");
+            }
+            PlannerRequest.AggFn fnIE = aggFnFor(measureIE.getAggregator());
+            if (fnIE == null) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: FilterConstraint IsEmpty aggregator "
+                    + measureIE.getAggregator().getName()
+                    + " not yet supported");
+            }
+            String tableAliasIE = exprIE.relation == null
+                ? null
+                : exprIE.relation.getAlias();
+            String colNameIE = ((RolapSchema.PhysRealColumn) exprIE).name;
+            boolean distinctIE =
+                measureIE.getAggregator() == RolapAggregator.DistinctCount;
+            PlannerRequest.Measure havingMeasureIE =
+                new PlannerRequest.Measure(
+                    fnIE,
+                    new PlannerRequest.Column(tableAliasIE, colNameIE),
+                    "h0",
+                    distinctIE);
+            b.addHaving(
+                new PlannerRequest.Having(
+                    havingMeasureIE,
+                    negate
+                        ? PlannerRequest.Comparison.IS_NOT_NULL
+                        : PlannerRequest.Comparison.IS_NULL,
+                    Boolean.TRUE));
+            return;
+        }
         PlannerRequest.Comparison cmp = comparisonFor(opName);
         if (cmp == null) {
             throw new UnsupportedTranslation(
@@ -2531,6 +2602,88 @@ public final class CalcitePlannerAdapters {
                 elseCol.name));
     }
 
+    /** Map of supported arithmetic operator tokens (trimmed text)
+     *  to {@link PlannerRequest.ArithOp}. Multi-char tokens like
+     *  {@code ||} are not arithmetic — they're string concatenation
+     *  and need their own path. */
+    private static PlannerRequest.ArithOp arithOpFromText(String s) {
+        if (s == null) {
+            return null;
+        }
+        String t = s.trim();
+        if ("+".equals(t)) {
+            return PlannerRequest.ArithOp.PLUS;
+        }
+        if ("-".equals(t)) {
+            return PlannerRequest.ArithOp.MINUS;
+        }
+        if ("*".equals(t)) {
+            return PlannerRequest.ArithOp.TIMES;
+        }
+        if ("/".equals(t)) {
+            return PlannerRequest.ArithOp.DIVIDE;
+        }
+        return null;
+    }
+
+    /**
+     * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose
+     * PhysExpr list matches a binary arithmetic shape
+     * ({@code col1 <op> col2}, where {@code <op>} is one of
+     * {@code + - * /}), return a {@link PlannerRequest.ArithExpr}.
+     * Otherwise return {@code null}.
+     */
+    private static PlannerRequest.ArithExpr arithExprFromCalc(
+        RolapSchema.PhysColumn col, String factAlias)
+    {
+        if (!(col instanceof RolapSchema.PhysCalcColumn)) {
+            return null;
+        }
+        List<RolapSchema.PhysExpr> list =
+            ((RolapSchema.PhysCalcColumn) col).getList();
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        List<RolapSchema.PhysExpr> trimmed = new java.util.ArrayList<>();
+        for (RolapSchema.PhysExpr e : list) {
+            if (e instanceof RolapSchema.PhysTextExpr
+                && (e.toSql() == null || e.toSql().trim().isEmpty()))
+            {
+                continue;
+            }
+            trimmed.add(e);
+        }
+        // Expect 3 elements: COL, TEXT(op), COL.
+        if (trimmed.size() != 3
+            || !(trimmed.get(0) instanceof RolapSchema.PhysRealColumn)
+            || !(trimmed.get(1) instanceof RolapSchema.PhysTextExpr)
+            || !(trimmed.get(2) instanceof RolapSchema.PhysRealColumn))
+        {
+            return null;
+        }
+        PlannerRequest.ArithOp op =
+            arithOpFromText(trimmed.get(1).toSql());
+        if (op == null) {
+            return null;
+        }
+        RolapSchema.PhysRealColumn lhs =
+            (RolapSchema.PhysRealColumn) trimmed.get(0);
+        RolapSchema.PhysRealColumn rhs =
+            (RolapSchema.PhysRealColumn) trimmed.get(2);
+        return new PlannerRequest.ArithExpr(
+            new PlannerRequest.Column(
+                lhs.relation == null
+                    ? factAlias
+                    : lhs.relation.getAlias(),
+                lhs.name),
+            op,
+            new PlannerRequest.Column(
+                rhs.relation == null
+                    ? factAlias
+                    : rhs.relation.getAlias(),
+                rhs.name));
+    }
+
     /** Parse a string as a numeric literal or SQL NULL. Returns
      *  Java null for NULL/null, Long for integers, BigDecimal for
      *  decimals, or {@link #UNRESOLVED_LITERAL} on parse failure. */
@@ -2831,6 +2984,24 @@ public final class CalcitePlannerAdapters {
                         op.distinct,
                         null,
                         caseExpr));
+                starMeasureAliases.put(m, alias);
+                continue;
+            }
+            // Calc-column shaped like the warehouse_profit binary
+            // arithmetic: lhsCol <op> rhsCol.
+            PlannerRequest.ArithExpr arithExpr =
+                arithExprFromCalc(m.getExpression(), factTable.getAlias());
+            if (arithExpr != null) {
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(
+                            factTable.getAlias(), alias),
+                        alias,
+                        op.distinct,
+                        null,
+                        null,
+                        arithExpr));
                 starMeasureAliases.put(m, alias);
                 continue;
             }

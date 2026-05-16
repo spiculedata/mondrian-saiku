@@ -60,27 +60,39 @@ public final class PlannerRequest {
          *  {@code case when promotion_id = 0 then 0 else store_sales end}.
          *  Mutually exclusive with {@link #literal}. */
         public final CaseExpr caseExpr;
+        /** When non-null, the measure aggregates a structured binary
+         *  arithmetic expression ({@code lhsCol &lt;op&gt; rhsCol}).
+         *  Covers calc-column measures like FoodMart's warehouse_profit
+         *  ({@code warehouse_sales - warehouse_cost}). Mutually
+         *  exclusive with {@link #literal} and {@link #caseExpr}. */
+        public final ArithExpr arithExpr;
         /** Sentinel value used in {@link #literal} to represent SQL NULL,
          *  distinguishing it from the field being unset (which is also
          *  Java null). */
         public static final Object NULL_LITERAL = new Object();
         public Measure(AggFn fn, Column column, String alias) {
-            this(fn, column, alias, false, null, null);
+            this(fn, column, alias, false, null, null, null);
         }
         public Measure(
             AggFn fn, Column column, String alias, boolean distinct)
         {
-            this(fn, column, alias, distinct, null, null);
+            this(fn, column, alias, distinct, null, null, null);
         }
         public Measure(
             AggFn fn, Column column, String alias, boolean distinct,
             Object literal)
         {
-            this(fn, column, alias, distinct, literal, null);
+            this(fn, column, alias, distinct, literal, null, null);
         }
         public Measure(
             AggFn fn, Column column, String alias, boolean distinct,
             Object literal, CaseExpr caseExpr)
+        {
+            this(fn, column, alias, distinct, literal, caseExpr, null);
+        }
+        public Measure(
+            AggFn fn, Column column, String alias, boolean distinct,
+            Object literal, CaseExpr caseExpr, ArithExpr arithExpr)
         {
             this.fn = fn;
             this.column = column;
@@ -88,6 +100,25 @@ public final class PlannerRequest {
             this.distinct = distinct;
             this.literal = literal;
             this.caseExpr = caseExpr;
+            this.arithExpr = arithExpr;
+        }
+    }
+
+    /** Binary arithmetic operator for {@link ArithExpr}. */
+    public enum ArithOp { PLUS, MINUS, TIMES, DIVIDE }
+
+    /** Structured binary arithmetic descriptor used by
+     *  {@link Measure#arithExpr}: {@code lhsCol <op> rhsCol}. Covers
+     *  the canonical FoodMart warehouse_profit shape
+     *  ({@code warehouse_sales - warehouse_cost}). */
+    public static final class ArithExpr {
+        public final Column lhsCol;
+        public final ArithOp op;
+        public final Column rhsCol;
+        public ArithExpr(Column lhsCol, ArithOp op, Column rhsCol) {
+            this.lhsCol = lhsCol;
+            this.op = op;
+            this.rhsCol = rhsCol;
         }
     }
 
@@ -121,8 +152,11 @@ public final class PlannerRequest {
 
     /** HAVING comparison operator set — the binary-compare subset the
      *  corpus exercises for {@code RolapNativeFilter$FilterConstraint}.
-     *  Added for Task P. */
-    public enum Comparison { GT, LT, GE, LE, EQ, NE }
+     *  Added for Task P. {@code IS_NULL} and {@code IS_NOT_NULL} are
+     *  unary on the measure side; the {@code Having.literal} field is
+     *  ignored in those cases (use any non-null placeholder, e.g.
+     *  {@link Boolean#TRUE}, to satisfy the constructor invariant). */
+    public enum Comparison { GT, LT, GE, LE, EQ, NE, IS_NULL, IS_NOT_NULL }
 
     /**
      * HAVING predicate: {@code <measure> <op> <literal>}. Used for

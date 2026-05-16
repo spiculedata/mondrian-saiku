@@ -897,6 +897,13 @@ public final class CalciteSqlPlanner {
         RelBuilder b, PlannerRequest.Having h)
     {
         RexNode col = b.field(h.measure.alias);
+        // IS_NULL / IS_NOT_NULL ignore the literal field.
+        if (h.op == PlannerRequest.Comparison.IS_NULL) {
+            return b.isNull(col);
+        }
+        if (h.op == PlannerRequest.Comparison.IS_NOT_NULL) {
+            return b.isNotNull(col);
+        }
         RexNode lit = b.literal(h.literal);
         switch (h.op) {
         case GT: return b.greaterThan(col, lit);
@@ -908,6 +915,35 @@ public final class CalciteSqlPlanner {
         default:
             throw new IllegalStateException(
                 "unhandled Having op: " + h.op);
+        }
+    }
+
+    /** Build a Calcite arithmetic RexCall from a structured
+     *  {@link PlannerRequest.ArithExpr}: {@code lhsCol <op> rhsCol}. */
+    private static RexNode arithRex(
+        RelBuilder b, PlannerRequest.ArithExpr a)
+    {
+        RexNode lhs = fieldRef(b, a.lhsCol);
+        RexNode rhs = fieldRef(b, a.rhsCol);
+        switch (a.op) {
+        case PLUS:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.PLUS,
+                lhs, rhs);
+        case MINUS:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.MINUS,
+                lhs, rhs);
+        case TIMES:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.MULTIPLY,
+                lhs, rhs);
+        case DIVIDE:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.DIVIDE,
+                lhs, rhs);
+        default:
+            throw new IllegalStateException("unhandled ArithOp: " + a.op);
         }
     }
 
@@ -945,6 +981,8 @@ public final class CalciteSqlPlanner {
         RexNode ref;
         if (m.caseExpr != null) {
             ref = caseRex(b, m.caseExpr);
+        } else if (m.arithExpr != null) {
+            ref = arithRex(b, m.arithExpr);
         } else if (m.literal != null) {
             ref = m.literal == PlannerRequest.Measure.NULL_LITERAL
                 ? b.literal(null)
