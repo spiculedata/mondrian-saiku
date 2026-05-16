@@ -78,6 +78,14 @@ public abstract class CsvDBTestCase extends FoodMartTestCase {
         // create database tables
         this.loader.executeStatements(this.tables);
 
+        // The CalcitePlannerCache reflects JDBC metadata once per
+        // (jdbcUrl, catalog, schema, user) on first use. CsvDB fixtures
+        // add tables to the FoodMart HSQLDB after that reflection has
+        // happened, so the cached Calcite schema is missing the new
+        // tables (D1, D2, FT1, ...). Invalidate the cache so the next
+        // planner build re-reflects and picks them up.
+        mondrian.calcite.CalcitePlannerCache.clear();
+
         String parameterDefs = getParameterDescription();
         String cubeDefs = getCubeDescription();
         String virtualCubeDefs = getVirtualCubeDescription();
@@ -111,6 +119,11 @@ public abstract class CsvDBTestCase extends FoodMartTestCase {
         } catch (Exception ex) {
             // ignore
         }
+
+        // Symmetric with setUp(): drop the cached Calcite schema so the
+        // next test doesn't see a stale reflection that still includes
+        // the now-dropped CSV tables.
+        mondrian.calcite.CalcitePlannerCache.clear();
 
         tables = null;
         testContext = null; // allow gc
