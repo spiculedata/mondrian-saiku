@@ -1,8 +1,16 @@
 package mondrian.calcite;
 
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
+import org.apache.calcite.sql.dialect.ExasolSqlDialect;
+import org.apache.calcite.sql.dialect.HiveSqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
+import org.apache.calcite.sql.dialect.LucidDbSqlDialect;
+import org.apache.calcite.sql.dialect.PhoenixSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
+import org.apache.calcite.sql.dialect.PrestoSqlDialect;
+import org.apache.calcite.sql.dialect.RedshiftSqlDialect;
+import org.apache.calcite.sql.dialect.SparkSqlDialect;
 import org.junit.Test;
 
 import javax.sql.DataSource;
@@ -76,5 +84,71 @@ public class CalciteDialectMapTest {
         StringBuilder buf = new StringBuilder();
         pg.quoteIdentifier(buf, "sales_fact_1997");
         assertEquals("\"sales_fact_1997\"", buf.toString());
+    }
+
+    // --- Hand-curated coverage guards ---
+    //
+    // Each test below asserts that a real JDBC driver's product-name
+    // string maps to the expected Calcite dialect family. The point is
+    // not to verify Calcite's internals — it's to guard against a future
+    // refactor accidentally removing a forProductNameOrNull() branch
+    // and silently re-introducing the legacy-fallback gap for that
+    // database. The product-name strings used here are the literal
+    // values reported by the official drivers as of 2026-05.
+
+    @Test public void duckdbDriverStringMapsToDuckDbDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("DuckDB");
+        assertTrue(sd instanceof DuckDBSqlDialect);
+    }
+
+    @Test public void redshiftDriverStringMapsToRedshiftDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("Amazon Redshift");
+        assertTrue(sd instanceof RedshiftSqlDialect);
+    }
+
+    @Test public void hiveDriverStringMapsToHiveDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("Apache Hive");
+        assertTrue(sd instanceof HiveSqlDialect);
+    }
+
+    @Test public void trinoDriverStringMapsToPrestoDialect() {
+        // Trino is the rename of Presto; PrestoSqlDialect is the right
+        // emit target for both. Calcite's own factory matches "PRESTO"
+        // but not "TRINO" — this hand-curated entry closes that gap.
+        SqlDialect sd = CalciteDialectMap.forProductName("Trino");
+        assertTrue(sd instanceof PrestoSqlDialect);
+    }
+
+    @Test public void exasolDriverStringMapsToExasolDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("EXASolution");
+        assertTrue(sd instanceof ExasolSqlDialect);
+    }
+
+    @Test public void sparkDriverStringMapsToSparkDialect() {
+        // Spark's JDBC driver returns "Spark SQL", Calcite's factory
+        // only matches the exact "SPARK" case.
+        SqlDialect sd = CalciteDialectMap.forProductName("Spark SQL");
+        assertTrue(sd instanceof SparkSqlDialect);
+    }
+
+    @Test public void phoenixDriverStringMapsToPhoenixDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("Apache Phoenix");
+        assertTrue(sd instanceof PhoenixSqlDialect);
+    }
+
+    @Test public void luciddbDriverStringMapsToLucidDbDialect() {
+        SqlDialect sd = CalciteDialectMap.forProductName("LucidDB");
+        assertTrue(sd instanceof LucidDbSqlDialect);
+    }
+
+    @Test public void duckdbDataSourceRoundTripUnchanged() throws Exception {
+        DataSource ds = mock(DataSource.class);
+        Connection conn = mock(Connection.class);
+        DatabaseMetaData md = mock(DatabaseMetaData.class);
+        when(ds.getConnection()).thenReturn(conn);
+        when(conn.getMetaData()).thenReturn(md);
+        when(md.getDatabaseProductName()).thenReturn("DuckDB");
+        SqlDialect sd = CalciteDialectMap.forDataSource(ds);
+        assertTrue(sd instanceof DuckDBSqlDialect);
     }
 }

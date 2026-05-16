@@ -19,6 +19,9 @@ import org.apache.calcite.sql.dialect.RedshiftSqlDialect;
 import org.apache.calcite.sql.dialect.HiveSqlDialect;
 import org.apache.calcite.sql.dialect.PrestoSqlDialect;
 import org.apache.calcite.sql.dialect.ExasolSqlDialect;
+import org.apache.calcite.sql.dialect.SparkSqlDialect;
+import org.apache.calcite.sql.dialect.PhoenixSqlDialect;
+import org.apache.calcite.sql.dialect.LucidDbSqlDialect;
 import org.apache.log4j.Logger;
 
 import java.sql.Connection;
@@ -215,6 +218,19 @@ public final class CalciteDialectMap {
         if (p.contains("exasol")) {
             return QUOTING_EXASOL;
         }
+        // Apache Spark JDBC driver returns "Spark SQL" — Calcite's
+        // factory only matches the exact "SPARK" case.
+        if (p.contains("spark")) {
+            return QUOTING_SPARK;
+        }
+        // Apache Phoenix driver returns "Apache Phoenix" — Calcite's
+        // factory only matches the exact "PHOENIX" case.
+        if (p.contains("phoenix")) {
+            return QUOTING_PHOENIX;
+        }
+        if (p.contains("luciddb")) {
+            return QUOTING_LUCIDDB;
+        }
         return null;
     }
 
@@ -299,6 +315,45 @@ public final class CalciteDialectMap {
     private static final SqlDialect QUOTING_EXASOL =
         new ExasolSqlDialect(
             ExasolSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Apache Spark — JDBC driver returns "Spark SQL"; Calcite's factory
+     *  switch only matches exact "SPARK". */
+    private static final SqlDialect QUOTING_SPARK =
+        new SparkSqlDialect(
+            SparkSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Apache Phoenix — driver returns "Apache Phoenix"; Calcite's
+     *  factory switch only matches exact "PHOENIX". */
+    private static final SqlDialect QUOTING_PHOENIX =
+        new PhoenixSqlDialect(
+            PhoenixSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** LucidDB — abandoned project but Calcite still ships the dialect.
+     *  Included for completeness; no warranty as to runtime correctness. */
+    private static final SqlDialect QUOTING_LUCIDDB =
+        new LucidDbSqlDialect(
+            LucidDbSqlDialect.DEFAULT_CONTEXT
                 .withIdentifierQuoteString("\""))
         {
             @Override
