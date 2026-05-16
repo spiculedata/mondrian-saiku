@@ -2041,9 +2041,11 @@ public class MondrianFoodMartLoader {
                     return "'" + dateFormatter.format(dt) + "'";
                 }
 
-                // Output for a FLOAT
+                // Output for a FLOAT/REAL. HSQLDB JDBC returns Float for
+                // REAL columns; DuckDB JDBC returns Double. Accept either
+                // via the Number widening contract.
             } else if (columnType.startsWith(Type.Real.name)) {
-                Float result = (Float) obj;
+                Number result = (Number) obj;
                 return result.toString();
 
                 // Output for a DECIMAL(length, places)

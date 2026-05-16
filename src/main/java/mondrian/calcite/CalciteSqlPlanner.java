@@ -813,7 +813,15 @@ public final class CalciteSqlPlanner {
                         ? b.desc(ref)
                         : ref);
             }
-            b.sort(exprs);
+            if (req.limit > 0) {
+                b.sortLimit(0, req.limit, exprs);
+            } else {
+                b.sort(exprs);
+            }
+        } else if (req.limit > 0) {
+            // LIMIT without ORDER BY: still need to truncate. RelBuilder's
+            // limit() applies offset 0 + fetch N to the current tree.
+            b.limit(0, req.limit);
         }
 
         return b.build();

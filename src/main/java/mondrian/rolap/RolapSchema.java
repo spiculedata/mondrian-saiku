@@ -1038,8 +1038,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     // REVIEW: We want the physical size of the column in bytes.
                     //  Ideally it would be comparable with the value returned
                     //  from DatabaseMetaData.getColumns for a base table.
-                    final int columnSize = metaData.getColumnDisplaySize(i + 1);
-                    assert columnSize > 0;
+                    // DuckDB JDBC returns 0 here for all columns (the driver
+                    // doesn't track display sizes), so accept that and fall
+                    // back to a benign default; HSQLDB/Postgres still report
+                    // accurate sizes.
+                    int columnSize = metaData.getColumnDisplaySize(i + 1);
+                    if (columnSize <= 0) {
+                        columnSize = 1;
+                    }
                     final Dialect.Datatype datatype =
                         dialect.sqlTypeToDatatype(typeName, type);
                     if (datatype == null) {

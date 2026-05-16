@@ -14,6 +14,11 @@ import org.apache.calcite.sql.SqlDialectFactoryImpl;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
+import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
+import org.apache.calcite.sql.dialect.RedshiftSqlDialect;
+import org.apache.calcite.sql.dialect.HiveSqlDialect;
+import org.apache.calcite.sql.dialect.PrestoSqlDialect;
+import org.apache.calcite.sql.dialect.ExasolSqlDialect;
 import org.apache.log4j.Logger;
 
 import java.sql.Connection;
@@ -95,11 +100,22 @@ public final class CalciteDialectMap {
                 }
             }
             if (dialect == null && WARNED_PRODUCTS.add(product)) {
-                LOGGER.warn(
-                    "No Calcite SqlDialect mapping for JDBC product '"
-                    + product + "' (neither hand-curated nor recognised by "
-                    + "Calcite's SqlDialectFactoryImpl) — falling back to "
-                    + "the legacy Mondrian backend for this datasource.");
+                String msg =
+                    "[mondrian-calcite] No Calcite SqlDialect mapping for "
+                    + "JDBC product '" + product + "' — falling back to "
+                    + "the legacy Mondrian SQL builder for this "
+                    + "datasource. Calcite cross-DB features (translator "
+                    + "coverage, LIMIT n emission, MV rewrite) will NOT "
+                    + "be active. To enable: add a hand-curated entry to "
+                    + "mondrian.calcite.CalciteDialectMap"
+                    + ".forProductNameOrNull(), or file an issue at "
+                    + "https://github.com/spiculedata/mondrian-saiku/issues "
+                    + "with the JDBC product name above.";
+                LOGGER.warn(msg);
+                // log4j is unconfigured in many deployments and the WARN
+                // line above won't surface anywhere. Also print once to
+                // System.err so the user sees the silent-skip explicitly.
+                System.err.println(msg);
             }
             return dialect;
         } catch (SQLException e) {
@@ -179,6 +195,26 @@ public final class CalciteDialectMap {
         if (p.contains("postgres")) {
             return PostgresqlSqlDialect.DEFAULT;
         }
+        if (p.contains("duckdb")) {
+            return QUOTING_DUCKDB;
+        }
+        // Calcite ships SqlDialect subclasses for these, but
+        // SqlDialectFactoryImpl.create(md) doesn't match the JDBC
+        // product-name string returned by their official drivers, so
+        // without explicit entries here they would silently fall back
+        // to the legacy Mondrian SQL builder.
+        if (p.contains("redshift")) {
+            return QUOTING_REDSHIFT;
+        }
+        if (p.contains("hive")) {
+            return QUOTING_HIVE;
+        }
+        if (p.contains("trino")) {
+            return QUOTING_TRINO;
+        }
+        if (p.contains("exasol")) {
+            return QUOTING_EXASOL;
+        }
         return null;
     }
 
@@ -190,6 +226,79 @@ public final class CalciteDialectMap {
     private static final SqlDialect QUOTING_HSQLDB =
         new HsqldbSqlDialect(
             HsqldbSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /**
+     * DuckDB dialect with the same force-quote treatment as HSQLDB.
+     * Calcite 1.41's {@link org.apache.calcite.sql.SqlDialectFactoryImpl}
+     * does not auto-detect DuckDB from the JDBC product name; without a
+     * hand-curated entry here the planner cache silently falls through to
+     * the legacy Mondrian SQL builder and the Calcite path is never
+     * exercised against DuckDB. FoodMart's quoted lowercase table names
+     * require the same forced-quoting behaviour as HSQLDB / Postgres.
+     */
+    private static final SqlDialect QUOTING_DUCKDB =
+        new DuckDBSqlDialect(
+            DuckDBSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Amazon Redshift — Calcite ships {@link RedshiftSqlDialect} but its
+     *  {@link org.apache.calcite.sql.SqlDialectFactoryImpl} doesn't match
+     *  the "Amazon Redshift" product-name string returned by the official
+     *  JDBC driver. */
+    private static final SqlDialect QUOTING_REDSHIFT =
+        new RedshiftSqlDialect(
+            RedshiftSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Apache Hive — auto-detect misses the "Apache Hive" product name. */
+    private static final SqlDialect QUOTING_HIVE =
+        new HiveSqlDialect(
+            HiveSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Trino — auto-detect recognises "Presto" (Trino's predecessor) but
+     *  not "Trino" itself. The PrestoSqlDialect is the right emit target
+     *  for both. */
+    private static final SqlDialect QUOTING_TRINO =
+        new PrestoSqlDialect(
+            PrestoSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** Exasol — auto-detect misses the "EXASolution" product name. */
+    private static final SqlDialect QUOTING_EXASOL =
+        new ExasolSqlDialect(
+            ExasolSqlDialect.DEFAULT_CONTEXT
                 .withIdentifierQuoteString("\""))
         {
             @Override
