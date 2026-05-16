@@ -911,10 +911,47 @@ public final class CalciteSqlPlanner {
         }
     }
 
+    /** Build a Calcite RexCase from a structured
+     *  {@link PlannerRequest.CaseExpr}:
+     *  {@code case when whenCol = whenLit then thenLit else elseCol end}. */
+    private static RexNode caseRex(
+        RelBuilder b, PlannerRequest.CaseExpr c)
+    {
+        RexNode whenColRef = fieldRef(b, c.whenCol);
+        RexNode whenLitRex = c.whenLiteral == null
+            ? b.literal(null)
+            : b.literal(c.whenLiteral);
+        RexNode condition = b.equals(whenColRef, whenLitRex);
+        RexNode thenRex =
+            c.thenLiteral == PlannerRequest.Measure.NULL_LITERAL
+                ? b.literal(null)
+                : c.thenLiteral == null
+                    ? b.literal(null)
+                    : b.literal(c.thenLiteral);
+        RexNode elseRex = fieldRef(b, c.elseCol);
+        // RelBuilder.call(SqlStdOperatorTable.CASE, condition, then, else)
+        // emits a 3-arg CASE.
+        return b.call(
+            org.apache.calcite.sql.fun.SqlStdOperatorTable.CASE,
+            condition, thenRex, elseRex);
+    }
+
     private static RelBuilder.AggCall aggCall(
         RelBuilder b, PlannerRequest.Measure m)
     {
-        RexNode ref = b.field(m.column.name);
+        // Literal-valued measure: aggregate the literal directly
+        // (SUM(0), SUM(NULL), etc.) instead of a column reference.
+        // CASE-valued measure: build a RexCase from the descriptor.
+        RexNode ref;
+        if (m.caseExpr != null) {
+            ref = caseRex(b, m.caseExpr);
+        } else if (m.literal != null) {
+            ref = m.literal == PlannerRequest.Measure.NULL_LITERAL
+                ? b.literal(null)
+                : b.literal(m.literal);
+        } else {
+            ref = b.field(m.column.name);
+        }
         switch (m.fn) {
         case SUM:
             if (m.distinct) {

@@ -45,16 +45,75 @@ public final class PlannerRequest {
          *  {@link AggFn#COUNT} today; rendered as {@code count(distinct x)}).
          *  Added for cardinality-probe dispatch (Task C). */
         public final boolean distinct;
+        /** When non-null, the measure aggregates this literal value
+         *  instead of a column reference. Used by the CalcitePlannerAdapters
+         *  segment-load translator for calc-columns that resolve to a
+         *  constant (e.g. {@code <CalculatedColumnDef>} with SQL just
+         *  {@code 0} / {@code NULL}). The {@link #column} alias is still
+         *  used as the result alias; the {@code column.name} is ignored.
+         *  Sentinel value {@link #NULL_LITERAL} represents SQL NULL —
+         *  distinct from "no literal set" (this field == null). */
+        public final Object literal;
+        /** When non-null, the measure aggregates a structured CASE
+         *  expression instead of a column reference. Used for
+         *  calc-column measures like FoodMart's Promotion Sales:
+         *  {@code case when promotion_id = 0 then 0 else store_sales end}.
+         *  Mutually exclusive with {@link #literal}. */
+        public final CaseExpr caseExpr;
+        /** Sentinel value used in {@link #literal} to represent SQL NULL,
+         *  distinguishing it from the field being unset (which is also
+         *  Java null). */
+        public static final Object NULL_LITERAL = new Object();
         public Measure(AggFn fn, Column column, String alias) {
-            this(fn, column, alias, false);
+            this(fn, column, alias, false, null, null);
         }
         public Measure(
             AggFn fn, Column column, String alias, boolean distinct)
+        {
+            this(fn, column, alias, distinct, null, null);
+        }
+        public Measure(
+            AggFn fn, Column column, String alias, boolean distinct,
+            Object literal)
+        {
+            this(fn, column, alias, distinct, literal, null);
+        }
+        public Measure(
+            AggFn fn, Column column, String alias, boolean distinct,
+            Object literal, CaseExpr caseExpr)
         {
             this.fn = fn;
             this.column = column;
             this.alias = alias;
             this.distinct = distinct;
+            this.literal = literal;
+            this.caseExpr = caseExpr;
+        }
+    }
+
+    /**
+     * Structured CASE expression descriptor used by
+     * {@link Measure#caseExpr}.
+     *
+     * <p>Covers the canonical FoodMart Promotion Sales shape:
+     * {@code case when whenCol = whenLiteral then thenLiteral
+     * else elseCol end}. More general CASE shapes (multi-WHEN,
+     * column-vs-column, expression operands) are deferred — the
+     * shape here is exactly what the corpus exercises.
+     */
+    public static final class CaseExpr {
+        public final Column whenCol;
+        public final Object whenLiteral;
+        public final Object thenLiteral;
+        public final Column elseCol;
+        public CaseExpr(
+            Column whenCol, Object whenLiteral,
+            Object thenLiteral, Column elseCol)
+        {
+            this.whenCol = whenCol;
+            this.whenLiteral = whenLiteral;
+            this.thenLiteral = thenLiteral;
+            this.elseCol = elseCol;
         }
     }
 

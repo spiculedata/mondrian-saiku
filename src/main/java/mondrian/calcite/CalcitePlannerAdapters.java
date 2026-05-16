@@ -2247,6 +2247,172 @@ public final class CalcitePlannerAdapters {
      * cross-dialect schema portability) translate to plain column
      * projections instead of forcing a legacy SQL fallback.
      */
+    /** Sentinel returned by {@link #literalCalcValue} when the calc column
+     *  cannot be reduced to a single literal value. */
+    private static final Object UNRESOLVED_LITERAL = new Object();
+
+    /**
+     * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose SQL
+     * is a pure literal (integer / decimal / NULL / single-quoted
+     * string, possibly with surrounding whitespace), return the
+     * parsed Java value. Otherwise return {@link #UNRESOLVED_LITERAL}.
+     *
+     * <p>Used by the segment-load measure path to translate
+     * {@code <CalculatedColumnDef><SQL>0</SQL>} and friends into a
+     * Calcite {@code SUM(literal)} call instead of falling back.
+     */
+    private static Object literalCalcValue(RolapSchema.PhysColumn col) {
+        if (!(col instanceof RolapSchema.PhysCalcColumn)) {
+            return UNRESOLVED_LITERAL;
+        }
+        String sql;
+        try {
+            sql = col.toSql();
+        } catch (RuntimeException e) {
+            return UNRESOLVED_LITERAL;
+        }
+        if (sql == null) {
+            return null;
+        }
+        String s = sql.trim();
+        if (s.isEmpty() || s.equalsIgnoreCase("NULL")) {
+            return null;
+        }
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        try {
+            return new java.math.BigDecimal(s);
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        // Single-quoted string literal: 'foo' or 'it''s'.
+        if (s.length() >= 2 && s.charAt(0) == '\''
+            && s.charAt(s.length() - 1) == '\'')
+        {
+            return s.substring(1, s.length() - 1).replace("''", "'");
+        }
+        return UNRESOLVED_LITERAL;
+    }
+
+    /** Regex for the connective text between operands in the canonical
+     *  Promotion-Sales-shaped CASE. Captures the comparison literal in
+     *  group 1 and the THEN literal in group 2. Matches with leading
+     *  and trailing whitespace tolerance. */
+    private static final java.util.regex.Pattern CASE_MID_RE =
+        java.util.regex.Pattern.compile(
+            "\\s*=\\s*([-+]?[0-9]+(?:\\.[0-9]+)?)\\s+then\\s+"
+            + "([-+]?[0-9]+(?:\\.[0-9]+)?|NULL|null)\\s+else\\s*",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose
+     * PhysExpr list matches the canonical Promotion-Sales-shaped CASE
+     * (canon: {@code case when <col> = <lit> then <lit> else <col> end}),
+     * return a {@link PlannerRequest.CaseExpr} descriptor. Otherwise
+     * return {@code null}.
+     *
+     * <p>Whitespace-only PhysTextExpr nodes (from XML pretty-printing)
+     * are skipped during list traversal.
+     */
+    private static PlannerRequest.CaseExpr caseExprFromCalc(
+        RolapSchema.PhysColumn col, String factAlias)
+    {
+        if (!(col instanceof RolapSchema.PhysCalcColumn)) {
+            return null;
+        }
+        List<RolapSchema.PhysExpr> list =
+            ((RolapSchema.PhysCalcColumn) col).getList();
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        // Strip whitespace-only PhysTextExpr nodes.
+        List<RolapSchema.PhysExpr> trimmed = new java.util.ArrayList<>();
+        for (RolapSchema.PhysExpr e : list) {
+            if (e instanceof RolapSchema.PhysTextExpr
+                && (e.toSql() == null || e.toSql().trim().isEmpty()))
+            {
+                continue;
+            }
+            trimmed.add(e);
+        }
+        // Expect 5 elements: TEXT("case when "), COL, TEXT(" = N then N else "),
+        // COL, TEXT(" end").
+        if (trimmed.size() != 5) {
+            return null;
+        }
+        if (!(trimmed.get(0) instanceof RolapSchema.PhysTextExpr)
+            || !(trimmed.get(1) instanceof RolapSchema.PhysRealColumn)
+            || !(trimmed.get(2) instanceof RolapSchema.PhysTextExpr)
+            || !(trimmed.get(3) instanceof RolapSchema.PhysRealColumn)
+            || !(trimmed.get(4) instanceof RolapSchema.PhysTextExpr))
+        {
+            return null;
+        }
+        String head = trimmed.get(0).toSql().trim().toLowerCase(
+            java.util.Locale.ROOT);
+        String tail = trimmed.get(4).toSql().trim().toLowerCase(
+            java.util.Locale.ROOT);
+        if (!head.equals("case when") || !tail.equals("end")) {
+            return null;
+        }
+        java.util.regex.Matcher mid = CASE_MID_RE.matcher(
+            trimmed.get(2).toSql());
+        if (!mid.matches()) {
+            return null;
+        }
+        Object whenLit = parseNumericOrNull(mid.group(1));
+        Object thenLit = parseNumericOrNull(mid.group(2));
+        if (whenLit == UNRESOLVED_LITERAL || thenLit == UNRESOLVED_LITERAL) {
+            return null;
+        }
+        RolapSchema.PhysRealColumn whenCol =
+            (RolapSchema.PhysRealColumn) trimmed.get(1);
+        RolapSchema.PhysRealColumn elseCol =
+            (RolapSchema.PhysRealColumn) trimmed.get(3);
+        return new PlannerRequest.CaseExpr(
+            new PlannerRequest.Column(
+                whenCol.relation == null
+                    ? factAlias
+                    : whenCol.relation.getAlias(),
+                whenCol.name),
+            whenLit,
+            thenLit == null
+                ? PlannerRequest.Measure.NULL_LITERAL
+                : thenLit,
+            new PlannerRequest.Column(
+                elseCol.relation == null
+                    ? factAlias
+                    : elseCol.relation.getAlias(),
+                elseCol.name));
+    }
+
+    /** Parse a string as a numeric literal or SQL NULL. Returns
+     *  Java null for NULL/null, Long for integers, BigDecimal for
+     *  decimals, or {@link #UNRESOLVED_LITERAL} on parse failure. */
+    private static Object parseNumericOrNull(String s) {
+        if (s == null) {
+            return UNRESOLVED_LITERAL;
+        }
+        String t = s.trim();
+        if (t.equalsIgnoreCase("NULL")) {
+            return null;
+        }
+        try {
+            return Long.parseLong(t);
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        try {
+            return new java.math.BigDecimal(t);
+        } catch (NumberFormatException ignored) {
+            // fall through
+        }
+        return UNRESOLVED_LITERAL;
+    }
+
     private static RolapSchema.PhysColumn unwrapToRealColumn(
         RolapSchema.PhysColumn col)
     {
@@ -2461,31 +2627,82 @@ public final class CalcitePlannerAdapters {
                     "fromSegmentLoad: measure not on fact table: "
                     + m.getName());
             }
-            RolapSchema.PhysColumn mexpr =
-                unwrapToRealColumn(m.getExpression());
-            if (!(mexpr instanceof RolapSchema.PhysRealColumn)) {
-                String shape = "";
-                if (m.getExpression() instanceof RolapSchema.PhysCalcColumn) {
-                    try {
-                        shape = " [sql=" + m.getExpression().toSql() + "]";
-                    } catch (RuntimeException ignored) {
-                        // best-effort
-                    }
-                }
-                throw new UnsupportedTranslation(
-                    "fromSegmentLoad: non-real measure expression "
-                    + mexpr + shape);
-            }
-            AggOp op = mapAggregator(m.getAggregator());
-            String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
+            RolapSchema.PhysColumn rawExpr = m.getExpression();
+            RolapSchema.PhysColumn mexpr = unwrapToRealColumn(rawExpr);
             String alias = "m" + i;
-            b.addMeasure(
-                new PlannerRequest.Measure(
-                    op.fn,
-                    new PlannerRequest.Column(factTable.getAlias(), mcol),
-                    alias,
-                    op.distinct));
-            starMeasureAliases.put(m, alias);
+            AggOp op = mapAggregator(m.getAggregator());
+            // Synthetic/null-expression measure → emit SUM(NULL).
+            if (rawExpr == null) {
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(
+                            factTable.getAlias(), alias),
+                        alias,
+                        op.distinct,
+                        PlannerRequest.Measure.NULL_LITERAL));
+                starMeasureAliases.put(m, alias);
+                continue;
+            }
+            if (mexpr instanceof RolapSchema.PhysRealColumn) {
+                String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(
+                            factTable.getAlias(), mcol),
+                        alias,
+                        op.distinct));
+                starMeasureAliases.put(m, alias);
+                continue;
+            }
+            // Calc-column that's a pure literal (e.g.
+            // <CalculatedColumnDef><SQL>0</SQL>) — aggregate the literal
+            // directly. SUM(0)=0*N, SUM(NULL)=NULL, etc.
+            Object lit = literalCalcValue(m.getExpression());
+            if (lit != UNRESOLVED_LITERAL) {
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(
+                            factTable.getAlias(), alias),
+                        alias,
+                        op.distinct,
+                        lit == null
+                            ? PlannerRequest.Measure.NULL_LITERAL
+                            : lit));
+                starMeasureAliases.put(m, alias);
+                continue;
+            }
+            // Calc-column shaped like the canonical FoodMart Promotion
+            // Sales: case when COL = LIT then LIT else COL end. Match
+            // the PhysCalcColumn list and emit a structured CaseExpr.
+            PlannerRequest.CaseExpr caseExpr =
+                caseExprFromCalc(m.getExpression(), factTable.getAlias());
+            if (caseExpr != null) {
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(
+                            factTable.getAlias(), alias),
+                        alias,
+                        op.distinct,
+                        null,
+                        caseExpr));
+                starMeasureAliases.put(m, alias);
+                continue;
+            }
+            String shape = "";
+            if (m.getExpression() instanceof RolapSchema.PhysCalcColumn) {
+                try {
+                    shape = " [sql=" + m.getExpression().toSql() + "]";
+                } catch (RuntimeException ignored) {
+                    // best-effort
+                }
+            }
+            throw new UnsupportedTranslation(
+                "fromSegmentLoad: non-real measure expression "
+                + mexpr + shape);
         }
 
         // 3) Computed (calc) measures from the per-query registry. For
