@@ -189,6 +189,17 @@ public class MvRegistry {
         if (calciteSchema == null) {
             throw new IllegalArgumentException("calciteSchema is null");
         }
+        // Honour the existing Mondrian SPI contract:
+        // mondrian.rolap.aggregates.Use=false disables agg-table routing.
+        // Without this guard the Calcite MV rule still rewrites queries
+        // to scan agg tables — silently violating the property when the
+        // Calcite backend is in use.
+        if (!mondrian.olap.MondrianProperties.instance().UseAggregates
+            .get())
+        {
+            return new MvRegistry(
+                java.util.Collections.<RelOptMaterialization>emptyList());
+        }
         List<RelOptMaterialization> out = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         List<ShapeSpec> allSpecs = new ArrayList<>();
