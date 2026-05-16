@@ -184,14 +184,15 @@ public final class CalcitePlannerAdapters {
             // member is all/default/calculated/measure) collapses to a
             // plain dim enumeration — equivalent to DefaultTupleConstraint.
             // The full slicer-aware translation (fact-join + per-member
-            // filters) is bigger surgery; handle the trivial case now
-            // so plain "WHERE ()" or default-slicer queries take the
-            // Calcite path.
-            if (constraint instanceof SqlContextConstraint
-                && isEffectivelyEmptySlicer(
-                    (SqlContextConstraint) constraint))
-            {
-                // fall through to the DefaultTupleConstraint path below
+            // filters) is the slicer-aware path below.
+            if (constraint instanceof SqlContextConstraint) {
+                SqlContextConstraint sc = (SqlContextConstraint) constraint;
+                if (isEffectivelyEmptySlicer(sc)) {
+                    // fall through to the DefaultTupleConstraint path below
+                } else {
+                    return translateSqlContextConstraintTupleRead(
+                        levels, sc);
+                }
             } else {
                 throw new UnsupportedTranslation(
                     "fromTupleRead: non-default TupleConstraint not yet "
@@ -263,6 +264,103 @@ public final class CalcitePlannerAdapters {
         }
 
         b.distinct(true);
+        return b.build();
+    }
+
+    /**
+     * Translate a {@link SqlContextConstraint} (slicer-aware tuple read
+     * — typically NON EMPTY with pinned context members) into a
+     * fact-rooted {@link PlannerRequest}.
+     *
+     * <p>Output shape: {@code SELECT DISTINCT <dim.key cols>
+     * FROM fact JOIN dim ... WHERE <slicer-key equality filters>}.
+     *
+     * <p>Per-target shape resolution reuses {@link #shapeFor} so
+     * snowflake / composite-key / calc-column unwrap behaviours match
+     * the other paths. Slicer pinning reuses {@link #addSlicerFilters}.
+     * Anything outside the supported subset throws
+     * {@link UnsupportedTranslation}.
+     */
+    private static PlannerRequest translateSqlContextConstraintTupleRead(
+        List<RolapCubeLevel> levels, SqlContextConstraint constraint)
+    {
+        Evaluator evalObj = constraint.getEvaluator();
+        if (!(evalObj instanceof RolapEvaluator)) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: SqlContextConstraint evaluator is not a "
+                + "RolapEvaluator");
+        }
+        RolapEvaluator evaluator = (RolapEvaluator) evalObj;
+        List<RolapMeasureGroup> mgs = constraint.getMeasureGroupList();
+        if (mgs == null || mgs.isEmpty()) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: SqlContextConstraint has no measure group");
+        }
+        if (mgs.size() > 1) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: SqlContextConstraint spans multiple measure "
+                + "groups (got " + mgs.size() + ")");
+        }
+        RolapStar star = mgs.get(0).getStar();
+        RolapStar.Table factTable = star.getFactTable();
+        RolapSchema.PhysRelation factRel = factTable.getRelation();
+        if (!(factRel instanceof RolapSchema.PhysTable)) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: SqlContextConstraint fact table is not a "
+                + "PhysTable");
+        }
+        String factName = ((RolapSchema.PhysTable) factRel).getName();
+        PlannerRequest.Builder b = PlannerRequest.builder(factName);
+        Set<String> joinedAliases = new LinkedHashSet<>();
+        joinedAliases.add(factTable.getAlias());
+
+        // Build per-target shapes (snowflake-aware via shapeFor).
+        TargetShape[] shapes = new TargetShape[levels.size()];
+        for (int i = 0; i < levels.size(); i++) {
+            try {
+                shapes[i] = shapeFor(levels.get(i));
+            } catch (UnsupportedTranslation ex) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: SqlContextConstraint target[" + i
+                    + "] unsupported — " + ex.getMessage());
+            }
+        }
+
+        // Ensure each target's dim chain is reachable from the fact.
+        Set<String> projectedKeys = new LinkedHashSet<>();
+        for (int i = 0; i < shapes.length; i++) {
+            TargetShape shape = shapes[i];
+            for (RolapSchema.PhysRelation rel
+                : collectNecjRelations(shape))
+            {
+                RolapStar.Table relStar = findStarTable(factTable, rel);
+                if (relStar == null) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: SqlContextConstraint target[" + i
+                        + "] referenced table " + rel.getAlias()
+                        + " is not reachable from fact "
+                        + factTable.getAlias());
+                }
+                if (relStar != factTable) {
+                    ensureJoinedChain(
+                        b, factTable, relStar, joinedAliases);
+                }
+            }
+        }
+
+        // Per-target projections + GROUP BY (mirrors NECJ path).
+        for (int i = 0; i < shapes.length; i++) {
+            emitNecjTargetProjections(b, projectedKeys, shapes[i]);
+        }
+
+        // Slicer pinning: every non-default non-measure context member
+        // becomes an equality filter on its level's leaf key column.
+        // Pass an empty CrossJoinArg[] so addSlicerFilters doesn't
+        // skip any hierarchies (the levels[] entries here aren't
+        // CrossJoinArgs).
+        addSlicerFilters(
+            b, evaluator, factTable, joinedAliases,
+            new CrossJoinArg[0]);
         return b.build();
     }
 
