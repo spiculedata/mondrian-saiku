@@ -959,7 +959,11 @@ public class MemberCacheControlTest extends FoodMartTestCase {
             testContext.getConnection()
                 .getSchema().lookupCube("Sales", true);
 
-        final Logger logger = RolapUtil.SQL_LOGGER;
+        // Direct log4j 1.x handle to the "mondrian.sql" logger so the
+        // WriterAppender/setLevel below still work — RolapUtil.SQL_LOGGER
+        // is now the SLF4J facade and doesn't expose those methods.
+        final Logger logger =
+            org.apache.log4j.LogManager.getLogger("mondrian.sql");
         final Level level = logger.getLevel();
         final StringWriter sw = new StringWriter();
         final WriterAppender appender =

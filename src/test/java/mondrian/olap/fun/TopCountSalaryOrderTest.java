@@ -25,7 +25,8 @@ public class TopCountSalaryOrderTest extends FoodMartTestCase {
     /** Default config — native TopCount enabled. */
     public void testTopCountSalaryDefault() {
         // saiku#809 SQL trace
-        org.apache.log4j.Logger sqlLog = mondrian.rolap.RolapUtil.SQL_LOGGER;
+        org.apache.log4j.Logger sqlLog =
+            org.apache.log4j.LogManager.getLogger("mondrian.sql");
         org.apache.log4j.Level prevLevel = sqlLog.getLevel();
         org.apache.log4j.Appender appender = new org.apache.log4j.ConsoleAppender(
                 new org.apache.log4j.PatternLayout("[mondrian.sql] %m%n"));

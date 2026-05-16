@@ -14,7 +14,8 @@ import mondrian.parser.*;
 import mondrian.resource.MondrianResource;
 import mondrian.server.Statement;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * <code>ConnectionBase</code> implements some of the methods in

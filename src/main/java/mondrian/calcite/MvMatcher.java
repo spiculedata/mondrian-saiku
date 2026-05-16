@@ -9,7 +9,8 @@
 */
 package mondrian.calcite;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -63,7 +64,7 @@ import java.util.Set;
  */
 public final class MvMatcher {
 
-    private static final Logger LOGGER = Logger.getLogger(MvMatcher.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(MvMatcher.class);
 
     private static final boolean TRACE =
         Boolean.getBoolean("mondrian.calcite.trace");

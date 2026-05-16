@@ -18,7 +18,8 @@ import mondrian.spi.Dialect.Datatype;
 import mondrian.util.ArraySortedSet;
 import mondrian.util.Pair;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.olap4j.impl.UnmodifiableArrayList;
 
@@ -35,7 +36,7 @@ import java.util.Map.Entry;
  */
 public class SegmentBuilder {
     private static final Logger LOGGER =
-        Logger.getLogger(SegmentBuilder.class);
+        LoggerFactory.getLogger(SegmentBuilder.class);
     /**
      * Converts a segment plus a {@link SegmentBody} into a
      * {@link mondrian.rolap.agg.SegmentWithData}.

@@ -17,7 +17,8 @@ import mondrian.server.monitor.*;
 import mondrian.server.monitor.SqlStatementEvent.Purpose;
 import mondrian.util.*;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Proxy;
 import java.sql.*;
@@ -58,7 +59,7 @@ import javax.sql.DataSource;
  * @since 2.3
  */
 public class SqlStatement implements DBStatement {
-    private static final Logger LOG = Logger.getLogger(SqlStatement.class);
+    private static final Logger LOG = LoggerFactory.getLogger(SqlStatement.class);
     private static final String TIMING_NAME = "SqlStatement-";
 
     // used for SQL logging, allows for a SQL Statement UID

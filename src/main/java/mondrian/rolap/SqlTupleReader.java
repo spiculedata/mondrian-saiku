@@ -33,7 +33,8 @@ import mondrian.server.monitor.SqlStatementEvent;
 import mondrian.spi.Dialect;
 import mondrian.util.Pair;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -83,7 +84,7 @@ import static mondrian.rolap.LevelColumnLayout.OrderKeySource.*;
  */
 public class SqlTupleReader implements TupleReader {
     private static final Logger LOGGER =
-        Logger.getLogger(SqlTupleReader.class);
+        LoggerFactory.getLogger(SqlTupleReader.class);
 
     /**
      * Test-only: drop the shared Calcite planner cache. Delegates to
