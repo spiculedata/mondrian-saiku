@@ -37,7 +37,8 @@ import mondrian.util.*;
 import mondrian.util.Bug;
 
 import org.apache.commons.collections.map.MultiValueMap;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.eigenbase.xom.*;
 
@@ -60,7 +61,7 @@ import static mondrian.olap.Util.first;
  * @author jhyde
  */
 public class RolapSchemaLoader {
-    private static final Logger LOGGER = Logger.getLogger(RolapSchema.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(RolapSchema.class);
 
     private static final Set<Access> schemaAllowed =
         Olap4jUtil.enumSetOf(

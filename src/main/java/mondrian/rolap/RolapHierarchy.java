@@ -23,7 +23,8 @@ import mondrian.rolap.sql.SqlQuery;
 import mondrian.spi.CellFormatter;
 import mondrian.spi.impl.Scripts;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.olap4j.impl.NamedListImpl;
 import org.olap4j.metadata.NamedList;
@@ -43,7 +44,7 @@ import java.util.*;
   */
 public class RolapHierarchy extends HierarchyBase {
 
-    private static final Logger LOGGER = Logger.getLogger(RolapHierarchy.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(RolapHierarchy.class);
 
     protected RolapMember nullMember;
 

@@ -81,9 +81,16 @@
 
     <dependency><groupId>jakarta.servlet</groupId><artifactId>jakarta.servlet-api</artifactId><version>6.0.0</version><scope>provided</scope></dependency>
     <dependency><groupId>jakarta.servlet.jsp</groupId><artifactId>jakarta.servlet.jsp-api</artifactId><version>3.1.1</version><scope>provided</scope></dependency>
-    <!-- log4j 1.2 API bridge → log4j 2.x runtime (no source changes, patched CVE-free) -->
-    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-1.2-api</artifactId><version>2.23.1</version></dependency>
+    <!-- Logging: SLF4J 2.x API for most of the codebase; log4j2 as the runtime binding.
+         The log4j-1.2-api bridge is retained because a handful of admin/TUI files
+         (mondrian.tui.CmdRunner) and several test-log-capture utilities still use
+         log4j 1.x classes directly (Appender, Level, WriterAppender, MDC). Migrating
+         those is tracked separately — see follow-up issue. -->
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.13</version></dependency>
+    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-slf4j2-impl</artifactId><version>2.23.1</version><scope>runtime</scope></dependency>
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.23.1</version><scope>runtime</scope></dependency>
+    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-api</artifactId><version>2.23.1</version></dependency>
+    <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-1.2-api</artifactId><version>2.23.1</version></dependency>
 
     <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>
     <dependency><groupId>xmlunit</groupId><artifactId>xmlunit</artifactId><version>1.6</version><scope>test</scope></dependency>

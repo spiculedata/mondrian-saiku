@@ -13,7 +13,8 @@ import mondrian.olap.*;
 import mondrian.rolap.RolapSchemaLoader;
 import mondrian.spi.Dialect;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Holder for constants which indicate whether particular issues have been
@@ -278,7 +279,7 @@ public class Bug {
         return
             !BugMondrian759Fixed
             && dialect.getDatabaseProduct() == Dialect.DatabaseProduct.LUCIDDB
-            && !Logger.getLogger("mondrian.test.PerformanceTest")
+            && !LoggerFactory.getLogger("mondrian.test.PerformanceTest")
                 .isDebugEnabled();
     }
 

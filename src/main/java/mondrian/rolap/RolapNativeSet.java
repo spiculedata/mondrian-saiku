@@ -21,7 +21,8 @@ import mondrian.rolap.sql.*;
 import mondrian.spi.*;
 
 import org.apache.commons.collections.*;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import javax.sql.DataSource;
@@ -43,7 +44,7 @@ import static mondrian.spi.DataServicesLocator.*;
   */
 public abstract class RolapNativeSet extends RolapNative {
     protected static final Logger LOGGER =
-        Logger.getLogger(RolapNativeSet.class);
+        LoggerFactory.getLogger(RolapNativeSet.class);
 
     private SmartCache<Object, TupleList> cache =
         new SoftSmartCache<Object, TupleList>();

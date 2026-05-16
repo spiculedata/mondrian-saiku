@@ -13,7 +13,8 @@ import mondrian.olap.Util;
 import mondrian.resource.MondrianResource;
 import mondrian.rolap.RolapUtil;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Statement;
 import java.util.*;
@@ -34,7 +35,7 @@ import javax.script.*;
  */
 public class UtilCompatibleJdk16 extends UtilCompatibleJdk15 {
     private static final Logger LOGGER =
-        Logger.getLogger(Util.class);
+        LoggerFactory.getLogger(Util.class);
 
     public <T> T compileScript(
         Class<T> iface,
@@ -77,7 +78,7 @@ public class UtilCompatibleJdk16 extends UtilCompatibleJdk15 {
                 LOGGER.trace(
                     MondrianResource.instance()
                         .ExecutionStatementCleanupException
-                            .ex(e.getMessage(), e),
+                            .ex(e.getMessage(), e).getMessage(),
                     e);
             }
         }

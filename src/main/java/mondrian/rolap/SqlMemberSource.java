@@ -23,7 +23,8 @@ import mondrian.server.monitor.SqlStatementEvent;
 import mondrian.spi.Dialect;
 import mondrian.util.*;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.eigenbase.util.property.StringProperty;
 
 import java.sql.*;
@@ -44,7 +45,7 @@ public class SqlMemberSource
     implements MemberReader, SqlTupleReader.MemberBuilder
 {
     private static final Logger LOGGER =
-        Logger.getLogger(SqlMemberSource.class);
+        LoggerFactory.getLogger(SqlMemberSource.class);
     private final SqlConstraintFactory sqlConstraintFactory =
         SqlConstraintFactory.instance();
     protected final RolapCubeHierarchy hierarchy;

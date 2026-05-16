@@ -22,7 +22,8 @@ import mondrian.server.Locus;
 import mondrian.spi.Dialect;
 import mondrian.spi.StatisticsProvider;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.*;
 import java.util.Arrays;
@@ -35,7 +36,7 @@ import javax.sql.DataSource;
 public class SqlStatisticsProvider implements StatisticsProvider {
 
     private static final Logger LOGGER =
-        Logger.getLogger(SqlStatisticsProvider.class);
+        LoggerFactory.getLogger(SqlStatisticsProvider.class);
 
     /**
      * Dispatches to {@link CalcitePlannerCache}, which is keyed on JDBC

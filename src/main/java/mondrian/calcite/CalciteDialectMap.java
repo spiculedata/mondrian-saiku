@@ -22,7 +22,8 @@ import org.apache.calcite.sql.dialect.ExasolSqlDialect;
 import org.apache.calcite.sql.dialect.SparkSqlDialect;
 import org.apache.calcite.sql.dialect.PhoenixSqlDialect;
 import org.apache.calcite.sql.dialect.LucidDbSqlDialect;
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -57,7 +58,7 @@ import javax.sql.DataSource;
  */
 public final class CalciteDialectMap {
     private static final Logger LOGGER =
-        Logger.getLogger(CalciteDialectMap.class);
+        LoggerFactory.getLogger(CalciteDialectMap.class);
 
     /**
      * Product names we have already logged "no Calcite dialect, falling

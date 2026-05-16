@@ -32,7 +32,8 @@ import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.mapping.IntPair;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.ImmutableList;
 
@@ -69,7 +70,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CalciteMondrianSchema {
 
     private static final Logger LOGGER =
-        Logger.getLogger(CalciteMondrianSchema.class);
+        LoggerFactory.getLogger(CalciteMondrianSchema.class);
 
     /** Opt-in profiling switch. Guarded by {@code -Dharness.calcite.profile=true}.
      *  When enabled, each constructor call records elapsed nanos under the

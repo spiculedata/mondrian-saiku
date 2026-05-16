@@ -13,7 +13,8 @@ import mondrian.olap.Util;
 import mondrian.resource.MondrianResource;
 import mondrian.rolap.RolapUtil;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.annotation.Annotation;
 import java.lang.management.*;
@@ -39,7 +40,7 @@ import java.util.regex.Pattern;
  * @since Feb 5, 2007
  */
 public class UtilCompatibleJdk15 implements UtilCompatible {
-    private static final Logger LOGGER = Logger.getLogger(Util.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(Util.class);
 
     /**
      * This generates a BigDecimal with a precision reflecting
@@ -153,7 +154,7 @@ public class UtilCompatibleJdk15 implements UtilCompatible {
                 LOGGER.debug(
                     MondrianResource.instance()
                         .ExecutionStatementCleanupException
-                            .ex(e.getMessage(), e),
+                            .ex(e.getMessage(), e).getMessage(),
                     e);
             }
         }

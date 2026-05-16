@@ -36,7 +36,8 @@ import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RelBuilder;
 
-import org.apache.log4j.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import mondrian.olap.Exp;
 import mondrian.olap.Member;
@@ -58,7 +59,7 @@ import java.util.Map;
 public final class CalciteSqlPlanner {
 
     private static final Logger LOGGER =
-        Logger.getLogger(CalciteSqlPlanner.class);
+        LoggerFactory.getLogger(CalciteSqlPlanner.class);
 
     /** Opt-in profiling switch ({@code -Dharness.calcite.profile=true}).
      *  When enabled each phase of {@link #plan} / {@link #planRel} records
