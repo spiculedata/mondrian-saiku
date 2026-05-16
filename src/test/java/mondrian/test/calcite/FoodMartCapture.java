@@ -90,12 +90,21 @@ final class FoodMartCapture {
         // the SqlCapture-wrapped connection. Otherwise the flush would
         // either route through the wrapper (polluting capture) or close
         // the schema we're about to query on.
-        Connection flushConn = DriverManager.getConnection(
-            baseProperties(), null, null);
-        try {
-            flushConn.getCacheControl(null).flushSchemaCache();
-        } finally {
-            flushConn.close();
+        //
+        // Skipped for DUCKDB: opening a non-SqlCapture connection to the
+        // DuckDB file here creates a second DuckDB instance that conflicts
+        // with the SqlCapture-wrapped one (DuckDB: "Can't open a connection
+        // to same database file with a different configuration"). The flush
+        // is redundant anyway because UseSchemaPool=false is set below —
+        // every executeCold gets a fresh schema regardless.
+        if (HarnessBackend.current() != HarnessBackend.DUCKDB) {
+            Connection flushConn = DriverManager.getConnection(
+                baseProperties(), null, null);
+            try {
+                flushConn.getCacheControl(null).flushSchemaCache();
+            } finally {
+                flushConn.close();
+            }
         }
 
         DataSource underlying = buildUnderlyingDataSource();
@@ -150,6 +159,8 @@ final class FoodMartCapture {
         switch (backend) {
         case POSTGRES:
             return PostgresFoodMartDataSource.create();
+        case DUCKDB:
+            return DuckDbFoodMartDataSource.create();
         case HSQLDB:
         default:
             String jdbcUrl =

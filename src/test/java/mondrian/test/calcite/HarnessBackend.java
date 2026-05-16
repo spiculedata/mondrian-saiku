@@ -28,7 +28,8 @@ import java.util.Locale;
  */
 public enum HarnessBackend {
     HSQLDB,
-    POSTGRES;
+    POSTGRES,
+    DUCKDB;
 
     public static final String SYS_PROP = "calcite.harness.backend";
     public static final String ENV_VAR = "CALCITE_HARNESS_BACKEND";
@@ -47,7 +48,7 @@ public enum HarnessBackend {
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(
                 "Unrecognised " + ENV_VAR + "/" + SYS_PROP + " value '"
-                + raw + "'. Expected one of: HSQLDB, POSTGRES.");
+                + raw + "'. Expected one of: HSQLDB, POSTGRES, DUCKDB.");
         }
     }
 }

@@ -1,0 +1,80 @@
+name: cross-backend equivalence
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two jobs assert cross-DB equivalence transitively:
+#   1. hsqldb-calcite-vs-legacy: Calcite (interceptor) MUST match legacy
+#      (no interceptor) on HSQLDB, gated by the EquivalenceHarness's
+#      hard rowCount + checksum gate.
+#   2. duckdb-calcite-vs-golden: Calcite-against-DuckDB MUST produce the
+#      same OLAP cell-set as the HSQLDB-legacy golden (cross-DB mode
+#      relaxes per-SQL implementation gates; only the user-visible
+#      cell-set is asserted).
+#
+# Transitive guarantee: (HSQLDB-Calcite ≡ HSQLDB-legacy) AND
+# (DuckDB-Calcite ≡ HSQLDB-legacy-golden) → DuckDB-Calcite ≡ HSQLDB-legacy.
+# Both jobs must pass for a PR to be merge-eligible.
+
+jobs:
+  hsqldb-calcite-vs-legacy:
+    name: HSQLDB Calcite ≡ legacy (41-query harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Run Calcite-vs-legacy equivalence harness
+        run: |
+          mvn -B -ntp -Pcalcite-harness \
+            -Dtest=EquivalenceSmokeTest,EquivalenceAggregateTest,EquivalenceCalcTest \
+            -Dmondrian.calcite.strict=true \
+            test
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hsqldb-surefire-reports
+          path: target/surefire-reports/
+          retention-days: 14
+
+  duckdb-calcite-vs-golden:
+    name: DuckDB Calcite ≡ HSQLDB-legacy golden (cross-DB, 41-query)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Bootstrap DuckDB FoodMart (HSQLDB → DuckDB via loader)
+        run: ./scripts/bootstrap-duckdb-foodmart.sh
+      - name: Run cross-DB equivalence harness against DuckDB
+        run: |
+          mvn -B -ntp -Pcalcite-harness \
+            -Dtest=EquivalenceSmokeTest,EquivalenceAggregateTest,EquivalenceCalcTest \
+            -Dcalcite.harness.backend=DUCKDB \
+            -Dmondrian.foodmart.jdbcURL=jdbc:duckdb:/tmp/foodmart.duckdb \
+            -Dharness.crossDbCompare=true \
+            -Dmondrian.calcite.strict=true \
+            test
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duckdb-surefire-reports
+          path: target/surefire-reports/
+          retention-days: 14
