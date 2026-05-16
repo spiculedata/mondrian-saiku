@@ -24,9 +24,21 @@ public class TopCountSalaryOrderTest extends FoodMartTestCase {
 
     /** Default config — native TopCount enabled. */
     public void testTopCountSalaryDefault() {
-        String actual = renderQuery(MDX);
-        System.out.println("=== saiku#809 DEFAULT ===\n" + actual);
-        assertTrue("top row should be 283 count: " + actual, actual.contains("Row #0: 283"));
+        // saiku#809 SQL trace
+        org.apache.log4j.Logger sqlLog = mondrian.rolap.RolapUtil.SQL_LOGGER;
+        org.apache.log4j.Level prevLevel = sqlLog.getLevel();
+        org.apache.log4j.Appender appender = new org.apache.log4j.ConsoleAppender(
+                new org.apache.log4j.PatternLayout("[mondrian.sql] %m%n"));
+        sqlLog.addAppender(appender);
+        sqlLog.setLevel(org.apache.log4j.Level.DEBUG);
+        try {
+            String actual = renderQuery(MDX);
+            System.out.println("=== saiku#809 DEFAULT ===\n" + actual);
+            assertTrue("top row should be 283 count: " + actual, actual.contains("Row #0: 283"));
+        } finally {
+            sqlLog.removeAppender(appender);
+            sqlLog.setLevel(prevLevel);
+        }
     }
 
     /** {@code EnableNativeTopCount=false} — Java path. */
@@ -72,6 +84,20 @@ public class TopCountSalaryOrderTest extends FoodMartTestCase {
         } finally {
             props.EnableNativeTopCount.set(wasEnabled);
         }
+    }
+
+    /** Top 10 — does the bug show in rows 3/4 still, or do rows beyond 5
+     *  come back in the right order? Tells us if H2's setMaxRows is
+     *  truncating before the sort completes. */
+    public void testTopCount10Salary() {
+        String mdx =
+                "SELECT NON EMPTY {[Measures].[Number of Employees]} ON COLUMNS,\n"
+                + "NON EMPTY TopCount([Employee].[Salary].[Salary].Members, 10,"
+                + " [Measures].[Number of Employees]) ON ROWS\n"
+                + "FROM [HR]";
+        String actual = renderQuery(mdx);
+        System.out.println("=== saiku#809 TOP 10 ===\n" + actual);
+        assertTrue("top row should be 283 count: " + actual, actual.contains("Row #0: 283"));
     }
 
     /**
