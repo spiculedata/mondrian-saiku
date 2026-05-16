@@ -18,6 +18,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import javax.sql.DataSource;
 import org.apache.calcite.sql.SqlDialect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Process-wide cache of {@link CalciteSqlPlanner} instances keyed on JDBC
@@ -41,6 +43,9 @@ import org.apache.calcite.sql.SqlDialect;
  */
 public final class CalcitePlannerCache {
 
+    private static final Logger LOGGER =
+        LoggerFactory.getLogger(CalcitePlannerCache.class);
+
     private static final ConcurrentMap<Key, CalciteSqlPlanner> CACHE =
         new ConcurrentHashMap<>();
 
@@ -52,6 +57,19 @@ public final class CalcitePlannerCache {
      * the steady state.
      */
     private static final Set<Key> UNSUPPORTED =
+        ConcurrentHashMap.newKeySet();
+
+    /**
+     * JDBC identities for which the latest {@link CalciteMondrianSchema}
+     * build raised {@link CalciteMondrianSchema.JdbcSchemaNotReadyException}.
+     * Tracked only to suppress duplicate WARN lines while the underlying
+     * backing store is still initialising — the key is dropped on the first
+     * successful build. Unlike {@link #UNSUPPORTED} entries, these are
+     * <em>not</em> sticky: every miss retries the build until it succeeds
+     * (or the database keeps returning empty metadata forever, in which
+     * case one WARN line per JVM lifetime is acceptable noise).
+     */
+    private static final Set<Key> NOT_READY_WARNED =
         ConcurrentHashMap.newKeySet();
 
     private CalcitePlannerCache() {
@@ -119,9 +137,31 @@ public final class CalcitePlannerCache {
             }
             // Race-tolerant: putIfAbsent picks a winner if two threads
             // hit this branch simultaneously for the same key.
-            CalciteSqlPlanner built = build(ds, rolapSchema, dialect);
+            CalciteSqlPlanner built;
+            try {
+                built = build(ds, rolapSchema, dialect);
+            } catch (CalciteMondrianSchema.JdbcSchemaNotReadyException re) {
+                // Backing JDBC source not yet ready (H2 .mv.db lazy load,
+                // pool warmup race). Do NOT cache and do NOT mark as
+                // UNSUPPORTED — the next call should retry. See issue #30.
+                if (NOT_READY_WARNED.add(key)) {
+                    String msg =
+                        "[calcite-cache] JdbcSchema not ready for " + key
+                        + " — falling back to legacy SQL builder for "
+                        + "this call. Will retry on next request. "
+                        + "Details: " + re.getMessage();
+                    LOGGER.warn(msg);
+                    if (diag) {
+                        System.err.println(msg);
+                    }
+                }
+                return null;
+            }
             CalciteSqlPlanner prior = CACHE.putIfAbsent(key, built);
             planner = prior != null ? prior : built;
+            // First successful build for this key — silence any future
+            // not-ready warnings (the cache will be hit from here on).
+            NOT_READY_WARNED.remove(key);
         }
         // Late-bind the registry if the first caller didn't have a
         // RolapSchema (e.g. SqlStatisticsProvider's cardinality probe
@@ -178,6 +218,7 @@ public final class CalcitePlannerCache {
     public static void clear() {
         CACHE.clear();
         UNSUPPORTED.clear();
+        NOT_READY_WARNED.clear();
     }
 
     /** Test seam: how many planners are currently cached. */

@@ -118,13 +118,24 @@ public final class CalciteMondrianSchema {
         JdbcSchema jdbc =
             JdbcSchema.create(root, schemaName, dataSource, null, null);
 
-        // 2) Probe DatabaseMetaData for declared PK/FK. Merge with the
+        // 2) Validate the JdbcSchema is fully populated before any caller
+        //    (e.g. CalcitePlannerCache) caches this instance JVM-wide.
+        //    Calcite's JdbcSchema caches its table list lazily on first
+        //    access, and each JdbcTable's column list is cached lazily on
+        //    first getRowType() call — if the underlying database hasn't
+        //    finished lazy-loading (H2 .mv.db at startup; pool init race)
+        //    we'd otherwise pin an empty view for the JVM lifetime and
+        //    every subsequent RelBuilder.field(...) call would throw
+        //    "field not found; input fields are: []". See issue #30.
+        validateJdbcSchemaReady(jdbc);
+
+        // 3) Probe DatabaseMetaData for declared PK/FK. Merge with the
         //    synthesised FoodMart map (HSQLDB script has no PK/FK DDL;
         //    Postgres fixture does). Keys stored as
         //    (table -> list of unique key column-lists).
         probeAndSynthesiseConstraints(dataSource, jdbc);
 
-        // 3) Register a decorating schema that delegates to the JdbcSchema
+        // 4) Register a decorating schema that delegates to the JdbcSchema
         //    but overrides Table.getStatistic() so the MaterializedView
         //    rule's Goldstein-Larson duplication check can see PK/FK
         //    metadata via RelMetadataQuery / RelMdColumnUniqueness.
@@ -133,6 +144,122 @@ public final class CalciteMondrianSchema {
         if (PROFILE) {
             CalciteProfile.record(
                 "CalciteMondrianSchema.ctor", System.nanoTime() - t0);
+        }
+    }
+
+    /**
+     * Eagerly verify the reflected JdbcSchema looks populated. Throws
+     * {@link JdbcSchemaNotReadyException} when either (a) the table list
+     * is empty, or (b) every probed user table reports zero columns.
+     *
+     * <p>Both signals mean Calcite would silently cache an unusable view
+     * of the database — see issue #30 for the symptoms (H2 FoodMart
+     * AI-schema-only-Time-dimension plus {@code RelBuilder.field()} empty
+     * input-fields stack traces). Callers (notably
+     * {@link CalcitePlannerCache}) catch this exception, skip caching,
+     * and let the next call retry — by which point the underlying
+     * database is typically ready.
+     *
+     * <p>System tables (information_schema / pg_catalog / sys / sqlite_*)
+     * are filtered out so an H2 cold-start that exposes only
+     * INFORMATION_SCHEMA rows doesn't masquerade as a populated user
+     * schema. We probe up to 3 user tables (cheap on Postgres at ~1.5 s
+     * each, near-instant on HSQLDB / DuckDB / H2) — that's enough to
+     * detect a wholesale lazy-load miss without re-probing every table.
+     */
+    private static void validateJdbcSchemaReady(JdbcSchema jdbc) {
+        Set<String> names;
+        try {
+            names = jdbc.tables().getNames(LikePattern.any());
+        } catch (RuntimeException e) {
+            throw new JdbcSchemaNotReadyException(
+                "JdbcSchema.tables() enumeration threw", e);
+        }
+        if (names == null || names.isEmpty()) {
+            throw new JdbcSchemaNotReadyException(
+                "JdbcSchema reflected zero tables — backing database "
+                + "is likely still initialising (e.g. H2 .mv.db lazy "
+                + "load) or the catalog/schema arguments don't match");
+        }
+        org.apache.calcite.rel.type.RelDataTypeFactory tf =
+            new org.apache.calcite.sql.type.SqlTypeFactoryImpl(
+                org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+        List<String> userTablesProbed = new ArrayList<>();
+        for (String n : names) {
+            if (n == null) {
+                continue;
+            }
+            Table t;
+            try {
+                t = jdbc.tables().get(n);
+            } catch (RuntimeException e) {
+                throw new JdbcSchemaNotReadyException(
+                    "JdbcSchema.tables().get(" + n + ") threw", e);
+            }
+            if (t == null) {
+                continue;
+            }
+            // Skip system tables — every backend exposes a different set
+            // (HSQLDB SYSTEM_*, H2/INFORMATION_SCHEMA, Postgres pg_*),
+            // and we shouldn't treat them as evidence that the user
+            // schema is ready.
+            Schema.TableType type = t.getJdbcTableType();
+            if (type == Schema.TableType.SYSTEM_TABLE
+                || type == Schema.TableType.SYSTEM_VIEW
+                || type == Schema.TableType.SYSTEM_INDEX)
+            {
+                continue;
+            }
+            RelDataType row;
+            try {
+                row = t.getRowType(tf);
+            } catch (RuntimeException e) {
+                throw new JdbcSchemaNotReadyException(
+                    "JdbcTable(" + n + ").getRowType() threw — column "
+                    + "metadata not yet available", e);
+            }
+            if (row == null || row.getFieldCount() == 0) {
+                throw new JdbcSchemaNotReadyException(
+                    "JdbcTable(" + n + ") reflected zero columns — "
+                    + "DatabaseMetaData.getColumns(...) returned empty. "
+                    + "Backing database may still be initialising.");
+            }
+            userTablesProbed.add(n);
+            if (userTablesProbed.size() >= 3) {
+                // Three healthy user tables is enough to call the
+                // schema ready — skip probing the rest so big schemas
+                // (Postgres at ~1.5 s per getColumns() round-trip) stay
+                // cheap to construct.
+                break;
+            }
+        }
+        if (userTablesProbed.isEmpty()) {
+            throw new JdbcSchemaNotReadyException(
+                "JdbcSchema reflected only system tables — no user "
+                + "tables visible. Backing database is likely still "
+                + "initialising or the connection points at the wrong "
+                + "schema. Tables seen: " + names);
+        }
+    }
+
+    /**
+     * Signal raised by {@link CalciteMondrianSchema#CalciteMondrianSchema(
+     * DataSource, String)} when the freshly-reflected Calcite
+     * {@link JdbcSchema} looks unusable (no tables, or sampled tables
+     * report zero columns). {@link CalcitePlannerCache} treats this as a
+     * transient build failure — the planner is not cached and the next
+     * caller retries, giving lazy-loading backing stores (H2 .mv.db,
+     * connection pool warmup) a chance to settle.
+     */
+    public static final class JdbcSchemaNotReadyException
+        extends RuntimeException
+    {
+        private static final long serialVersionUID = 1L;
+        public JdbcSchemaNotReadyException(String message) {
+            super(message);
+        }
+        public JdbcSchemaNotReadyException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 
