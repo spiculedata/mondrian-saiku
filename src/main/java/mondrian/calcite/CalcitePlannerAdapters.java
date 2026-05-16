@@ -1981,15 +1981,13 @@ public final class CalcitePlannerAdapters {
             throw new UnsupportedTranslation(
                 "fromTupleRead: all-level read not yet supported");
         }
-        if (level.isParentChild()) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: parent-child hierarchy not yet supported");
-        }
-        if (level.getParentAttribute() != null) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: parent-attribute hierarchy not yet "
-                + "supported");
-        }
+        // Parent-child levels (parentAttribute != null) are allowed:
+        // emitTargetProjections additionally projects the parent
+        // attribute's key columns so Mondrian's in-memory layer can
+        // assemble the recursive hierarchy from a flat (key, parent_key,
+        // name) SELECT — equivalent to the legacy SqlMemberSource shape.
+        // We do NOT use the closure table here; that path is only
+        // needed for native descendants/ancestors enumeration.
         RolapAttribute attribute = level.getAttribute();
         List<RolapSchema.PhysColumn> keyList = attribute.getKeyList();
         if (keyList == null || keyList.isEmpty()) {
@@ -2471,6 +2469,25 @@ public final class CalcitePlannerAdapters {
                 asProjection(captionExp, tableAlias, "caption");
             if (seen.add(tableAlias + "." + capProj.name)) {
                 b.addProjection(capProj);
+            }
+        }
+
+        // 5) Parent-attribute key columns (only for parent-child levels).
+        //    Mondrian's SqlMemberSource needs the parent-key columns so
+        //    the in-memory layer can build the recursive hierarchy.
+        //    For Employee → supervisor_id this projects the supervisor
+        //    column alongside the employee_id key.
+        RolapAttribute parentAttr = t.level.getParentAttribute();
+        if (parentAttr != null) {
+            for (RolapSchema.PhysColumn pkc : parentAttr.getKeyList()) {
+                String pkcAlias = pkc.relation == null
+                    ? tableAlias
+                    : pkc.relation.getAlias();
+                PlannerRequest.Column pkp =
+                    asProjection(pkc, pkcAlias, "parent-key");
+                if (seen.add(pkcAlias + "." + pkp.name)) {
+                    b.addProjection(pkp);
+                }
             }
         }
     }
