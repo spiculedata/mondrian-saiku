@@ -854,15 +854,23 @@ public final class CalcitePlannerAdapters {
         // Mondrian wraps `(expr)` in a ResolvedFunCall with op name '()'.
         // Unwrap any number of nested parens so the inner comparison is
         // reachable. Filter([Set], (([X] > 5))) parses as ()-((>)).
-        while (filterExpr instanceof mondrian.mdx.ResolvedFunCall
-            && "()".equals(
-                ((mondrian.mdx.ResolvedFunCall) filterExpr)
-                    .getFunDef().getName())
-            && ((mondrian.mdx.ResolvedFunCall) filterExpr).getArgs().length
-                == 1)
-        {
-            filterExpr =
-                ((mondrian.mdx.ResolvedFunCall) filterExpr).getArgs()[0];
+        // Track whether we've seen a 'NOT' on the way down so the final
+        // comparison can be inverted via Comparison.invert().
+        boolean negate = false;
+        while (filterExpr instanceof mondrian.mdx.ResolvedFunCall) {
+            mondrian.mdx.ResolvedFunCall rfc =
+                (mondrian.mdx.ResolvedFunCall) filterExpr;
+            String op = rfc.getFunDef().getName();
+            if ("()".equals(op) && rfc.getArgs().length == 1) {
+                filterExpr = rfc.getArgs()[0];
+                continue;
+            }
+            if ("NOT".equalsIgnoreCase(op) && rfc.getArgs().length == 1) {
+                negate = !negate;
+                filterExpr = rfc.getArgs()[0];
+                continue;
+            }
+            break;
         }
         if (!(filterExpr instanceof mondrian.mdx.ResolvedFunCall)) {
             throw new UnsupportedTranslation(
@@ -880,6 +888,9 @@ public final class CalcitePlannerAdapters {
                 "fromTupleRead: FilterConstraint operator '" + opName
                 + "' not yet supported (expected one of >, <, >=, <=, "
                 + "=, <>)");
+        }
+        if (negate) {
+            cmp = invertComparison(cmp);
         }
         mondrian.olap.Exp[] args = call.getArgs();
         if (args.length != 2) {
@@ -948,6 +959,21 @@ public final class CalcitePlannerAdapters {
                 "h0",
                 distinct);
         b.addHaving(new PlannerRequest.Having(havingMeasure, cmp, litValue));
+    }
+
+    private static PlannerRequest.Comparison invertComparison(
+        PlannerRequest.Comparison c)
+    {
+        switch (c) {
+        case GT: return PlannerRequest.Comparison.LE;
+        case LT: return PlannerRequest.Comparison.GE;
+        case GE: return PlannerRequest.Comparison.LT;
+        case LE: return PlannerRequest.Comparison.GT;
+        case EQ: return PlannerRequest.Comparison.NE;
+        case NE: return PlannerRequest.Comparison.EQ;
+        default:
+            throw new IllegalStateException("unhandled comparison " + c);
+        }
     }
 
     private static PlannerRequest.Comparison comparisonFor(String op) {
@@ -1241,13 +1267,28 @@ public final class CalcitePlannerAdapters {
             // fixed. The ancestor's relation must already be joined
             // — shapeFor() walks parent-level keyLists so the chain
             // covers ancestor relations.
-            RolapCubeLevel ancLevel = null;
+            // Drop all-members (Descendants(All, level) = every row at
+            // level — no additional filter needed). Calculated/null
+            // members still throw so the shopping-list surfaces them.
+            List<RolapMember> realMembers =
+                new java.util.ArrayList<>(members.size());
             for (RolapMember m : members) {
-                if (m == null || m.isCalculated() || m.isAll()) {
+                if (m == null || m.isCalculated()) {
                     throw new UnsupportedTranslation(
                         "fromTupleRead: DescendantsCrossJoinArg contains "
-                        + "calc/all/null member " + m);
+                        + "calc/null member " + m);
                 }
+                if (m.isAll()) {
+                    continue;
+                }
+                realMembers.add(m);
+            }
+            if (realMembers.isEmpty()) {
+                // Every member was the All-member → no filter.
+                return;
+            }
+            RolapCubeLevel ancLevel = null;
+            for (RolapMember m : realMembers) {
                 if (!(m.getLevel() instanceof RolapCubeLevel)) {
                     throw new UnsupportedTranslation(
                         "fromTupleRead: DescendantsCrossJoinArg member "
@@ -1264,8 +1305,24 @@ public final class CalcitePlannerAdapters {
                         + ml.getUniqueName() + ")");
                 }
             }
+            // Switch reference to realMembers for the downstream filter
+            // emission so the all-member is excluded.
+            members = realMembers;
+            // Ancestor level = (All) → "descendants of All" is every row
+            // at the target level. No filter needed. Check isAll() AND
+            // depth == 0 — synthetic (All) levels in some schemas have
+            // attribute levelType != ALL even though they're functionally
+            // the root.
+            if (ancLevel.isAll() || ancLevel.getDepth() == 0) {
+                return;
+            }
             List<RolapSchema.PhysColumn> ancKeyList =
                 ancLevel.getAttribute().getKeyList();
+            if (ancKeyList.isEmpty()) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: DescendantsCrossJoinArg ancestor level "
+                    + ancLevel.getUniqueName() + " has no key columns");
+            }
             for (RolapSchema.PhysColumn kc : ancKeyList) {
                 if (!(kc instanceof RolapSchema.PhysRealColumn)) {
                     throw new UnsupportedTranslation(
@@ -2404,11 +2461,20 @@ public final class CalcitePlannerAdapters {
                     "fromSegmentLoad: measure not on fact table: "
                     + m.getName());
             }
-            RolapSchema.PhysColumn mexpr = m.getExpression();
+            RolapSchema.PhysColumn mexpr =
+                unwrapToRealColumn(m.getExpression());
             if (!(mexpr instanceof RolapSchema.PhysRealColumn)) {
+                String shape = "";
+                if (m.getExpression() instanceof RolapSchema.PhysCalcColumn) {
+                    try {
+                        shape = " [sql=" + m.getExpression().toSql() + "]";
+                    } catch (RuntimeException ignored) {
+                        // best-effort
+                    }
+                }
                 throw new UnsupportedTranslation(
                     "fromSegmentLoad: non-real measure expression "
-                    + mexpr);
+                    + mexpr + shape);
             }
             AggOp op = mapAggregator(m.getAggregator());
             String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
