@@ -133,6 +133,30 @@ public final class EquivalenceHarness {
         return Boolean.parseBoolean(System.getProperty(REPLAN_SYS_PROP));
     }
 
+    /**
+     * System-property flag ({@code -Dharness.crossDbCompare=true}) that
+     * relaxes the LEGACY_DRIFT gate for cross-database equivalence runs.
+     *
+     * <p>When set, the comparator asserts only that the OLAP cell-set
+     * matches the golden — the per-SQL-execution row counts and content
+     * checksums are <em>not</em> compared, because they legitimately
+     * differ across JDBC backends (DuckDB vs HSQLDB row ordering,
+     * DOUBLE/DECIMAL precision, MV-routing decisions). The cell-set is
+     * the user-visible contract; everything below it is implementation
+     * detail.
+     *
+     * <p>Off by default — same-backend runs (the default
+     * {@code calcite-harness} profile) still get the hard rowCount +
+     * checksum gate.
+     */
+    public static final String CROSS_DB_COMPARE_SYS_PROP =
+        "harness.crossDbCompare";
+
+    public static boolean crossDbCompareRequested() {
+        return Boolean.parseBoolean(
+            System.getProperty(CROSS_DB_COMPARE_SYS_PROP));
+    }
+
     private static SqlCompareMode parseCompareMode(String raw) {
         if (raw == null || raw.isEmpty()) {
             return SqlCompareMode.ADVISORY;
@@ -268,6 +292,16 @@ public final class EquivalenceHarness {
         }
 
         // --- Gate 3: SQL_ROWSET_DRIFT ---
+        // Cross-DB mode: the Run-A-vs-Run-B per-SQL gates are
+        // implementation-level (interceptor batching / MV-routing
+        // decisions). Cell-set parity was already asserted at Gate 2;
+        // anything below is internal plumbing.
+        if (crossDbCompareRequested()) {
+            return new HarnessResult(
+                FailureClass.PASS, "ok",
+                runA.cellSet, runA.executions,
+                runB.cellSet, runB.executions);
+        }
         if (runA.executions.size() != runB.executions.size()) {
             return new HarnessResult(
                 FailureClass.SQL_ROWSET_DRIFT,
@@ -421,6 +455,15 @@ public final class EquivalenceHarness {
             return HarnessResult.Comparison.fail(
                 FailureClass.LEGACY_DRIFT,
                 "golden missing sqlExecutions array");
+        }
+        // Cross-DB mode: cell-set parity is the contract; the SQL
+        // execution count + per-execution row checksums legitimately
+        // differ across backends (DuckDB row ordering, DECIMAL/DOUBLE
+        // precision, MV-routing differences). Skip the rest of stage 1
+        // and the entire stage 2 (SQL-string comparison is meaningless
+        // across dialects).
+        if (crossDbCompareRequested()) {
+            return HarnessResult.Comparison.pass();
         }
         if (execs.size() != run.executions.size()) {
             return HarnessResult.Comparison.fail(
