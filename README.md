@@ -75,6 +75,9 @@ because Calcite's pattern matcher misses the real driver's product name.
 | Apache Hive | hand-curated (`QUOTING_HIVE`) — auto-detect misses |
 | Trino | hand-curated (`QUOTING_TRINO` via `PrestoSqlDialect`) — auto-detect misses |
 | Exasol | hand-curated (`QUOTING_EXASOL`) — auto-detect misses |
+| Apache Spark | hand-curated (`QUOTING_SPARK`) — auto-detect misses ("Spark SQL") |
+| Apache Phoenix | hand-curated (`QUOTING_PHOENIX`) — auto-detect misses ("Apache Phoenix") |
+| LucidDB | hand-curated (`QUOTING_LUCIDDB`) — abandoned upstream; included for completeness |
 | Google BigQuery | Calcite auto-detect |
 | Snowflake | Calcite auto-detect |
 | ClickHouse | Calcite auto-detect |
@@ -91,13 +94,6 @@ because Calcite's pattern matcher misses the real driver's product name.
 | Vertica | Calcite auto-detect |
 | Firebird | Calcite auto-detect |
 | Informix | Calcite auto-detect |
-
-Calcite ships dialect classes for **Apache Spark**, **Apache Phoenix**,
-and **LucidDB** as well, but their JDBC drivers return product-name
-strings that Calcite's `SqlDialectFactoryImpl` doesn't recognise (e.g.
-Spark returns `"Spark SQL"`, Phoenix returns `"Apache Phoenix"`). These
-fall through to the unrecognised-database path until a hand-curated
-entry is added — please file an issue if you hit one in production.
 
 ### Behaviour for unrecognised databases
 
