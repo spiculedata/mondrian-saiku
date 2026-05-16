@@ -26,21 +26,20 @@ echo "[bootstrap] target DuckDB: ${DUCKDB_OUT}"
 # against a clean fixture.
 rm -f "${DUCKDB_OUT}"
 
+echo "[bootstrap] building test classpath..."
+mvn -B -ntp -q test-compile dependency:build-classpath \
+    -Dmdep.outputFile=target/test-classpath.txt \
+    -DincludeScope=test
+TEST_CP="$(cat target/test-classpath.txt):target/classes:target/test-classes"
+
 echo "[bootstrap] extracting HSQLDB FoodMart fixture..."
-# CalciteDialectMapTest is fast and pulls in foodmart bootstrap transitively
-# through shared test infra. Used here just to trigger ensureExtracted().
-mvn -B -ntp -q -Dtest=CalciteDialectMapTest test
+java -cp "${TEST_CP}" \
+    mondrian.test.calcite.ExtractFoodMartHsqldb
 
 if [[ ! -d target/foodmart ]]; then
   echo "[bootstrap] ERROR: target/foodmart/ not extracted." >&2
   exit 1
 fi
-
-echo "[bootstrap] building test classpath..."
-mvn -B -ntp -q dependency:build-classpath \
-    -Dmdep.outputFile=target/test-classpath.txt \
-    -DincludeScope=test
-TEST_CP="$(cat target/test-classpath.txt):target/classes:target/test-classes"
 
 echo "[bootstrap] copying HSQLDB → DuckDB via MondrianFoodMartLoader..."
 java -cp "${TEST_CP}" \
