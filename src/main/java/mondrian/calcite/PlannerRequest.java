@@ -106,7 +106,11 @@ public final class PlannerRequest {
         public Filter(Column column, Operator op, List<Object> literals) {
             this.column = column;
             this.op = op;
-            this.literals = List.copyOf(literals);
+            // Defensive copy that tolerates null elements — a null
+            // literal represents a SQL NULL match (rendered as IS NULL
+            // downstream). List.copyOf / List.of reject nulls.
+            this.literals = java.util.Collections.unmodifiableList(
+                new java.util.ArrayList<>(literals));
             if (op == Operator.EQ && this.literals.size() != 1) {
                 throw new IllegalArgumentException(
                     "EQ filter requires exactly one literal; got "

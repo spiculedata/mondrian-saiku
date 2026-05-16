@@ -838,13 +838,13 @@ public final class CalciteSqlPlanner {
     {
         RexNode col = fieldRef(b, f.column);
         if (f.literals.size() == 1) {
-            return b.equals(col, b.literal(f.literals.get(0)));
+            return eqOrIsNull(b, col, f.literals.get(0));
         }
         // Multi-literal → OR-chain of equalities (friendlier to dialects
         // than IN; avoids Calcite's SEARCH/SARG unparse surprises).
         List<RexNode> ors = new ArrayList<>(f.literals.size());
         for (Object lit : f.literals) {
-            ors.add(b.equals(col, b.literal(lit)));
+            ors.add(eqOrIsNull(b, col, lit));
         }
         return b.or(ors);
     }
@@ -859,7 +859,7 @@ public final class CalciteSqlPlanner {
             RexNode col = b.field(tf.columns.get(0).name);
             List<RexNode> ors = new ArrayList<>(tf.rows.size());
             for (List<Object> row : tf.rows) {
-                ors.add(b.equals(col, b.literal(row.get(0))));
+                ors.add(eqOrIsNull(b, col, row.get(0)));
             }
             return ors.size() == 1 ? ors.get(0) : b.or(ors);
         }
@@ -869,11 +869,28 @@ public final class CalciteSqlPlanner {
             List<RexNode> ands = new ArrayList<>(tf.columns.size());
             for (int i = 0; i < tf.columns.size(); i++) {
                 RexNode col = b.field(tf.columns.get(i).name);
-                ands.add(b.equals(col, b.literal(row.get(i))));
+                ands.add(eqOrIsNull(b, col, row.get(i)));
             }
             ors.add(ands.size() == 1 ? ands.get(0) : b.and(ands));
         }
         return ors.size() == 1 ? ors.get(0) : b.or(ors);
+    }
+
+    /**
+     * SQL-semantics-aware predicate builder: {@code col = NULL} is always
+     * NULL (never matches), so for a null literal emit {@code col IS NULL}
+     * instead. CalcitePlannerAdapters substitutes Mondrian's
+     * {@code RolapUtil.sqlNullValue} sentinel with Java {@code null}
+     * before reaching this builder, so any null reaching here represents
+     * an intentional SQL-NULL key match.
+     */
+    private static RexNode eqOrIsNull(
+        RelBuilder b, RexNode col, Object literal)
+    {
+        if (literal == null) {
+            return b.isNull(col);
+        }
+        return b.equals(col, b.literal(literal));
     }
 
     private static RexNode havingRex(
