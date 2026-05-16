@@ -550,18 +550,17 @@ public final class CalcitePlannerAdapters {
 
         // The `levels` list (from SqlTupleReader) enumerates the target
         // levels; the `args` array includes those plus any extra args that
-        // safeToConstrainByOtherAxes pushed in (filter-only, no projection).
-        // NECJ (the NonEmptyCrossJoinFunDef path) does NOT push extras in —
-        // safeToConstrainByOtherAxes returns false for NonEmptyCrossJoinFunDef
-        // — so for the currently-supported constraint subclass every arg
-        // contributes one target level. We defer the "filter-only arg" case
-        // (SetConstraint subclasses over safe funs like CrossJoin) to a
-        // later task by rejecting when args.length != levels.size().
-        if (args.length != levels.size()) {
+        // safeToConstrainByOtherAxes pushed in. Extras are filter-only —
+        // they constrain the result without contributing a projection.
+        // NECJ (NonEmptyCrossJoinFunDef) doesn't push extras in
+        // (safeToConstrainByOtherAxes returns false for it), but other
+        // SetConstraint subclasses over safe funs do. The first
+        // levels.size() args are projection+filter args; the rest are
+        // filter-only and handled in a separate loop after the main one.
+        if (args.length < levels.size()) {
             throw new UnsupportedTranslation(
                 "fromTupleRead: SetConstraint arg count " + args.length
-                + " != target level count " + levels.size()
-                + " (filter-only args not yet supported)");
+                + " < target level count " + levels.size());
         }
 
         // Evaluator + measure group — the fact table anchors the whole
@@ -649,6 +648,46 @@ public final class CalcitePlannerAdapters {
             CrossJoinArg arg = args[i];
             emitNecjTargetProjections(b, projectedKeys, shape);
             addCrossJoinArgFilter(b, shape, arg);
+        }
+
+        // Filter-only extras: any args beyond the target level count
+        // contribute filters without projections. Their dim chain still
+        // needs joining so the filter column resolves; addCrossJoinArgFilter
+        // operates on a TargetShape so we build one for the extra arg's
+        // level (re-using shapeFor's snowflake-aware leaf resolution).
+        for (int i = levels.size(); i < args.length; i++) {
+            CrossJoinArg extra = args[i];
+            RolapCubeLevel extraLevel = extra.getLevel();
+            if (extraLevel == null) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: filter-only arg[" + i
+                    + "] has null level (got "
+                    + extra.getClass().getName() + ")");
+            }
+            TargetShape extraShape;
+            try {
+                extraShape = shapeFor(extraLevel);
+            } catch (UnsupportedTranslation ex) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: SetConstraint filter-only arg["
+                    + i + "] unsupported — " + ex.getMessage());
+            }
+            for (RolapSchema.PhysRelation rel
+                : collectNecjRelations(extraShape))
+            {
+                RolapStar.Table relStar = findStarTable(factTable, rel);
+                if (relStar == null) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: filter-only arg[" + i + "] "
+                        + "referenced table " + rel.getAlias()
+                        + " is not reachable from fact "
+                        + factTable.getAlias());
+                }
+                if (relStar != factTable) {
+                    ensureJoinedChain(b, factTable, relStar, joinedAliases);
+                }
+            }
+            addCrossJoinArgFilter(b, extraShape, extra);
         }
 
         // TopCount-only: add the sort-measure projection + primary
@@ -1196,46 +1235,118 @@ public final class CalcitePlannerAdapters {
                 b.universalFalse(true);
                 return;
             }
-            // Every member must live on the arg's level; the leaf key
-            // column is what we filter on. For composite-key levels the
-            // members' keys are compound — reject for now (no corpus query
-            // uses this shape and TupleFilter would be needed).
+            // Every member must live on the arg's level. The leaf key
+            // column(s) are what we filter on. Single-key levels emit
+            // a simple IN-list; composite-key levels emit a TupleFilter
+            // (OR-of-AND across each member's per-column key values).
             List<RolapSchema.PhysColumn> keyList =
                 shape.attribute.getKeyList();
-            if (keyList.size() != 1) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: MemberListCrossJoinArg on composite-key "
-                    + "level " + shape.level + " (keyList.size="
-                    + keyList.size() + ") not yet supported");
+            for (RolapSchema.PhysColumn kc : keyList) {
+                if (!(kc instanceof RolapSchema.PhysRealColumn)) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: MemberListCrossJoinArg key column "
+                        + "is non-real ("
+                        + kc.getClass().getName() + ")");
+                }
             }
-            PlannerRequest.Column col =
-                new PlannerRequest.Column(shape.tableAlias, keyList.get(0)
-                    .toString().equals("") ? null
-                    : ((RolapSchema.PhysRealColumn) keyList.get(0)).name);
-            // Avoid the toString shortcut — just use the real column.
-            if (!(keyList.get(0) instanceof RolapSchema.PhysRealColumn)) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: MemberListCrossJoinArg key is a non-real "
-                    + "column (" + keyList.get(0).getClass().getName() + ")");
-            }
-            col = new PlannerRequest.Column(
-                shape.tableAlias,
-                ((RolapSchema.PhysRealColumn) keyList.get(0)).name);
-            List<Object> values = new java.util.ArrayList<>(members.size());
             for (RolapMember m : members) {
                 if (m.isCalculated() || m.isAll()) {
                     throw new UnsupportedTranslation(
                         "fromTupleRead: MemberListCrossJoinArg contains "
                         + "calc/all member " + m);
                 }
-                values.add(memberKeyLiteral(m));
             }
-            if (values.size() == 1) {
-                b.addFilter(new PlannerRequest.Filter(col, values.get(0)));
+            if (keyList.size() == 1) {
+                PlannerRequest.Column col = new PlannerRequest.Column(
+                    keyList.get(0).relation == null
+                        ? shape.tableAlias
+                        : keyList.get(0).relation.getAlias(),
+                    ((RolapSchema.PhysRealColumn) keyList.get(0)).name);
+                List<Object> values =
+                    new java.util.ArrayList<>(members.size());
+                for (RolapMember m : members) {
+                    values.add(memberKeyLiteral(m));
+                }
+                if (values.size() == 1) {
+                    b.addFilter(
+                        new PlannerRequest.Filter(col, values.get(0)));
+                } else {
+                    b.addFilter(
+                        new PlannerRequest.Filter(
+                            col, PlannerRequest.Operator.IN, values));
+                }
             } else {
-                b.addFilter(
-                    new PlannerRequest.Filter(
-                        col, PlannerRequest.Operator.IN, values));
+                // Composite key → TupleFilter (OR-of-AND). Each member
+                // provides a key list via getKeyAsList(); when length
+                // matches keyList every column gets a value, when length
+                // is 1 (single-value key on a composite-key level) we
+                // filter only on the leaf-most column (the parent
+                // context constrains the ancestor columns through the
+                // slicer / outer evaluator).
+                List<RolapMember> compositeMembers =
+                    new java.util.ArrayList<>();
+                List<RolapMember> leafOnlyMembers =
+                    new java.util.ArrayList<>();
+                for (RolapMember m : members) {
+                    List<Comparable> ka = m.getKeyAsList();
+                    if (ka.size() == keyList.size()) {
+                        compositeMembers.add(m);
+                    } else if (ka.size() == 1) {
+                        leafOnlyMembers.add(m);
+                    } else {
+                        throw new UnsupportedTranslation(
+                            "fromTupleRead: MemberListCrossJoinArg member "
+                            + m + " key arity " + ka.size()
+                            + " is neither 1 nor keyList arity "
+                            + keyList.size());
+                    }
+                }
+                if (!compositeMembers.isEmpty()) {
+                    List<PlannerRequest.Column> cols =
+                        new java.util.ArrayList<>(keyList.size());
+                    for (RolapSchema.PhysColumn kc : keyList) {
+                        cols.add(new PlannerRequest.Column(
+                            kc.relation == null
+                                ? shape.tableAlias
+                                : kc.relation.getAlias(),
+                            ((RolapSchema.PhysRealColumn) kc).name));
+                    }
+                    List<List<Object>> rows =
+                        new java.util.ArrayList<>(compositeMembers.size());
+                    for (RolapMember m : compositeMembers) {
+                        List<Comparable> keyParts = m.getKeyAsList();
+                        List<Object> row =
+                            new java.util.ArrayList<>(keyParts.size());
+                        for (Object v : keyParts) {
+                            row.add(unwrapSqlNull(v));
+                        }
+                        rows.add(row);
+                    }
+                    b.addTupleFilter(
+                        new PlannerRequest.TupleFilter(cols, rows));
+                }
+                if (!leafOnlyMembers.isEmpty()) {
+                    RolapSchema.PhysColumn leaf =
+                        keyList.get(keyList.size() - 1);
+                    PlannerRequest.Column col = new PlannerRequest.Column(
+                        leaf.relation == null
+                            ? shape.tableAlias
+                            : leaf.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) leaf).name);
+                    List<Object> values =
+                        new java.util.ArrayList<>(leafOnlyMembers.size());
+                    for (RolapMember m : leafOnlyMembers) {
+                        values.add(unwrapSqlNull(m.getKey()));
+                    }
+                    if (values.size() == 1) {
+                        b.addFilter(
+                            new PlannerRequest.Filter(col, values.get(0)));
+                    } else {
+                        b.addFilter(
+                            new PlannerRequest.Filter(
+                                col, PlannerRequest.Operator.IN, values));
+                    }
+                }
             }
             return;
         }
