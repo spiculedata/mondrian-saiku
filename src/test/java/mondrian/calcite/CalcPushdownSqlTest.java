@@ -21,16 +21,11 @@ import mondrian.test.TestContext;
 
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertTrue;
-
-/**
+import static org.junit.Assert.assertTrue;/**
  * Failing baseline for Task 1 of docs/plans/2026-04-21-calc-pushdown-to-sql.md:
  * asserts that a pushable calc ({@code SUM(a) / SUM(b)}) emits the arithmetic
  * operator in the planner's rendered SQL. Today {@link CalciteSqlPlanner} wraps
@@ -48,7 +43,7 @@ public class CalcPushdownSqlTest {
     private static Connection conn;
     private static CalciteMondrianSchema schema;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props = Util.parseConnectString(
@@ -67,7 +62,7 @@ public class CalcPushdownSqlTest {
         schema = new CalciteMondrianSchema(ds, null);
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (conn != null) { conn.close(); conn = null; }
     }

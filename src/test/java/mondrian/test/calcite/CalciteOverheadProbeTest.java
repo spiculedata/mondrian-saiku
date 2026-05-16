@@ -24,8 +24,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
 
-import org.junit.Test;
-
+import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.util.Arrays;
 import java.util.List;

@@ -9,16 +9,13 @@
 */
 package mondrian.calcite;
 
-import org.junit.Test;
-
+import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.ToIntFunction;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;
 /**
  * Unit-level coverage for {@link MvRegistry#dedupeByCoverage}. Uses
  * synthetic shapes — two agg tables covering the same

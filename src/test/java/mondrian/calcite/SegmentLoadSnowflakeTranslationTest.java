@@ -13,19 +13,13 @@ import mondrian.rolap.RolapSchema;
 import mondrian.rolap.RolapStar;
 import mondrian.test.TestContext;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.lang.reflect.Method;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Unit tests for the Task-I snowflake multi-hop walker used by
  * {@link CalcitePlannerAdapters#fromSegmentLoad}.
@@ -39,7 +33,7 @@ public class SegmentLoadSnowflakeTranslationTest {
 
     private static RolapStar sales;
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         mondrian.olap.Connection conn = TestContext.instance().getConnection();
         RolapSchema schema = (RolapSchema) conn.getSchema();
         sales = schema.getStar("sales_fact_1997");

@@ -17,18 +17,10 @@ import mondrian.rolap.RolapSchema;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertNotSame;import static org.junit.Assert.assertSame;import static org.junit.Assert.assertTrue;
 /**
  * Exercises the hand-rolled MV matcher ({@link MvMatcher}) that operates
  * at the {@link PlannerRequest} level (Option D, design in
@@ -55,7 +47,7 @@ public class MvMatcherTest {
     private static DataSource ds;
     private static MvRegistry registry;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props =
@@ -69,7 +61,7 @@ public class MvMatcherTest {
         registry = MvRegistry.fromSchema(rolapSchema, cms);
     }
 
-    @AfterClass
+    @AfterAll
     public static void close() {
         if (mondrianConn != null) {
             mondrianConn.close();

@@ -15,22 +15,16 @@ import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.hsqldb.jdbc.jdbcDataSource;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Tests for {@link CalciteSqlPlanner}: PlannerRequest -> dialect-rendered SQL.
  */
 public class CalciteSqlPlannerTest {
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
@@ -108,16 +102,16 @@ public class CalciteSqlPlannerTest {
             lower.contains("order by"));
     }
 
-    @Test(expected = IllegalStateException.class)
-    public void distinctWithAggregationRejected() {
-        PlannerRequest.builder("sales_fact_1997")
-            .addGroupBy(new PlannerRequest.Column(null, "time_id"))
-            .addMeasure(new PlannerRequest.Measure(
-                PlannerRequest.AggFn.SUM,
-                new PlannerRequest.Column(null, "unit_sales"),
-                "m"))
-            .distinct(true)
-            .build();
+    @Test public void distinctWithAggregationRejected() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+            () -> PlannerRequest.builder("sales_fact_1997")
+                .addGroupBy(new PlannerRequest.Column(null, "time_id"))
+                .addMeasure(new PlannerRequest.Measure(
+                    PlannerRequest.AggFn.SUM,
+                    new PlannerRequest.Column(null, "unit_sales"),
+                    "m"))
+                .distinct(true)
+                .build());
     }
 
     @Test

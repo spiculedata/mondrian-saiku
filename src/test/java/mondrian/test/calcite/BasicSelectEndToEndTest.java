@@ -17,17 +17,11 @@ import mondrian.rolap.agg.SegmentLoader;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;
 /**
  * End-to-end cell-set parity check for {@code basic-select} under the
  * Calcite backend.
@@ -48,16 +42,16 @@ public class BasicSelectEndToEndTest {
             "src/test/resources/calcite-harness/"
             + "golden-legacy/basic-select.json");
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @AfterClass public static void clearBackend() {
+    @AfterAll public static void clearBackend() {
         System.clearProperty("mondrian.backend");
         SegmentLoader.clearCalcitePlannerCache();
     }
 
-    @Before public void reset() {
+    @BeforeEach public void reset() {
         CalcitePlannerAdapters.resetUnsupportedCount();
         SegmentLoader.clearCalcitePlannerCache();
         System.setProperty("mondrian.backend", "calcite");

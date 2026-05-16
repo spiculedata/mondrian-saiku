@@ -12,9 +12,7 @@ package mondrian.test.calcite;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -23,9 +21,7 @@ import java.security.MessageDigest;
 import java.util.TreeMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;
 /**
  * Verifies that {@link BaselineRecorder} produces byte-identical JSON goldens
  * across repeated runs of the same MDX corpus. Determinism is load-bearing:
@@ -34,7 +30,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class BaselineRecorderTest {
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }

@@ -1,8 +1,7 @@
 package mondrian.test.calcite;
 
 import org.hsqldb.jdbc.jdbcDataSource;
-import org.junit.Test;
-
+import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -10,11 +9,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * TDD for {@link SqlCapture}. Uses HSQLDB 1.8 in-memory — the driver is
  * already on the test classpath via the FoodMart fixture.

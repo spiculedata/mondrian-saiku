@@ -17,10 +17,7 @@ import mondrian.olap.Util;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 /**
  * <b>KNOWN-FAILING regression test for the user-reported Store-dimension
  * exception.</b> Expected to fail until {@link CalcitePlannerAdapters}'s
@@ -94,14 +91,14 @@ public class StoreDimensionSegmentLoadTest {
 
     private static String prevBackend;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         prevBackend = System.getProperty("mondrian.backend");
         System.setProperty("mondrian.backend", "calcite");
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (prevBackend == null) {
             System.clearProperty("mondrian.backend");

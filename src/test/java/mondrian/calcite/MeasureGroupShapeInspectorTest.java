@@ -19,14 +19,10 @@ import mondrian.rolap.RolapSchema;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.List;
 
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Verifies that {@link MeasureGroupShapeInspector#copyLinkedColumns}
  * surfaces the copy-linked columns declared on FoodMart's
@@ -40,7 +36,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class MeasureGroupShapeInspectorTest {
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }

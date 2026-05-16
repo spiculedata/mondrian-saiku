@@ -21,17 +21,15 @@ import mondrian.test.TestContext;
 import mondrian.test.calcite.corpus.CalcCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Collection;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -51,7 +49,6 @@ import static org.junit.Assert.assertTrue;
  * on both backends because dimensional navigation remains on the Java
  * evaluator.
  */
-@RunWith(Parameterized.class)
 public class EquivalenceCalcTest {
 
     private static final Path GOLDEN_DIR =
@@ -67,34 +64,25 @@ public class EquivalenceCalcTest {
     /** Names prefixed by this string are non-pushable controls. */
     private static final String NON_PUSHABLE_PREFIX = "calc-non-pushable-";
 
-    @Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
+    static Stream<Arguments> data() {
         return CalcCorpus.queries().stream()
-            .map(q -> new Object[]{q.name, q})
-            .collect(Collectors.toList());
+            .map(q -> Arguments.of(q.name, q));
     }
 
-    private final String name;
-    private final NamedMdx mdx;
-
-    public EquivalenceCalcTest(String name, NamedMdx mdx) {
-        this.name = name;
-        this.mdx = mdx;
-    }
-
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @AfterClass
+    @AfterAll
     public static void writeReport() throws Exception {
         HarnessReporter.writeHtml(
             Paths.get("target/calcite-harness-report.html"));
     }
 
-    @Test
-    public void equivalent() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("data")
+    public void equivalent(String name, NamedMdx mdx) throws Exception {
         EquivalenceHarness h = new EquivalenceHarness(GOLDEN_DIR);
         HarnessResult r = h.run(mdx, CalcitePassThrough.class);
         HarnessReporter.record(mdx.name, r);
@@ -103,7 +91,7 @@ public class EquivalenceCalcTest {
             FailureClass.PASS, r.failureClass);
 
         if (Boolean.getBoolean(ASSERT_PUSHDOWN_PROP)) {
-            assertPushdownVerdict();
+            assertPushdownVerdict(mdx);
         }
     }
 
@@ -114,7 +102,7 @@ public class EquivalenceCalcTest {
      *  (pushedCount bumped). Uses the module-internal
      *  {@link ArithmeticCalcAnalyzer} and ticks the test-visible
      *  {@link CalcitePlannerAdapters} counters. */
-    private void assertPushdownVerdict() {
+    private void assertPushdownVerdict(NamedMdx mdx) {
         CalcitePlannerAdapters.resetCalcPushdownCounters();
 
         Util.PropertyList props = Util.parseConnectString(

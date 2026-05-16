@@ -92,6 +92,16 @@
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-api</artifactId><version>2.23.1</version></dependency>
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-1.2-api</artifactId><version>2.23.1</version></dependency>
 
+    <!-- JUnit: Jupiter (5) for new tests, Vintage engine retained because ~80 legacy
+         test classes still extend junit.framework.TestCase (JUnit 3) via FoodMartTestCase /
+         BatchTestCase / CsvDBTestCase. Migrating those to Jupiter requires refactoring the
+         shared TestCase base classes to use composition rather than inheritance — tracked
+         as a follow-up issue. JUnit 4 surface (org.junit.* annotations) is migrated to
+         Jupiter in this PR; junit:junit:4.13.2 kept transiently for any stragglers. -->
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><version>5.10.2</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-params</artifactId><version>5.10.2</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-engine</artifactId><version>5.10.2</version><scope>test</scope></dependency>
+    <dependency><groupId>org.junit.vintage</groupId><artifactId>junit-vintage-engine</artifactId><version>5.10.2</version><scope>test</scope></dependency>
     <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>
     <dependency><groupId>xmlunit</groupId><artifactId>xmlunit</artifactId><version>1.6</version><scope>test</scope></dependency>
     <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>4.11.0</version><scope>test</scope></dependency>

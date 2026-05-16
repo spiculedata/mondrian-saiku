@@ -19,16 +19,11 @@ import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.RolapSchema;
 import mondrian.test.TestContext;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Task J regression: pins the column order emitted by
  * {@link CalcitePlannerAdapters#fromTupleRead} for a composite-key level.
@@ -51,7 +46,7 @@ public class TupleReadCompositeKeyProjectionTest {
 
     private static RolapCube sales;
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         mondrian.olap.Connection conn = TestContext.instance().getConnection();
         RolapSchema schema = (RolapSchema) conn.getSchema();
         for (RolapCube cube : schema.getCubeList()) {

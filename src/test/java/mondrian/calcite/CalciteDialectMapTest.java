@@ -11,14 +11,12 @@ import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.calcite.sql.dialect.PrestoSqlDialect;
 import org.apache.calcite.sql.dialect.RedshiftSqlDialect;
 import org.apache.calcite.sql.dialect.SparkSqlDialect;
-import org.junit.Test;
-
+import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 
-import static org.junit.Assert.*;
-import static org.mockito.Mockito.mock;
+import static org.junit.Assert.*;import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class CalciteDialectMapTest {
@@ -30,13 +28,13 @@ public class CalciteDialectMapTest {
         SqlDialect sd = CalciteDialectMap.forProductName("hsql database engine");
         assertTrue(sd instanceof HsqldbSqlDialect);
     }
-    @Test(expected = IllegalArgumentException.class)
-    public void unknownProductThrows() {
-        CalciteDialectMap.forProductName("Frobnitz 9.9");
+    @Test public void unknownProductThrows() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> CalciteDialectMap.forProductName("Frobnitz 9.9"));
     }
-    @Test(expected = IllegalArgumentException.class)
-    public void nullThrows() {
-        CalciteDialectMap.forProductName(null);
+    @Test public void nullThrows() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> CalciteDialectMap.forProductName(null));
     }
 
     // --- Task Z: Postgres mappings ---

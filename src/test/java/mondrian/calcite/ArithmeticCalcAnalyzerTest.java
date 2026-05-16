@@ -18,16 +18,10 @@ import mondrian.olap.Util;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertTrue;
 /**
  * Unit tests for {@link ArithmeticCalcAnalyzer}. Uses the FoodMart
  * connection to parse MDX expressions (cheaper and more faithful than
@@ -38,7 +32,7 @@ public class ArithmeticCalcAnalyzerTest {
 
     private static Connection conn;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props = Util.parseConnectString(
@@ -46,7 +40,7 @@ public class ArithmeticCalcAnalyzerTest {
         conn = DriverManager.getConnection(props, null);
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (conn != null) {
             conn.close();

@@ -2,9 +2,7 @@ package mondrian.test.calcite;
 
 import mondrian.rolap.sql.SqlInterceptor;
 import mondrian.spi.Dialect;
-import org.junit.Test;
-import static org.junit.Assert.assertEquals;
-
+import org.junit.jupiter.api.Test;import static org.junit.Assert.assertEquals;
 public class SqlInterceptorTest {
     @Test
     public void defaultInterceptorIsIdentity() {

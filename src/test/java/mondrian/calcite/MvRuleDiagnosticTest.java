@@ -27,10 +27,7 @@ import org.apache.calcite.plan.volcano.VolcanoPlanner;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
 import java.io.ByteArrayOutputStream;
@@ -73,7 +70,7 @@ public class MvRuleDiagnosticTest {
     private static RolapSchema rolapSchema;
     private static DataSource ds;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props =
@@ -85,7 +82,7 @@ public class MvRuleDiagnosticTest {
         ds = rc.getDataSource();
     }
 
-    @AfterClass
+    @AfterAll
     public static void close() {
         if (mondrianConn != null) {
             mondrianConn.close();

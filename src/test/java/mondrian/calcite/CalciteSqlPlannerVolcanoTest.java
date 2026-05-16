@@ -21,22 +21,14 @@ import org.apache.calcite.plan.RelOptMaterialization;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertSame;import static org.junit.Assert.assertTrue;
 /**
  * Exercises Phase 3+ Volcano stage: {@link CalciteSqlPlanner#runVolcano}
  * wires an {@link org.apache.calcite.plan.volcano.VolcanoPlanner} after
@@ -82,7 +74,7 @@ public class CalciteSqlPlannerVolcanoTest {
     private static RolapSchema rolapSchema;
     private static DataSource ds;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props =
@@ -94,7 +86,7 @@ public class CalciteSqlPlannerVolcanoTest {
         ds = rc.getDataSource();
     }
 
-    @AfterClass
+    @AfterAll
     public static void closeFoodMart() {
         if (mondrianConn != null) {
             mondrianConn.close();

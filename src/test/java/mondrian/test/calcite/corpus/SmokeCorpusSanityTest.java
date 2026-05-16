@@ -13,16 +13,14 @@ import mondrian.olap.Result;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -34,32 +32,20 @@ import static org.junit.Assert.assertTrue;
  * from a poisoned golden baseline — if the corpus can't even run on Mondrian
  * today, comparing Calcite's output to it is meaningless.
  */
-@RunWith(Parameterized.class)
 public class SmokeCorpusSanityTest {
 
     static {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        List<Object[]> rows = new ArrayList<>();
-        for (SmokeCorpus.NamedMdx q : SmokeCorpus.queries()) {
-            rows.add(new Object[] { q.name, q.mdx });
-        }
-        return rows;
+    static Stream<Arguments> data() {
+        return SmokeCorpus.queries().stream()
+            .map(q -> Arguments.of(q.name, q.mdx));
     }
 
-    private final String name;
-    private final String mdx;
-
-    public SmokeCorpusSanityTest(String name, String mdx) {
-        this.name = name;
-        this.mdx = mdx;
-    }
-
-    @Test
-    public void executes() {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("data")
+    public void executes(String name, String mdx) {
         Result r = TestContext.instance().executeQuery(mdx);
         assertNotNull("query " + name + " returned null result", r);
         assertNotNull("query " + name + " returned null axes", r.getAxes());

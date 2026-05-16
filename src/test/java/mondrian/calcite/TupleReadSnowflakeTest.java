@@ -18,16 +18,10 @@ import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.RolapSchema;
 import mondrian.test.TestContext;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertNull;import static org.junit.Assert.assertTrue;
 /**
  * Task L regression: when a level's key columns live on a snowflaked
  * dim table (e.g. {@code [Product].[Products].[Product Department]} is
@@ -50,7 +44,7 @@ public class TupleReadSnowflakeTest {
 
     private static RolapCube sales;
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         mondrian.olap.Connection conn = TestContext.instance().getConnection();
         RolapSchema schema = (RolapSchema) conn.getSchema();
         for (RolapCube cube : schema.getCubeList()) {

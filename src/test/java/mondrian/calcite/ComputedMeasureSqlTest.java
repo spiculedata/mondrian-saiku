@@ -22,16 +22,11 @@ import mondrian.test.TestContext;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertTrue;
-
-/**
+import static org.junit.Assert.assertTrue;/**
  * End-to-end proof that a {@link PlannerRequest.ComputedMeasure} lands in
  * the emitted SQL as a post-aggregate projection via
  * {@link ArithmeticCalcTranslator}. This verifies the rendering wiring
@@ -45,7 +40,7 @@ public class ComputedMeasureSqlTest {
     private static CalciteMondrianSchema schema;
     private static SqlDialect hsqldb;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() throws Exception {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props = Util.parseConnectString(
@@ -66,7 +61,7 @@ public class ComputedMeasureSqlTest {
         hsqldb = HsqldbSqlDialect.DEFAULT;
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (conn != null) { conn.close(); conn = null; }
     }
