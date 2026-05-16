@@ -897,6 +897,34 @@ public final class CalcitePlannerAdapters {
         }
         mondrian.olap.Member member =
             ((mondrian.mdx.MemberExpr) orderByExpr).getMember();
+        // Calculated measure with a simple `[A] <op> [B]` formula
+        // (both stored measures, same fact table): emit an arithmetic
+        // measure that combines them and ORDER BY its alias. By
+        // SUM linearity SUM(a) - SUM(b) == SUM(a - b) so the
+        // arithExpr (which renders as agg(a <op> b)) gives the
+        // same ordering.
+        if (member instanceof mondrian.rolap.RolapCalculatedMember
+            && !(member instanceof mondrian.rolap.RolapStoredMeasure))
+        {
+            PlannerRequest.ArithExpr ae = calcMeasureArithExpr(
+                (mondrian.rolap.RolapCalculatedMember) member);
+            if (ae != null) {
+                String calcAlias = "m_calc0";
+                b.addMeasure(
+                    new PlannerRequest.Measure(
+                        PlannerRequest.AggFn.SUM,
+                        new PlannerRequest.Column(null, calcAlias),
+                        calcAlias,
+                        false, null, null, ae));
+                b.addOrderBy(
+                    new PlannerRequest.OrderBy(
+                        new PlannerRequest.Column(null, calcAlias),
+                        constraint.isAscending()
+                            ? PlannerRequest.Order.ASC
+                            : PlannerRequest.Order.DESC));
+                return;
+            }
+        }
         if (!(member instanceof mondrian.rolap.RolapStoredMeasure)) {
             throw new UnsupportedTranslation(
                 "fromTupleRead: TopCountConstraint orderBy member "
@@ -2688,6 +2716,83 @@ public final class CalcitePlannerAdapters {
                     ? factAlias
                     : elseCol.relation.getAlias(),
                 elseCol.name));
+    }
+
+    /** If the calculated member's formula is a simple binary
+     *  arithmetic of two stored-measure references on real columns
+     *  (e.g. [Profit] = [Store Sales] - [Store Cost]), return an
+     *  {@link PlannerRequest.ArithExpr} that aggregates the
+     *  difference. Otherwise return null.
+     *
+     *  <p>Optional parens are unwrapped. The two stored measures
+     *  must live on the same fact table; otherwise this returns
+     *  null and the caller falls through to the strict-mode error. */
+    private static PlannerRequest.ArithExpr calcMeasureArithExpr(
+        mondrian.rolap.RolapCalculatedMember calc)
+    {
+        mondrian.olap.Formula formula = calc.getFormula();
+        if (formula == null) {
+            return null;
+        }
+        mondrian.olap.Exp formulaExpr = formula.getExpression();
+        // Unwrap '()' wrappers.
+        while (formulaExpr instanceof mondrian.mdx.ResolvedFunCall
+            && "()".equals(
+                ((mondrian.mdx.ResolvedFunCall) formulaExpr)
+                    .getFunDef().getName())
+            && ((mondrian.mdx.ResolvedFunCall) formulaExpr).getArgs().length
+                == 1)
+        {
+            formulaExpr =
+                ((mondrian.mdx.ResolvedFunCall) formulaExpr).getArgs()[0];
+        }
+        if (!(formulaExpr instanceof mondrian.mdx.ResolvedFunCall)) {
+            return null;
+        }
+        mondrian.mdx.ResolvedFunCall call =
+            (mondrian.mdx.ResolvedFunCall) formulaExpr;
+        PlannerRequest.ArithOp op =
+            arithOpFromText(call.getFunDef().getName());
+        if (op == null || call.getArgs().length != 2) {
+            return null;
+        }
+        RolapSchema.PhysRealColumn lhsCol = stowedMeasureColumn(
+            call.getArgs()[0]);
+        RolapSchema.PhysRealColumn rhsCol = stowedMeasureColumn(
+            call.getArgs()[1]);
+        if (lhsCol == null || rhsCol == null) {
+            return null;
+        }
+        return new PlannerRequest.ArithExpr(
+            new PlannerRequest.Column(
+                lhsCol.relation.getAlias(), lhsCol.name),
+            op,
+            new PlannerRequest.Column(
+                rhsCol.relation.getAlias(), rhsCol.name));
+    }
+
+    /** Helper for {@link #calcMeasureArithExpr}: unwrap an
+     *  {@code MemberExpr} resolving to a {@link
+     *  mondrian.rolap.RolapStoredMeasure} with a
+     *  {@link RolapSchema.PhysRealColumn} expression. */
+    private static RolapSchema.PhysRealColumn stowedMeasureColumn(
+        mondrian.olap.Exp e)
+    {
+        if (!(e instanceof mondrian.mdx.MemberExpr)) {
+            return null;
+        }
+        mondrian.olap.Member m = ((mondrian.mdx.MemberExpr) e).getMember();
+        if (!(m instanceof mondrian.rolap.RolapStoredMeasure)) {
+            return null;
+        }
+        RolapSchema.PhysColumn col =
+            ((mondrian.rolap.RolapStoredMeasure) m).getExpr();
+        if (col instanceof RolapSchema.PhysRealColumn
+            && col.relation != null)
+        {
+            return (RolapSchema.PhysRealColumn) col;
+        }
+        return null;
     }
 
     /** Map of supported arithmetic operator tokens (trimmed text)
