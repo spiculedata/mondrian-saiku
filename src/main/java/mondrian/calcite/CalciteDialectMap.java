@@ -14,6 +14,7 @@ import org.apache.calcite.sql.SqlDialectFactoryImpl;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
+import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
 import org.apache.log4j.Logger;
 
 import java.sql.Connection;
@@ -179,6 +180,9 @@ public final class CalciteDialectMap {
         if (p.contains("postgres")) {
             return PostgresqlSqlDialect.DEFAULT;
         }
+        if (p.contains("duckdb")) {
+            return QUOTING_DUCKDB;
+        }
         return null;
     }
 
@@ -190,6 +194,26 @@ public final class CalciteDialectMap {
     private static final SqlDialect QUOTING_HSQLDB =
         new HsqldbSqlDialect(
             HsqldbSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /**
+     * DuckDB dialect with the same force-quote treatment as HSQLDB.
+     * Calcite 1.41's {@link org.apache.calcite.sql.SqlDialectFactoryImpl}
+     * does not auto-detect DuckDB from the JDBC product name; without a
+     * hand-curated entry here the planner cache silently falls through to
+     * the legacy Mondrian SQL builder and the Calcite path is never
+     * exercised against DuckDB. FoodMart's quoted lowercase table names
+     * require the same forced-quoting behaviour as HSQLDB / Postgres.
+     */
+    private static final SqlDialect QUOTING_DUCKDB =
+        new DuckDBSqlDialect(
+            DuckDBSqlDialect.DEFAULT_CONTEXT
                 .withIdentifierQuoteString("\""))
         {
             @Override

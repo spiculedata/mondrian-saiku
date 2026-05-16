@@ -1148,7 +1148,12 @@ public class JdbcSchema {
         try {
             conn = getDataSource().getConnection();
             final DatabaseMetaData databaseMetaData = conn.getMetaData();
-            List<String> tableTypes = Arrays.asList("TABLE", "VIEW");
+            // "BASE TABLE" is the SQL-standard value DuckDB returns from
+            // DatabaseMetaData.getTables(); most other JDBC drivers return
+            // "TABLE". Requesting both is harmless on drivers that only
+            // recognise "TABLE" (the filter is OR-of-types).
+            List<String> tableTypes =
+                Arrays.asList("TABLE", "BASE TABLE", "VIEW");
             if (databaseMetaData.getDatabaseProductName().toUpperCase().indexOf(
                     "VERTICA") >= 0)
             {

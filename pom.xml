@@ -108,6 +108,16 @@
       <version>1.8.0.10</version>
       <scope>test</scope>
     </dependency>
+    <!-- DuckDB JDBC: alternate FoodMart backend for the Calcite-strict-mode
+         migration sweep. MondrianFoodMartLoader loads HSQLDB FoodMart into
+         a DuckDB file, then tests run with
+         -Dmondrian.foodmart.jdbcURL=jdbc:duckdb:<path>. -->
+    <dependency>
+      <groupId>org.duckdb</groupId>
+      <artifactId>duckdb_jdbc</artifactId>
+      <version>1.3.1.0</version>
+      <scope>test</scope>
+    </dependency>
     <!-- Apache Calcite 1.41.0: compile scope. Originally added at test scope
          for the calcite-equivalence-harness, promoted to compile scope as the
          foundation of the new mondrian/calcite/ backend (see

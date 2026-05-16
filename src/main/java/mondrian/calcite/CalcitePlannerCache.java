@@ -83,13 +83,36 @@ public final class CalcitePlannerCache {
         DataSource ds,
         mondrian.rolap.RolapSchema rolapSchema)
     {
+        boolean diag = Boolean.getBoolean("mondrian.calcite.trace");
         Key key = Key.from(ds);
         if (UNSUPPORTED.contains(key)) {
+            if (diag) {
+                System.err.println(
+                    "[calcite-cache] cached miss for " + key);
+            }
             return null;
         }
         CalciteSqlPlanner planner = CACHE.get(key);
         if (planner == null) {
-            SqlDialect dialect = CalciteDialectMap.forDataSource(ds);
+            SqlDialect dialect;
+            try {
+                dialect = CalciteDialectMap.forDataSource(ds);
+            } catch (RuntimeException e) {
+                if (diag) {
+                    System.err.println(
+                        "[calcite-cache] forDataSource threw: " + e
+                        + " for " + key);
+                }
+                throw e;
+            }
+            if (diag) {
+                System.err.println(
+                    "[calcite-cache] dialect="
+                    + (dialect == null
+                        ? "null"
+                        : dialect.getClass().getName())
+                    + " for " + key);
+            }
             if (dialect == null) {
                 UNSUPPORTED.add(key);
                 return null;
