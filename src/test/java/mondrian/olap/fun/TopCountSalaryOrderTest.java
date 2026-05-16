@@ -118,4 +118,87 @@ public class TopCountSalaryOrderTest extends FoodMartTestCase {
     private String renderQuery(String mdx) {
         return mondrian.test.TestContext.toString(executeQuery(mdx));
     }
+
+    /** Confirm slicer mismatch: list all 4 disputed salaries (4400, 6700,
+     *  7000, 8200) with their Number of Employees as Mondrian sees them.
+     *  Compare against the raw-SQL counts to confirm the slicer-aware
+     *  cell value differs from the SQL ORDER BY's no-slicer count. */
+    public void testFourSalariesPerCellValue() {
+        String mdx =
+                "SELECT {[Measures].[Number of Employees]} ON COLUMNS,\n"
+                + "{[Employee].[Salary].[4400.0],"
+                + " [Employee].[Salary].[6700.0],"
+                + " [Employee].[Salary].[7000.0],"
+                + " [Employee].[Salary].[8200.0]} ON ROWS\n"
+                + "FROM [HR]";
+        String actual = renderQuery(mdx);
+        System.out.println("=== saiku#809 PER-SALARY CELL VALUES ===\n" + actual);
+    }
+
+    /** Probe: run the exact native-TopCount SQL via raw JDBC and dump the
+     *  rows in the order H2 returns them. Tells us whether H2 is honouring
+     *  the ORDER BY at all on this query shape. */
+    public void testRawJdbcSqlOrder() throws Exception {
+        String sql =
+                "SELECT \"employee\".\"salary\", "
+                + "COUNT(DISTINCT \"salary\".\"employee_id\") AS \"m0\"\n"
+                + "FROM \"salary\"\n"
+                + "INNER JOIN \"employee\" ON \"salary\".\"employee_id\" = "
+                + "\"employee\".\"employee_id\"\n"
+                + "GROUP BY \"employee\".\"salary\"\n"
+                + "ORDER BY 2 DESC, \"employee\".\"salary\"";
+        runRawJdbc("RAW (positional ORDER BY)", sql, 0);
+        runRawJdbc("RAW (positional ORDER BY) +setMaxRows(5)", sql, 5);
+
+        String sqlExpr =
+                "SELECT \"employee\".\"salary\", "
+                + "COUNT(DISTINCT \"salary\".\"employee_id\") AS \"m0\"\n"
+                + "FROM \"salary\"\n"
+                + "INNER JOIN \"employee\" ON \"salary\".\"employee_id\" = "
+                + "\"employee\".\"employee_id\"\n"
+                + "GROUP BY \"employee\".\"salary\"\n"
+                + "ORDER BY COUNT(DISTINCT \"salary\".\"employee_id\") DESC, "
+                + "\"employee\".\"salary\"";
+        runRawJdbc("RAW (expression ORDER BY)", sqlExpr, 0);
+        runRawJdbc("RAW (expression ORDER BY) +setMaxRows(5)", sqlExpr, 5);
+
+        String sqlAlias =
+                "SELECT \"employee\".\"salary\", "
+                + "COUNT(DISTINCT \"salary\".\"employee_id\") AS \"m0\"\n"
+                + "FROM \"salary\"\n"
+                + "INNER JOIN \"employee\" ON \"salary\".\"employee_id\" = "
+                + "\"employee\".\"employee_id\"\n"
+                + "GROUP BY \"employee\".\"salary\"\n"
+                + "ORDER BY \"m0\" DESC, \"employee\".\"salary\"";
+        runRawJdbc("RAW (alias ORDER BY)", sqlAlias, 0);
+
+        String sqlLimit =
+                "SELECT \"employee\".\"salary\", "
+                + "COUNT(DISTINCT \"salary\".\"employee_id\") AS \"m0\"\n"
+                + "FROM \"salary\"\n"
+                + "INNER JOIN \"employee\" ON \"salary\".\"employee_id\" = "
+                + "\"employee\".\"employee_id\"\n"
+                + "GROUP BY \"employee\".\"salary\"\n"
+                + "ORDER BY 2 DESC, \"employee\".\"salary\"\n"
+                + "LIMIT 5";
+        runRawJdbc("RAW (positional + SQL LIMIT 5)", sqlLimit, 0);
+    }
+
+    private void runRawJdbc(String tag, String sql, int maxRows) throws Exception {
+        javax.sql.DataSource ds = getConnection().getDataSource();
+        try (java.sql.Connection c = ds.getConnection();
+             java.sql.Statement st = c.createStatement()) {
+            if (maxRows > 0) st.setMaxRows(maxRows);
+            try (java.sql.ResultSet rs = st.executeQuery(sql)) {
+                System.out.println("=== saiku#809 " + tag + " ===");
+                int n = 0;
+                while (rs.next()) {
+                    System.out.println(
+                            "  row " + n + ": salary=" + rs.getString(1) + " count=" + rs.getInt(2));
+                    n++;
+                    if (n >= 12) break;
+                }
+            }
+        }
+    }
 }
