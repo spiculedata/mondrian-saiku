@@ -450,10 +450,29 @@ public class RolapResult extends ResultBase {
                                     }
                                 }
                             }
+                            // saiku#809: materialize EAGERLY (true). With
+                            // lazy materialization (the prior false), the
+                            // axis kept a MaterializingTupleList wrapper
+                            // around the still-unconsumed TupleIterable that
+                            // evalExecute returned. Cell evaluation later
+                            // re-iterated that wrapper, which re-walked the
+                            // source iterable — and for calcs whose output
+                            // depends on cell values being evaluated mid-
+                            // iteration (TopCount, BottomCount, anything
+                            // that calls partiallySortMembers), the second
+                            // walk landed inside the segment loader's
+                            // cold-cache window and produced a different
+                            // sort order than the first walk. The visible
+                            // symptom was TopCount on a high-cardinality
+                            // numeric-keyed level (HR/Employee/Salary)
+                            // returning the right TOP-N members but with
+                            // ranks 3 and 4 swapped. Eager materialization
+                            // locks the order in at axis-build time so cell
+                            // evaluation can't shuffle it.
                             this.axes[i] =
                                 new RolapAxis(
                                     TupleCollections.materialize(
-                                        tupleIterable, false));
+                                        tupleIterable, true));
                         }
                     } while (redo);
                 } catch (CellRequestQuantumExceededException e) {

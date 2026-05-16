@@ -838,13 +838,13 @@ public final class CalciteSqlPlanner {
     {
         RexNode col = fieldRef(b, f.column);
         if (f.literals.size() == 1) {
-            return b.equals(col, b.literal(f.literals.get(0)));
+            return eqOrIsNull(b, col, f.literals.get(0));
         }
         // Multi-literal → OR-chain of equalities (friendlier to dialects
         // than IN; avoids Calcite's SEARCH/SARG unparse surprises).
         List<RexNode> ors = new ArrayList<>(f.literals.size());
         for (Object lit : f.literals) {
-            ors.add(b.equals(col, b.literal(lit)));
+            ors.add(eqOrIsNull(b, col, lit));
         }
         return b.or(ors);
     }
@@ -859,27 +859,65 @@ public final class CalciteSqlPlanner {
             RexNode col = b.field(tf.columns.get(0).name);
             List<RexNode> ors = new ArrayList<>(tf.rows.size());
             for (List<Object> row : tf.rows) {
-                ors.add(b.equals(col, b.literal(row.get(0))));
+                ors.add(eqOrIsNull(b, col, row.get(0)));
             }
             return ors.size() == 1 ? ors.get(0) : b.or(ors);
         }
-        // Multi-column: OR of ANDs.
+        // Multi-column: OR of ANDs. Row values equal to
+        // CalcitePlannerAdapters.WILDCARD_VALUE skip the column in
+        // this row's AND predicate ("any value" semantics for missing
+        // columns in heterogeneous OrPredicate children).
         List<RexNode> ors = new ArrayList<>(tf.rows.size());
         for (List<Object> row : tf.rows) {
             List<RexNode> ands = new ArrayList<>(tf.columns.size());
             for (int i = 0; i < tf.columns.size(); i++) {
+                Object v = row.get(i);
+                if (v
+                    == mondrian.calcite.CalcitePlannerAdapters.WILDCARD_VALUE)
+                {
+                    continue;
+                }
                 RexNode col = b.field(tf.columns.get(i).name);
-                ands.add(b.equals(col, b.literal(row.get(i))));
+                ands.add(eqOrIsNull(b, col, v));
+            }
+            if (ands.isEmpty()) {
+                // Row had no constraints — matches everything, which
+                // makes the whole OR a tautology. Short-circuit.
+                return b.literal(true);
             }
             ors.add(ands.size() == 1 ? ands.get(0) : b.and(ands));
         }
         return ors.size() == 1 ? ors.get(0) : b.or(ors);
     }
 
+    /**
+     * SQL-semantics-aware predicate builder: {@code col = NULL} is always
+     * NULL (never matches), so for a null literal emit {@code col IS NULL}
+     * instead. CalcitePlannerAdapters substitutes Mondrian's
+     * {@code RolapUtil.sqlNullValue} sentinel with Java {@code null}
+     * before reaching this builder, so any null reaching here represents
+     * an intentional SQL-NULL key match.
+     */
+    private static RexNode eqOrIsNull(
+        RelBuilder b, RexNode col, Object literal)
+    {
+        if (literal == null) {
+            return b.isNull(col);
+        }
+        return b.equals(col, b.literal(literal));
+    }
+
     private static RexNode havingRex(
         RelBuilder b, PlannerRequest.Having h)
     {
         RexNode col = b.field(h.measure.alias);
+        // IS_NULL / IS_NOT_NULL ignore the literal field.
+        if (h.op == PlannerRequest.Comparison.IS_NULL) {
+            return b.isNull(col);
+        }
+        if (h.op == PlannerRequest.Comparison.IS_NOT_NULL) {
+            return b.isNotNull(col);
+        }
         RexNode lit = b.literal(h.literal);
         switch (h.op) {
         case GT: return b.greaterThan(col, lit);
@@ -894,10 +932,78 @@ public final class CalciteSqlPlanner {
         }
     }
 
+    /** Build a Calcite arithmetic RexCall from a structured
+     *  {@link PlannerRequest.ArithExpr}: {@code lhsCol <op> rhsCol}. */
+    private static RexNode arithRex(
+        RelBuilder b, PlannerRequest.ArithExpr a)
+    {
+        RexNode lhs = fieldRef(b, a.lhsCol);
+        RexNode rhs = fieldRef(b, a.rhsCol);
+        switch (a.op) {
+        case PLUS:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.PLUS,
+                lhs, rhs);
+        case MINUS:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.MINUS,
+                lhs, rhs);
+        case TIMES:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.MULTIPLY,
+                lhs, rhs);
+        case DIVIDE:
+            return b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.DIVIDE,
+                lhs, rhs);
+        default:
+            throw new IllegalStateException("unhandled ArithOp: " + a.op);
+        }
+    }
+
+    /** Build a Calcite RexCase from a structured
+     *  {@link PlannerRequest.CaseExpr}:
+     *  {@code case when whenCol = whenLit then thenLit else elseCol end}. */
+    private static RexNode caseRex(
+        RelBuilder b, PlannerRequest.CaseExpr c)
+    {
+        RexNode whenColRef = fieldRef(b, c.whenCol);
+        RexNode whenLitRex = c.whenLiteral == null
+            ? b.literal(null)
+            : b.literal(c.whenLiteral);
+        RexNode condition = b.equals(whenColRef, whenLitRex);
+        RexNode thenRex =
+            c.thenLiteral == PlannerRequest.Measure.NULL_LITERAL
+                ? b.literal(null)
+                : c.thenLiteral == null
+                    ? b.literal(null)
+                    : b.literal(c.thenLiteral);
+        RexNode elseRex = fieldRef(b, c.elseCol);
+        // RelBuilder.call(SqlStdOperatorTable.CASE, condition, then, else)
+        // emits a 3-arg CASE.
+        return b.call(
+            org.apache.calcite.sql.fun.SqlStdOperatorTable.CASE,
+            condition, thenRex, elseRex);
+    }
+
     private static RelBuilder.AggCall aggCall(
         RelBuilder b, PlannerRequest.Measure m)
     {
-        RexNode ref = b.field(m.column.name);
+        // Literal-valued measure: aggregate the literal directly
+        // (SUM(0), SUM(NULL), etc.) instead of a column reference.
+        // CASE-valued measure: build a RexCase from the descriptor.
+        RexNode ref;
+        if (m.caseExpr != null) {
+            ref = caseRex(b, m.caseExpr);
+        } else if (m.arithExpr != null) {
+            ref = arithRex(b, m.arithExpr);
+        } else if (m.literal != null) {
+            ref = m.literal == PlannerRequest.Measure.NULL_LITERAL
+                ? b.literal(null)
+                : b.literal(m.literal);
+        } else {
+            ref = b.field(m.column.name);
+        }
         switch (m.fn) {
         case SUM:
             if (m.distinct) {

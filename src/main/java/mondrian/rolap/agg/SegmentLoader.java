@@ -211,11 +211,28 @@ public class SegmentLoader {
                         // CASE expression). Leave precomputedCalciteSql
                         // null so the worker falls back to the legacy SQL
                         // string in pair.left.
+                        if (Boolean.getBoolean("mondrian.calcite.trace")) {
+                            System.err.println(
+                                "[calcite-fallback segment] "
+                                + ex.getClass().getSimpleName()
+                                + ": " + ex.getMessage());
+                        }
                         if (LOGGER.isDebugEnabled()) {
                             LOGGER.debug(
                                 "Calcite segment-load translation failed; "
                                 + "falling back to legacy SQL: "
                                 + ex.getMessage());
+                        }
+                        // saiku#809-followup: strict mode is ON by default
+                        // — Calcite gaps surface as hard failures instead
+                        // of silently passing through to the legacy
+                        // Mondrian planner (which masks bugs). Escape
+                        // hatch: -Dmondrian.calcite.strict=false reverts
+                        // to legacy fallback.
+                        if (!"false".equals(
+                            System.getProperty("mondrian.calcite.strict")))
+                        {
+                            throw ex;
                         }
                     }
                 }
