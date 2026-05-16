@@ -1095,6 +1095,27 @@ public final class CalcitePlannerAdapters {
             args = new mondrian.olap.Exp[] { args[1], tmp };
             cmp = invertComparisonOperands(cmp);
         }
+        // Constant-vs-constant filter (e.g. 1=1 or 1=0): evaluate at
+        // translation time. True → no filter; false → universalFalse.
+        if (args[0] instanceof mondrian.olap.Literal
+            && args[1] instanceof mondrian.olap.Literal)
+        {
+            Object lhsLit = ((mondrian.olap.Literal) args[0]).getValue();
+            Object rhsLit = ((mondrian.olap.Literal) args[1]).getValue();
+            Boolean result = evalConstantComparison(cmp, lhsLit, rhsLit);
+            if (result == null) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: FilterConstraint constant-vs-constant "
+                    + "with non-comparable literals (lhs=" + lhsLit
+                    + ", rhs=" + rhsLit + ")");
+            }
+            if (!result) {
+                b.universalFalse(true);
+            }
+            // result==true → no filter contribution; existing query
+            // already enumerates the set.
+            return;
+        }
         // Left side: measure reference.
         if (!(args[0] instanceof mondrian.mdx.MemberExpr)) {
             throw new UnsupportedTranslation(
@@ -1169,6 +1190,48 @@ public final class CalcitePlannerAdapters {
         case NE: return PlannerRequest.Comparison.EQ;
         default:
             throw new IllegalStateException("unhandled comparison " + c);
+        }
+    }
+
+    /** Evaluate a constant-vs-constant comparison at translation time.
+     *  Returns null if the operands cannot be compared (incompatible
+     *  types or non-Comparable). */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Boolean evalConstantComparison(
+        PlannerRequest.Comparison cmp, Object lhs, Object rhs)
+    {
+        if (lhs == null || rhs == null) {
+            // SQL NULL semantics: any comparison is NULL/UNKNOWN, which
+            // filters out everything. Treat as FALSE.
+            return cmp == PlannerRequest.Comparison.NE;
+        }
+        // Promote numeric literals to BigDecimal for cross-type compare.
+        if (lhs instanceof Number && rhs instanceof Number) {
+            java.math.BigDecimal a =
+                new java.math.BigDecimal(lhs.toString());
+            java.math.BigDecimal r =
+                new java.math.BigDecimal(rhs.toString());
+            int c = a.compareTo(r);
+            return applyCompareResult(cmp, c);
+        }
+        if (lhs instanceof Comparable && lhs.getClass() == rhs.getClass()) {
+            int c = ((Comparable) lhs).compareTo(rhs);
+            return applyCompareResult(cmp, c);
+        }
+        return null;
+    }
+
+    private static Boolean applyCompareResult(
+        PlannerRequest.Comparison cmp, int c)
+    {
+        switch (cmp) {
+        case GT: return c > 0;
+        case LT: return c < 0;
+        case GE: return c >= 0;
+        case LE: return c <= 0;
+        case EQ: return c == 0;
+        case NE: return c != 0;
+        default: return null;
         }
     }
 
@@ -2464,6 +2527,14 @@ public final class CalcitePlannerAdapters {
      *  cannot be reduced to a single literal value. */
     private static final Object UNRESOLVED_LITERAL = new Object();
 
+    /** Sentinel used in {@link PlannerRequest.TupleFilter} row values
+     *  to mean "no constraint on this column for this row" — emitted
+     *  by the segment-load OrPredicate translator when an AND child
+     *  covers only a subset of the OR's columns. The renderer skips
+     *  columns whose value is this sentinel when building the row's
+     *  AND predicate. */
+    public static final Object WILDCARD_VALUE = new Object();
+
     /**
      * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose SQL
      * is a pure literal (integer / decimal / NULL / single-quoted
@@ -3432,20 +3503,18 @@ public final class CalcitePlannerAdapters {
                 byCol.put(
                     v.getColumn().physColumn, unwrapSqlNull(v.getValue()));
             }
-            if (byCol.size() != orderedCols.size()) {
-                throw new UnsupportedTranslation(
-                    "fromSegmentLoad: OrPredicate AND child covers "
-                    + byCol.size() + " columns, expected "
-                    + orderedCols.size());
-            }
+            // Mondrian's OrPredicate may have children that cover only
+            // a subset of the OR's columns — the missing columns are
+            // effectively unconstrained ("any value") for that
+            // alternative. Use the WILDCARD sentinel so the TupleFilter
+            // renderer can skip the column in this row's predicate.
             List<Object> row = new java.util.ArrayList<>(orderedCols.size());
             for (PredicateColumn pc : orderedCols) {
-                if (!byCol.containsKey(pc.physColumn)) {
-                    throw new UnsupportedTranslation(
-                        "fromSegmentLoad: OrPredicate AND child missing "
-                        + "column " + pc.physColumn);
+                if (byCol.containsKey(pc.physColumn)) {
+                    row.add(byCol.get(pc.physColumn));
+                } else {
+                    row.add(WILDCARD_VALUE);
                 }
-                row.add(byCol.get(pc.physColumn));
             }
             rows.add(row);
         }

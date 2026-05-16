@@ -863,13 +863,27 @@ public final class CalciteSqlPlanner {
             }
             return ors.size() == 1 ? ors.get(0) : b.or(ors);
         }
-        // Multi-column: OR of ANDs.
+        // Multi-column: OR of ANDs. Row values equal to
+        // CalcitePlannerAdapters.WILDCARD_VALUE skip the column in
+        // this row's AND predicate ("any value" semantics for missing
+        // columns in heterogeneous OrPredicate children).
         List<RexNode> ors = new ArrayList<>(tf.rows.size());
         for (List<Object> row : tf.rows) {
             List<RexNode> ands = new ArrayList<>(tf.columns.size());
             for (int i = 0; i < tf.columns.size(); i++) {
+                Object v = row.get(i);
+                if (v
+                    == mondrian.calcite.CalcitePlannerAdapters.WILDCARD_VALUE)
+                {
+                    continue;
+                }
                 RexNode col = b.field(tf.columns.get(i).name);
-                ands.add(eqOrIsNull(b, col, row.get(i)));
+                ands.add(eqOrIsNull(b, col, v));
+            }
+            if (ands.isEmpty()) {
+                // Row had no constraints — matches everything, which
+                // makes the whole OR a tautology. Short-circuit.
+                return b.literal(true);
             }
             ors.add(ands.size() == 1 ? ands.get(0) : b.and(ands));
         }
