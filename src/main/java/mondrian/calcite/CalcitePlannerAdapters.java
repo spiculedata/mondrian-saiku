@@ -9,9 +9,11 @@
 */
 package mondrian.calcite;
 
+import mondrian.olap.Evaluator;
 import mondrian.olap.Member;
 import mondrian.rolap.DefaultTupleConstraint;
 import mondrian.rolap.DescendantsConstraint;
+import mondrian.rolap.SqlContextConstraint;
 import mondrian.rolap.RolapAggregator;
 import mondrian.rolap.RolapAttribute;
 import mondrian.rolap.RolapCubeDimension;
@@ -178,13 +180,27 @@ public final class CalcitePlannerAdapters {
                 levels, (DescendantsConstraint) constraint);
         }
         if (!(constraint instanceof DefaultTupleConstraint)) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: non-default TupleConstraint not yet "
-                + "supported (got "
-                + (constraint == null
-                    ? "null"
-                    : constraint.getClass().getName())
-                + ")");
+            // SqlContextConstraint with no meaningful slicer (every
+            // member is all/default/calculated/measure) collapses to a
+            // plain dim enumeration — equivalent to DefaultTupleConstraint.
+            // The full slicer-aware translation (fact-join + per-member
+            // filters) is bigger surgery; handle the trivial case now
+            // so plain "WHERE ()" or default-slicer queries take the
+            // Calcite path.
+            if (constraint instanceof SqlContextConstraint
+                && isEffectivelyEmptySlicer(
+                    (SqlContextConstraint) constraint))
+            {
+                // fall through to the DefaultTupleConstraint path below
+            } else {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: non-default TupleConstraint not yet "
+                    + "supported (got "
+                    + (constraint == null
+                        ? "null"
+                        : constraint.getClass().getName())
+                    + ")");
+            }
         }
         if (levels.size() > 2) {
             throw new UnsupportedTranslation(
@@ -248,6 +264,45 @@ public final class CalcitePlannerAdapters {
 
         b.distinct(true);
         return b.build();
+    }
+
+    /**
+     * Returns true if the {@link SqlContextConstraint}'s evaluator
+     * context carries no meaningful slicer members — every member is
+     * a measure, all-member, calculated, or the hierarchy's default
+     * (which legacy {@code addContextConstraint} drops silently).
+     * In that case the constraint reduces to enumerating the target
+     * dimension's members and is equivalent to
+     * {@link DefaultTupleConstraint}. Used to opt into the Calcite
+     * path for the common "plain WHERE / default slicer" tuple-read
+     * shape without taking on the full slicer-aware translation yet.
+     */
+    private static boolean isEffectivelyEmptySlicer(
+        SqlContextConstraint c)
+    {
+        Evaluator ev = c.getEvaluator();
+        if (ev == null) {
+            return false;
+        }
+        Member[] members = ev.getMembers();
+        if (members == null) {
+            return true;
+        }
+        for (Member m : members) {
+            if (m == null
+                || m.isMeasure()
+                || m.isAll()
+                || m.isCalculated())
+            {
+                continue;
+            }
+            Member def = m.getHierarchy().getDefaultMember();
+            if (def != null && def.equals(m)) {
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -1064,11 +1119,13 @@ public final class CalcitePlannerAdapters {
     private static void addNecjOrderByColumn(
         PlannerRequest.Builder b, Set<String> seen, RolapSchema.PhysColumn c)
     {
-        if (!(c instanceof RolapSchema.PhysRealColumn)) {
+        RolapSchema.PhysColumn effective = unwrapToRealColumn(c);
+        if (!(effective instanceof RolapSchema.PhysRealColumn)) {
             return;
         }
-        String tableAlias = c.relation == null ? null : c.relation.getAlias();
-        String colName = ((RolapSchema.PhysRealColumn) c).name;
+        String tableAlias =
+            effective.relation == null ? null : effective.relation.getAlias();
+        String colName = ((RolapSchema.PhysRealColumn) effective).name;
         String tag = tableAlias + "." + colName;
         if (seen.add(tag)) {
             b.addOrderBy(
@@ -1084,15 +1141,25 @@ public final class CalcitePlannerAdapters {
         RolapSchema.PhysColumn col,
         String role)
     {
-        if (!(col instanceof RolapSchema.PhysRealColumn)) {
+        RolapSchema.PhysColumn effective = unwrapToRealColumn(col);
+        if (!(effective instanceof RolapSchema.PhysRealColumn)) {
+            String shape = "";
+            if (col instanceof RolapSchema.PhysCalcColumn) {
+                try {
+                    shape = " [sql=" + col.toSql() + "]";
+                } catch (RuntimeException ignored) {
+                    // best-effort
+                }
+            }
             throw new UnsupportedTranslation(
                 "fromTupleRead: SetConstraint " + role
-                + " column is non-real (" + col.getClass().getName() + ")");
+                + " column is non-real (" + col.getClass().getName() + ")"
+                + shape);
         }
         String tableAlias =
-            col.relation == null ? null : col.relation.getAlias();
+            effective.relation == null ? null : effective.relation.getAlias();
         PlannerRequest.Column projection = new PlannerRequest.Column(
-            tableAlias, ((RolapSchema.PhysRealColumn) col).name);
+            tableAlias, ((RolapSchema.PhysRealColumn) effective).name);
         String tag = tableAlias + "." + projection.name;
         if (seen.add(tag)) {
             b.addProjection(projection);
@@ -1186,7 +1253,17 @@ public final class CalcitePlannerAdapters {
                 "fromTupleRead: composite member key not yet supported "
                 + "(member=" + m + ")");
         }
-        return key;
+        return unwrapSqlNull(key);
+    }
+
+    /**
+     * Translates Mondrian's {@code RolapUtil.sqlNullValue} sentinel
+     * (a non-null {@code RolapUtilComparable} instance representing a
+     * SQL NULL key) into Java {@code null} so Calcite's RexBuilder can
+     * emit a NULL literal rather than choking on an unknown class.
+     */
+    private static Object unwrapSqlNull(Object v) {
+        return v == mondrian.rolap.RolapUtil.sqlNullValue ? null : v;
     }
 
     /**
@@ -1337,9 +1414,24 @@ public final class CalcitePlannerAdapters {
             throw new UnsupportedTranslation(
                 "fromTupleRead: level has no key columns");
         }
-        // Composite keys are supported (Task H) — the key columns must all
-        // live on the same table as the rest of the attribute, though.
-        RolapSchema.PhysRelation relation = keyList.get(0).relation;
+        // Validate every key column is a real column, then pick the
+        // leaf-most key as the scan target. Mondrian orders composite
+        // keys parent → leaf so the last entry is the most-specific
+        // (e.g. [Brand Name] = [product_class.product_family,
+        // product_class.product_department, product_class.product_category,
+        // product_class.product_subcategory, product.brand_name] — leaf
+        // = product). The dim chain then walks back from the leaf through
+        // every ancestor relation referenced by the key list, and each
+        // key projection uses its own relation alias.
+        for (RolapSchema.PhysColumn kc : keyList) {
+            if (!(kc instanceof RolapSchema.PhysRealColumn)) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: non-real key expression "
+                    + kc.getClass().getName());
+            }
+        }
+        RolapSchema.PhysColumn leafKey = keyList.get(keyList.size() - 1);
+        RolapSchema.PhysRelation relation = leafKey.relation;
         if (!(relation instanceof RolapSchema.PhysTable)) {
             throw new UnsupportedTranslation(
                 "fromTupleRead: snowflake hierarchy / non-table relation "
@@ -1348,23 +1440,6 @@ public final class CalcitePlannerAdapters {
                 + ")");
         }
         RolapSchema.PhysTable table = (RolapSchema.PhysTable) relation;
-        // All key columns must share the same relation (otherwise we'd have
-        // a snowflake-like composite, which today's single-table path does
-        // not express).
-        for (RolapSchema.PhysColumn kc : keyList) {
-            if (!(kc instanceof RolapSchema.PhysRealColumn)) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: non-real key expression "
-                    + kc.getClass().getName());
-            }
-            if (kc.relation != relation) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: composite key spans multiple relations "
-                    + "(expected " + relation.getAlias() + ", got "
-                    + (kc.relation == null ? "null" : kc.relation.getAlias())
-                    + ")");
-            }
-        }
         // Task L: if the level's key columns live on a snowflaked dim table
         // reached through intermediate dim tables (e.g. [Product Department]
         // keyed on product_class, reached via product → product_class), emit
@@ -1376,8 +1451,152 @@ public final class CalcitePlannerAdapters {
         // (FROM "product","product_class" WHERE "product"."product_class_id"
         // = "product_class"."product_class_id").
         List<PlannerRequest.Join> dimChain =
-            computeTupleReadDimChain(level, table);
+            computeTupleReadDimChain(level, table, leafKey);
+        // Verify every key column's relation is reachable via the chain
+        // (i.e. either the leaf itself or an ancestor join). Mismatches
+        // would yield an UNRESOLVED reference at plan time.
+        java.util.Set<String> joinedAliases = new java.util.LinkedHashSet<>();
+        joinedAliases.add(table.getAlias());
+        for (PlannerRequest.Join j : dimChain) {
+            joinedAliases.add(j.dimTable);
+        }
+        // Mondrian's "downward" chain (dimKeyTable → leaf via getKeyPath)
+        // covers snowflakes where the dim's keyTable is the snowflake
+        // root and the level keys live downstream. For the inverse case
+        // — the dim's keyTable IS the leaf (Products dim: keyTable=
+        // product, ancestor key columns on product_class) — getKeyPath
+        // walks upward and the existing chain ends at the wrong relation.
+        // Fill in the missing ancestor joins by walking the schema's
+        // link set: for every key column whose relation is not yet
+        // joined, find the FK link connecting it to a relation that
+        // IS joined and emit a Join edge. Walk BOTH the current level's
+        // keyList AND every parent level's keyList — the projection
+        // step emits ancestor-key columns for every non-all ancestor.
+        java.util.List<RolapSchema.PhysColumn> allKeyCols =
+            new java.util.ArrayList<>(keyList);
+        java.util.List<? extends RolapCubeLevel> hierLevels =
+            level.getHierarchy().getLevelList();
+        for (int li = 0; li < level.getDepth(); li++) {
+            RolapCubeLevel anc = hierLevels.get(li);
+            if (anc.isAll() || anc.getAttribute() == null) {
+                continue;
+            }
+            java.util.List<RolapSchema.PhysColumn> ancKeys =
+                anc.getAttribute().getKeyList();
+            if (ancKeys != null) {
+                allKeyCols.addAll(ancKeys);
+            }
+        }
+        for (RolapSchema.PhysColumn kc : allKeyCols) {
+            String a = kc.relation == null ? null : kc.relation.getAlias();
+            if (a == null || joinedAliases.contains(a)) {
+                continue;
+            }
+            if (!(kc.relation instanceof RolapSchema.PhysTable)) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: ancestor key relation is not a "
+                    + "PhysTable (got "
+                    + kc.relation.getClass().getName() + ")");
+            }
+            RolapSchema.PhysTable ancestor =
+                (RolapSchema.PhysTable) kc.relation;
+            PlannerRequest.Join up = buildUpwardJoin(
+                table, ancestor, joinedAliases, level, keyList);
+            dimChain = new java.util.ArrayList<>(dimChain);
+            dimChain.add(up);
+            joinedAliases.add(ancestor.getAlias());
+        }
         return new TargetShape(level, attribute, table, dimChain);
+    }
+
+    /**
+     * Find the FK link connecting {@code ancestor} to any
+     * already-joined relation (typically {@code leaf}) and return a
+     * {@link PlannerRequest.Join} that joins {@code ancestor} into the
+     * tree. Throws {@link UnsupportedTranslation} if no single-hop link
+     * exists or its arity is unsupported.
+     */
+    private static PlannerRequest.Join buildUpwardJoin(
+        RolapSchema.PhysTable leaf,
+        RolapSchema.PhysTable ancestor,
+        java.util.Set<String> joinedAliases,
+        RolapCubeLevel level,
+        java.util.List<RolapSchema.PhysColumn> keyList)
+    {
+        RolapSchema.PhysSchema physSchema = leaf.getSchema();
+        for (RolapSchema.PhysLink link : physSchema.getLinks()) {
+            RolapSchema.PhysRelation target = link.targetRelation;
+            RolapSchema.PhysKey src = link.getSourceKey();
+            RolapSchema.PhysRelation source = src == null
+                ? null
+                : src.getRelation();
+            if (source == null) {
+                continue;
+            }
+            boolean targetIsAncestor =
+                target instanceof RolapSchema.PhysTable
+                && target.getAlias().equals(ancestor.getAlias());
+            boolean sourceIsAncestor =
+                source instanceof RolapSchema.PhysTable
+                && source.getAlias().equals(ancestor.getAlias());
+            if (!targetIsAncestor && !sourceIsAncestor) {
+                continue;
+            }
+            RolapSchema.PhysRelation other =
+                targetIsAncestor ? source : target;
+            if (!(other instanceof RolapSchema.PhysTable)) {
+                continue;
+            }
+            String otherAlias =
+                ((RolapSchema.PhysTable) other).getAlias();
+            if (!joinedAliases.contains(otherAlias)) {
+                continue;
+            }
+            java.util.List<RolapSchema.PhysColumn> fkCols =
+                link.getColumnList();
+            java.util.List<RolapSchema.PhysColumn> pkCols =
+                src.getColumnList();
+            if (fkCols.size() != 1 || pkCols.size() != 1) {
+                continue;
+            }
+            RolapSchema.PhysColumn fkCol = fkCols.get(0);
+            RolapSchema.PhysColumn pkCol = pkCols.get(0);
+            if (!(fkCol instanceof RolapSchema.PhysRealColumn)
+                || !(pkCol instanceof RolapSchema.PhysRealColumn))
+            {
+                continue;
+            }
+            String fkName = ((RolapSchema.PhysRealColumn) fkCol).name;
+            String pkName = ((RolapSchema.PhysRealColumn) pkCol).name;
+            // Always join: dimTable=ancestor, factKey=column on the
+            // already-joined side, dimKey=column on ancestor. The
+            // FK lives on link.targetRelation, PK on src.relation.
+            String ancestorKey;
+            String otherKey;
+            if (targetIsAncestor) {
+                ancestorKey = fkName;
+                otherKey = pkName;
+            } else {
+                ancestorKey = pkName;
+                otherKey = fkName;
+            }
+            return PlannerRequest.Join.chained(
+                otherAlias, otherKey, ancestor.getName(), ancestorKey);
+        }
+        StringBuilder keys = new StringBuilder();
+        for (RolapSchema.PhysColumn k : keyList) {
+            if (keys.length() > 0) {
+                keys.append(", ");
+            }
+            keys.append(
+                k.relation == null ? "null" : k.relation.getAlias())
+                .append('.').append(k.name);
+        }
+        throw new UnsupportedTranslation(
+            "fromTupleRead: no FK link from ancestor "
+            + ancestor.getAlias() + " to any joined relation "
+            + joinedAliases + " (level=" + level.getUniqueName()
+            + " keys=[" + keys + "])");
     }
 
     /**
@@ -1395,6 +1614,15 @@ public final class CalcitePlannerAdapters {
     private static List<PlannerRequest.Join> computeTupleReadDimChain(
         RolapCubeLevel level, RolapSchema.PhysTable keyTable)
     {
+        return computeTupleReadDimChain(
+            level, keyTable, level.getAttribute().getKeyList().get(0));
+    }
+
+    private static List<PlannerRequest.Join> computeTupleReadDimChain(
+        RolapCubeLevel level,
+        RolapSchema.PhysTable keyTable,
+        RolapSchema.PhysColumn seedKey)
+    {
         RolapCubeDimension dim = level.getDimension();
         if (dim == null) {
             return java.util.Collections.emptyList();
@@ -1410,16 +1638,14 @@ public final class CalcitePlannerAdapters {
         if (dimKeyTable == null || dimKeyTable == keyTable) {
             return java.util.Collections.emptyList();
         }
-        RolapSchema.PhysColumn firstKey =
-            level.getAttribute().getKeyList().get(0);
         RolapSchema.PhysPath path;
         try {
-            path = dim.getKeyPath(firstKey);
+            path = dim.getKeyPath(seedKey);
         } catch (RuntimeException ex) {
             throw new UnsupportedTranslation(
                 "fromTupleRead: cannot resolve join path from dimension "
                 + "key " + dimKeyTable.getAlias() + " to key column "
-                + firstKey + ": " + ex.getMessage());
+                + seedKey + ": " + ex.getMessage());
         }
         // path.hopList: Hop(dimKeyTable, null), Hop(next, link1), …,
         //   Hop(leaf, linkN). We want every hop EXCEPT the leaf, emitted
@@ -1581,23 +1807,25 @@ public final class CalcitePlannerAdapters {
             }
             RolapAttribute ancAttr = anc.getAttribute();
             for (RolapSchema.PhysColumn akc : ancAttr.getKeyList()) {
-                if (akc.relation == null
-                    || !tableAlias.equals(akc.relation.getAlias()))
-                {
+                // Ancestor-key projection mirrors Step 1's key emission:
+                // each column references its own relation alias. The
+                // shapeFor() snowflake-upward path has already injected
+                // joins for any ancestor relations referenced by the
+                // *current* level's keyList — but a parent level may
+                // reference yet another ancestor not yet joined. In
+                // that case we still throw so the caller falls back.
+                String akcAlias = akc.relation == null
+                    ? null
+                    : akc.relation.getAlias();
+                if (akcAlias == null) {
                     throw new UnsupportedTranslation(
                         "fromTupleRead: ancestor level "
                         + anc.getUniqueName()
-                        + " key column lives on "
-                        + (akc.relation == null
-                            ? "null"
-                            : akc.relation.getAlias())
-                        + " but target dim table is " + tableAlias
-                        + " (snowflake ancestor projection not yet "
-                        + "supported)");
+                        + " key column has null relation");
                 }
                 PlannerRequest.Column akp =
-                    asProjection(akc, tableAlias, "ancestor-key");
-                if (seen.add(tableAlias + "." + akp.name)) {
+                    asProjection(akc, akcAlias, "ancestor-key");
+                if (seen.add(akcAlias + "." + akp.name)) {
                     b.addProjection(akp);
                     // Note: no addOrderBy here. Step 1's keyList loop is the
                     // authoritative ORDER BY emitter — for composite-key dims
@@ -1611,14 +1839,19 @@ public final class CalcitePlannerAdapters {
 
         // 1) Key columns (full list, parent-most to leaf-most — composite
         // keys emit every key column, and every one contributes to the
-        // ORDER BY so cell-set key ordering matches legacy).
+        // ORDER BY so cell-set key ordering matches legacy). Each key
+        // projects from its own relation alias: for a snowflake
+        // [Brand Name] keyed on (product_class.product_family, ...,
+        // product.brand_name), each column references its actual table.
         java.util.List<RolapSchema.PhysColumn> keyList =
             attribute.getKeyList();
         java.util.Set<String> keyColNames =
             new java.util.LinkedHashSet<String>();
         for (RolapSchema.PhysColumn kc : keyList) {
-            PlannerRequest.Column kp = asProjection(kc, tableAlias, "key");
-            if (seen.add(tableAlias + "." + kp.name)) {
+            String kcAlias =
+                kc.relation == null ? tableAlias : kc.relation.getAlias();
+            PlannerRequest.Column kp = asProjection(kc, kcAlias, "key");
+            if (seen.add(kcAlias + "." + kp.name)) {
                 b.addProjection(kp);
             }
             keyColNames.add(kp.name);
@@ -1663,21 +1896,84 @@ public final class CalcitePlannerAdapters {
     private static PlannerRequest.Column asProjection(
         RolapSchema.PhysColumn col, String tableAlias, String role)
     {
-        if (!(col instanceof RolapSchema.PhysRealColumn)) {
+        // Unwrap a PhysCalcColumn whose entire expression is a single
+        // PhysRealColumn reference. FoodMart's [Customer].fullname for
+        // the generic dialect is defined as <CalculatedColumnDef>
+        // <ExpressionView><SQL dialect='generic'><Column name='fullname'/>
+        // — a calc-column wrapping one real column. Treat it as that
+        // column; arbitrary calc expressions (CONCAT, +, ||, CASE) still
+        // throw with the SQL shape attached so we can grow coverage.
+        RolapSchema.PhysColumn effective = unwrapToRealColumn(col);
+        if (!(effective instanceof RolapSchema.PhysRealColumn)) {
+            String shape = "";
+            if (col instanceof RolapSchema.PhysCalcColumn) {
+                try {
+                    shape = " [sql=" + col.toSql() + "]";
+                } catch (RuntimeException ignored) {
+                    // best-effort; toSql may NPE pre-compute.
+                }
+            }
             throw new UnsupportedTranslation(
                 "fromTupleRead: non-real " + role + " expression "
-                + col.getClass().getName());
+                + col.getClass().getName() + shape);
         }
-        if (col.relation == null
-            || !tableAlias.equals(col.relation.getAlias()))
+        if (effective.relation == null
+            || !tableAlias.equals(effective.relation.getAlias()))
         {
             throw new UnsupportedTranslation(
                 "fromTupleRead: " + role + " column on different relation "
                 + "(expected alias=" + tableAlias + ", got "
-                + (col.relation == null ? "null" : col.relation.getAlias())
+                + (effective.relation == null
+                    ? "null"
+                    : effective.relation.getAlias())
                 + ")");
         }
-        return new PlannerRequest.Column(tableAlias, col.name);
+        return new PlannerRequest.Column(tableAlias, effective.name);
+    }
+
+    /**
+     * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose entire
+     * expression is a single {@link RolapSchema.PhysRealColumn} reference,
+     * return that real column. Otherwise return {@code col} unchanged.
+     *
+     * <p>Use this before bailing on a "non-real" expression — it lets
+     * single-column calc-column wrappers (defined for
+     * cross-dialect schema portability) translate to plain column
+     * projections instead of forcing a legacy SQL fallback.
+     */
+    private static RolapSchema.PhysColumn unwrapToRealColumn(
+        RolapSchema.PhysColumn col)
+    {
+        if (!(col instanceof RolapSchema.PhysCalcColumn)) {
+            return col;
+        }
+        List<RolapSchema.PhysExpr> list =
+            ((RolapSchema.PhysCalcColumn) col).getList();
+        if (list == null || list.isEmpty()) {
+            return col;
+        }
+        // The XML loader interleaves whitespace PhysTextExpr nodes around
+        // <Column/> children (e.g. <SQL>\n  <Column name='fullname'/>\n
+        // </SQL>). Strip those, then look for a sole PhysRealColumn.
+        RolapSchema.PhysRealColumn only = null;
+        for (RolapSchema.PhysExpr e : list) {
+            if (e instanceof RolapSchema.PhysTextExpr) {
+                String s = e.toSql();
+                if (s == null || s.trim().isEmpty()) {
+                    continue;
+                }
+                return col; // non-whitespace text → real expression
+            }
+            if (e instanceof RolapSchema.PhysRealColumn) {
+                if (only != null) {
+                    return col; // multiple column refs
+                }
+                only = (RolapSchema.PhysRealColumn) e;
+                continue;
+            }
+            return col; // other PhysExpr type (nested calc, etc.)
+        }
+        return only != null ? only : col;
     }
 
     /**
@@ -2127,7 +2423,8 @@ public final class CalcitePlannerAdapters {
         if (p instanceof ValueColumnPredicate) {
             b.addFilter(
                 new PlannerRequest.Filter(
-                    col, ((ValueColumnPredicate) p).getValue()));
+                    col,
+                    unwrapSqlNull(((ValueColumnPredicate) p).getValue())));
             return false;
         }
         if (p instanceof LiteralColumnPredicate) {
@@ -2148,7 +2445,8 @@ public final class CalcitePlannerAdapters {
                         + "a ValueColumnPredicate: "
                         + kid.getClass().getName());
                 }
-                literals.add(((ValueColumnPredicate) kid).getValue());
+                literals.add(
+                    unwrapSqlNull(((ValueColumnPredicate) kid).getValue()));
             }
             if (literals.size() == 1) {
                 b.addFilter(new PlannerRequest.Filter(col, literals.get(0)));
@@ -2286,7 +2584,8 @@ public final class CalcitePlannerAdapters {
                         + leaf.getClass().getName());
                 }
                 ValueColumnPredicate v = (ValueColumnPredicate) leaf;
-                byCol.put(v.getColumn().physColumn, v.getValue());
+                byCol.put(
+                    v.getColumn().physColumn, unwrapSqlNull(v.getValue()));
             }
             if (byCol.size() != orderedCols.size()) {
                 throw new UnsupportedTranslation(
@@ -2331,7 +2630,7 @@ public final class CalcitePlannerAdapters {
             if (v.getColumn().physColumn != pc.physColumn) {
                 return UNPROMOTABLE;
             }
-            return v.getValue();
+            return unwrapSqlNull(v.getValue());
         }
         if (child instanceof AndPredicate) {
             AndPredicate and = (AndPredicate) child;
@@ -2346,7 +2645,7 @@ public final class CalcitePlannerAdapters {
             if (v.getColumn().physColumn != pc.physColumn) {
                 return UNPROMOTABLE;
             }
-            return v.getValue();
+            return unwrapSqlNull(v.getValue());
         }
         return UNPROMOTABLE;
     }
