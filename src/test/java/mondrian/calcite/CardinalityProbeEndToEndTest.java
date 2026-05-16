@@ -15,17 +15,10 @@ import mondrian.spi.impl.SqlStatisticsProvider;
 import mondrian.test.FoodMartHsqldbBootstrap;
 
 import org.hsqldb.jdbc.jdbcDataSource;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 
-import static org.junit.Assert.*;
-
-/**
+import static org.junit.Assert.*;/**
  * Unit-level coverage for the third dispatch seam: the cardinality probe
  * emitted by {@code SqlStatisticsProvider.getColumnCardinality}, routed
  * through {@link CalcitePlannerAdapters#fromCardinalityProbe(String,
@@ -49,22 +42,22 @@ import static org.junit.Assert.*;
  */
 public class CardinalityProbeEndToEndTest {
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @Before public void reset() {
+    @BeforeEach public void reset() {
         CalcitePlannerAdapters.resetUnsupportedCount();
         SqlStatisticsProvider.clearCalcitePlannerCache();
     }
 
-    @After public void clearBackend() {
+    @AfterEach public void clearBackend() {
         System.clearProperty("mondrian.backend");
         CalcitePlannerAdapters.resetUnsupportedCount();
         SqlStatisticsProvider.clearCalcitePlannerCache();
     }
 
-    @AfterClass public static void unsetBackend() {
+    @AfterAll public static void unsetBackend() {
         System.clearProperty("mondrian.backend");
         SqlStatisticsProvider.clearCalcitePlannerCache();
     }

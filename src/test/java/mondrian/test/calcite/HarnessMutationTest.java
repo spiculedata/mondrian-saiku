@@ -13,9 +13,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -23,9 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.assertTrue;
-
-/**
+import static org.junit.Assert.assertTrue;/**
  * Corpus-wide mutation witness: runs the smoke corpus against the
  * {@link EquivalenceHarness} with {@link MutatingCalcitePassThrough} — which
  * rewrites {@code =} to {@code &lt;&gt;} in predicate clauses — and asserts
@@ -54,7 +50,7 @@ public class HarnessMutationTest {
      */
     private static final int MIN_DRIFT_COUNT = 3;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }

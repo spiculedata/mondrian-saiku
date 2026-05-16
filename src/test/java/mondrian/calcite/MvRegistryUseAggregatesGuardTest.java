@@ -18,16 +18,10 @@ import mondrian.rolap.RolapSchema;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotNull;
 /**
  * Regression guard for the {@link MvRegistry#fromSchema} contract that
  * {@code mondrian.rolap.aggregates.Use=false} disables MV-based
@@ -50,18 +44,18 @@ public class MvRegistryUseAggregatesGuardTest {
 
     private boolean savedUseAggregates;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @Before
+    @BeforeEach
     public void saveProperty() {
         savedUseAggregates =
             MondrianProperties.instance().UseAggregates.get();
     }
 
-    @After
+    @AfterEach
     public void restoreProperty() {
         MondrianProperties.instance().UseAggregates.set(savedUseAggregates);
     }

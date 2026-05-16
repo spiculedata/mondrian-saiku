@@ -12,10 +12,7 @@ package mondrian.test.calcite;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.AggregateCorpus;
 
-import org.junit.Assume;
-import org.junit.Ignore;
-import org.junit.Test;
-
+import org.junit.Assume;import org.junit.jupiter.api.Disabled;import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -27,14 +24,14 @@ import java.nio.file.Paths;
  * other — changes to {@link AggregateCorpus} shouldn't force a smoke-
  * goldens rewrite, and vice-versa.
  *
- * <p>Double-guarded ({@code @Ignore} + {@code harness.rebaseline}); see
+ * <p>Double-guarded ({@code @Disabled} + {@code harness.rebaseline}); see
  * {@link BaselineRegenerationTest} javadoc. Run manually:
  * <pre>
  *   mvn test -Dharness.rebaseline=true
  *            -Dtest=BaselineAggregateRegenerationTest
  * </pre>
  */
-@Ignore("run manually with -Dharness.rebaseline=true")
+@Disabled("run manually with -Dharness.rebaseline=true")
 public class BaselineAggregateRegenerationTest {
 
     @Test

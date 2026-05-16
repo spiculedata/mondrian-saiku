@@ -22,9 +22,7 @@ import mondrian.test.calcite.corpus.MvHitCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -72,7 +70,7 @@ public class SqlDiffReportTest {
     private static final Path REPORT_FILE =
         Paths.get("docs/reports/sql-diff-report.md");
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         if (Boolean.getBoolean(WRITE_REPORT_PROP)) {
             FoodMartHsqldbBootstrap.ensureExtracted();

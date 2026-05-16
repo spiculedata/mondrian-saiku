@@ -27,16 +27,11 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.type.SqlTypeName;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;
 /**
  * Unit tests for {@link ArithmeticCalcTranslator}. Builds a standalone
  * {@link RexBuilder}, wires a resolver that maps base-measure refs to
@@ -49,7 +44,7 @@ public class ArithmeticCalcTranslatorTest {
     private static RexBuilder rexBuilder;
     private static RelDataType doubleType;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         Util.PropertyList props = Util.parseConnectString(
@@ -60,7 +55,7 @@ public class ArithmeticCalcTranslatorTest {
         doubleType = f.createSqlType(SqlTypeName.DOUBLE);
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (conn != null) {
             conn.close();
@@ -163,14 +158,14 @@ public class ArithmeticCalcTranslatorTest {
             s.contains("-") && s.contains("/"));
     }
 
-    @Test(expected = UnsupportedTranslation.class)
-    public void unresolvedBaseMeasureThrows() {
+    @Test public void unresolvedBaseMeasureThrows() {
         // Build a translator with no resolved refs.
         ArithmeticCalcTranslator tx = new ArithmeticCalcTranslator(
             rexBuilder,
             ArithmeticCalcTranslator.mapResolver(
                 new LinkedHashMap<>()));
-        tx.translate(parseExp("[Measures].[Unit Sales]"));
+        org.junit.jupiter.api.Assertions.assertThrows(UnsupportedTranslation.class,
+            () -> tx.translate(parseExp("[Measures].[Unit Sales]")));
     }
 
     @Test public void returnTypeIsDouble() {

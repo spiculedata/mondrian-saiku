@@ -15,19 +15,17 @@ import mondrian.rolap.agg.SegmentLoader;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.MvHitCorpus;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -52,8 +50,9 @@ import static org.junit.Assert.assertTrue;
  * <p><b>Property toggling:</b> {@code MondrianProperties.ReadAggregates}
  * and {@code UseAggregates} default to {@code false}. This test flips both
  * to {@code true} for the duration of each parameterised run (via
- * {@link Before}/{@link After}), which is the minimum needed to activate
- * {@code RolapGalaxy.findAgg}. No runtime or production-default change.
+ * {@code @BeforeEach}/{@code @AfterEach}), which is the minimum needed to
+ * activate {@code RolapGalaxy.findAgg}. No runtime or production-default
+ * change.
  *
  * <p>Closes the coverage gap left by the original Task U: the existing
  * {@code AggregateCorpus} uses {@code [Customer Count]} (distinct-count,
@@ -61,7 +60,6 @@ import static org.junit.Assert.assertTrue;
  * back to the base fact. The queries here are Unit-Sales-on-agg-native
  * grain, letting rollup fire through the additive path.
  */
-@RunWith(Parameterized.class)
 public class MvHitTest {
 
     /** All four declared agg tables, for diagnostic SQL-scraping (so a
@@ -72,31 +70,21 @@ public class MvHitTest {
         "agg_c_14_sales_fact_1997",
         "agg_g_ms_pcat_sales_fact_1997");
 
-    @Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
+    static Stream<Arguments> data() {
         return MvHitCorpus.entries().stream()
-            .map(e -> new Object[]{e.mdx.name, e})
-            .collect(Collectors.toList());
+            .map(e -> Arguments.of(e.mdx.name, e));
     }
-
-    private final String name;
-    private final MvHitCorpus.Entry entry;
 
     private boolean prevReadAgg;
     private boolean prevUseAgg;
     private String prevBackend;
 
-    public MvHitTest(String name, MvHitCorpus.Entry entry) {
-        this.name = name;
-        this.entry = entry;
-    }
-
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @Before
+    @BeforeEach
     public void enableAggregates() {
         MondrianProperties p = MondrianProperties.instance();
         prevReadAgg = p.ReadAggregates.get();
@@ -107,7 +95,7 @@ public class MvHitTest {
         SegmentLoader.clearCalcitePlannerCache();
     }
 
-    @After
+    @AfterEach
     public void restoreState() {
         MondrianProperties p = MondrianProperties.instance();
         p.ReadAggregates.set(prevReadAgg);
@@ -120,8 +108,9 @@ public class MvHitTest {
         SegmentLoader.clearCalcitePlannerCache();
     }
 
-    @Test
-    public void aggregateTableFiresUnderBothBackends() {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("data")
+    public void aggregateTableFiresUnderBothBackends(String name, MvHitCorpus.Entry entry) {
         // --- Run under legacy backend ---
         System.setProperty(MondrianBackend.PROPERTY, "legacy");
         SegmentLoader.clearCalcitePlannerCache();

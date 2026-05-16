@@ -9,14 +9,8 @@
 */
 package mondrian.test.calcite;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertTrue;
 /**
  * Unit-tests the {@code -Dharness.planCompare} / {@code -Dharness.replan}
  * system-property parsing on {@link EquivalenceHarness}. Mirrors the
@@ -34,7 +28,7 @@ public class HarnessPlanCompareModeTest {
     private String priorMode;
     private String priorReplan;
 
-    @Before
+    @BeforeEach
     public void save() {
         priorMode = System.getProperty(MODE_PROP);
         priorReplan = System.getProperty(REPLAN_PROP);
@@ -42,7 +36,7 @@ public class HarnessPlanCompareModeTest {
         System.clearProperty(REPLAN_PROP);
     }
 
-    @After
+    @AfterEach
     public void restore() {
         if (priorMode == null) {
             System.clearProperty(MODE_PROP);

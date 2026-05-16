@@ -1,11 +1,8 @@
 package mondrian.calcite;
 
-import org.junit.After;
-import org.junit.Test;
-import static org.junit.Assert.*;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.Test;import static org.junit.Assert.*;
 public class MondrianBackendTest {
-    @After public void clear() { System.clearProperty("mondrian.backend"); }
+    @AfterEach public void clear() { System.clearProperty("mondrian.backend"); }
 
     @Test public void defaultsToCalcite() {
         assertSame(MondrianBackend.CALCITE, MondrianBackend.current());

@@ -20,17 +20,12 @@ import mondrian.test.TestContext;
 import mondrian.test.calcite.CapturedExecution;
 import mondrian.test.calcite.SqlCapture;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
 import java.util.List;
 
-import static org.junit.Assert.assertTrue;
-
-/**
+import static org.junit.Assert.assertTrue;/**
  * End-to-end proof that the Task T.1 RolapResult runtime hook actually
  * populates the {@link CalcPushdownRegistry} and that a calc-corpus-style
  * MDX query under {@code -Dmondrian.backend=calcite} drives the arithmetic
@@ -66,14 +61,14 @@ public class CalcPushdownRuntimeTest {
 
     private static String prevBackend;
 
-    @BeforeClass
+    @BeforeAll
     public static void boot() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         prevBackend = System.getProperty("mondrian.backend");
         System.setProperty("mondrian.backend", "calcite");
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (prevBackend == null) {
             System.clearProperty("mondrian.backend");

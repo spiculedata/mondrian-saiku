@@ -12,16 +12,10 @@ package mondrian.test.calcite;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertNull;
 /**
  * Unit-tests the SQL-drift split in {@link EquivalenceHarness}: cell-set and
  * rowCount/checksum mismatches remain hard-gate {@link FailureClass#LEGACY_DRIFT}
@@ -48,13 +42,13 @@ public class HarnessSqlDriftTest {
 
     private String prior;
 
-    @Before
+    @BeforeEach
     public void save() {
         prior = System.getProperty(SYS_PROP);
         System.clearProperty(SYS_PROP);
     }
 
-    @After
+    @AfterEach
     public void restore() {
         if (prior == null) {
             System.clearProperty(SYS_PROP);
@@ -190,7 +184,7 @@ public class HarnessSqlDriftTest {
 
     @Test
     public void advisoryIsTheDefaultWhenSysPropUnset() throws Exception {
-        // prior cleared in @Before
+        // prior cleared in @BeforeEach
         assertNull(System.getProperty(SYS_PROP));
         assertEquals(
             EquivalenceHarness.SqlCompareMode.ADVISORY,

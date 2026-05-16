@@ -13,17 +13,11 @@ import mondrian.rolap.DefaultTupleConstraint;
 import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.sql.TupleConstraint;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;import static org.junit.Assert.fail;
 /**
  * Unit tests for the typed
  * {@link CalcitePlannerAdapters#fromTupleRead(List, TupleConstraint)}
@@ -34,11 +28,11 @@ import static org.junit.Assert.fail;
  */
 public class TupleReadLevelMembersTest {
 
-    @Before public void reset() {
+    @BeforeEach public void reset() {
         CalcitePlannerAdapters.resetUnsupportedCount();
     }
 
-    @After public void clearBackend() {
+    @AfterEach public void clearBackend() {
         System.clearProperty("mondrian.backend");
         CalcitePlannerAdapters.resetUnsupportedCount();
     }

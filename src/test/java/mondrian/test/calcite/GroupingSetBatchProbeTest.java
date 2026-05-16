@@ -15,8 +15,7 @@ import mondrian.test.calcite.corpus.AggregateCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.Test;
-
+import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;

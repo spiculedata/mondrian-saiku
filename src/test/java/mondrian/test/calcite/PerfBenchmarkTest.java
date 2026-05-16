@@ -19,9 +19,7 @@ import mondrian.test.calcite.corpus.MvHitCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,7 +66,7 @@ public class PerfBenchmarkTest {
     private static final int TIMED =
         Integer.getInteger("harness.bench.timed", 5);
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         if (!Boolean.getBoolean(RUN_PROP)) {
             return;

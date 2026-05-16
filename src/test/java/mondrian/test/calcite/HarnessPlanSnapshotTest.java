@@ -9,9 +9,8 @@
 */
 package mondrian.test.calcite;
 
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,23 +33,23 @@ import static org.junit.Assert.assertTrue;
  *   <li>Present plan that differs ⇒ Optional with a diff summary.</li>
  * </ol>
  *
- * <p>All three cases use a {@link TemporaryFolder} as the {@code baseDir}
- * to avoid mutating {@code src/test/resources/calcite-harness/golden-plans}
- * from inside a test.
+ * <p>All three cases use a {@link TempDir}-injected directory as the
+ * {@code baseDir} to avoid mutating
+ * {@code src/test/resources/calcite-harness/golden-plans} from inside a
+ * test.
  */
 public class HarnessPlanSnapshotTest {
 
-    @Rule
-    public TemporaryFolder tmp = new TemporaryFolder();
+    @TempDir
+    public Path tmp;
 
     @Test
     public void absentGoldenIsNoOp() throws Exception {
-        Path baseDir = tmp.getRoot().toPath();
         Optional<String> result =
             EquivalenceHarness.comparePlanSnapshot(
                 "no-such-query",
                 "LogicalProject(...)\n  LogicalTableScan(table=[[FOO]])\n",
-                baseDir);
+                tmp);
         assertFalse(
             "Absent plan file must be silent (no drift); got: "
             + result.orElse("<empty>"),
@@ -59,18 +58,17 @@ public class HarnessPlanSnapshotTest {
 
     @Test
     public void matchingGoldenIsNoOp() throws Exception {
-        Path baseDir = tmp.getRoot().toPath();
         String plan =
             "LogicalAggregate(group=[{0}], EXPR$1=[SUM($1)])\n"
             + "  LogicalTableScan(table=[[FOO]])\n";
         // Write golden with extra trailing newline / spaces; comparator
         // must trim both sides before comparing.
         Files.write(
-            baseDir.resolve("matching.plan"),
+            tmp.resolve("matching.plan"),
             (plan + "  \n\n").getBytes(StandardCharsets.UTF_8));
         Optional<String> result =
             EquivalenceHarness.comparePlanSnapshot(
-                "matching", plan, baseDir);
+                "matching", plan, tmp);
         assertFalse(
             "Identical (mod trailing-whitespace) plans must be silent; got: "
             + result.orElse("<empty>"),
@@ -79,7 +77,6 @@ public class HarnessPlanSnapshotTest {
 
     @Test
     public void differingGoldenRaisesDriftDetail() throws Exception {
-        Path baseDir = tmp.getRoot().toPath();
         String golden =
             "LogicalProject(a=[$0])\n"
             + "  LogicalTableScan(table=[[FOO]])\n";
@@ -87,11 +84,11 @@ public class HarnessPlanSnapshotTest {
             "LogicalProject(a=[$0], b=[$1])\n"
             + "  LogicalTableScan(table=[[FOO]])\n";
         Files.write(
-            baseDir.resolve("differing.plan"),
+            tmp.resolve("differing.plan"),
             golden.getBytes(StandardCharsets.UTF_8));
         Optional<String> result =
             EquivalenceHarness.comparePlanSnapshot(
-                "differing", captured, baseDir);
+                "differing", captured, tmp);
         assertTrue(
             "Differing plans must raise drift detail",
             result.isPresent());

@@ -9,13 +9,8 @@
 */
 package mondrian.calcite;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
-import static org.junit.Assert.*;
-
-/**
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
+import static org.junit.Assert.*;/**
  * Verifies the dispatch wiring added to
  * {@code mondrian.rolap.agg.SegmentLoader} for the Calcite backend.
  *
@@ -41,11 +36,11 @@ import static org.junit.Assert.*;
  */
 public class SegmentLoaderCalciteBackendTest {
 
-    @Before public void resetCounter() {
+    @BeforeEach public void resetCounter() {
         CalcitePlannerAdapters.resetUnsupportedCount();
     }
 
-    @After public void clearBackend() {
+    @AfterEach public void clearBackend() {
         System.clearProperty("mondrian.backend");
         CalcitePlannerAdapters.resetUnsupportedCount();
     }

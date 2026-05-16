@@ -12,10 +12,7 @@ package mondrian.test.calcite;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.CalcCorpus;
 
-import org.junit.Assume;
-import org.junit.Ignore;
-import org.junit.Test;
-
+import org.junit.Assume;import org.junit.jupiter.api.Disabled;import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -23,14 +20,14 @@ import java.nio.file.Paths;
 /**
  * Sibling of {@link BaselineAggregateRegenerationTest} that regenerates
  * goldens for the calc-member corpus (Task S). Double-guarded
- * ({@code @Ignore} + {@code harness.rebaseline}); see
+ * ({@code @Disabled} + {@code harness.rebaseline}); see
  * {@link BaselineRegenerationTest} javadoc. Run manually:
  * <pre>
  *   mvn test -Dharness.rebaseline=true
  *            -Dtest=BaselineCalcRegenerationTest
  * </pre>
  */
-@Ignore("run manually with -Dharness.rebaseline=true")
+@Disabled("run manually with -Dharness.rebaseline=true")
 public class BaselineCalcRegenerationTest {
 
     @Test

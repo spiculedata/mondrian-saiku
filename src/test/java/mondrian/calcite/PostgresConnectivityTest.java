@@ -14,19 +14,14 @@ import mondrian.test.calcite.PostgresFoodMartDataSource;
 
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.Test;
-
+import org.junit.Assume;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Smoke test for Task Z: opens a connection to the configured Postgres
  * instance, asserts the {@link DatabaseMetaData} product name, and verifies
@@ -41,7 +36,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class PostgresConnectivityTest {
 
-    @Before
+    @BeforeEach
     public void requirePostgresBackend() {
         Assume.assumeTrue(
             "PostgresConnectivityTest skipped: CALCITE_HARNESS_BACKEND != POSTGRES",

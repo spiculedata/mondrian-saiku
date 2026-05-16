@@ -19,15 +19,10 @@ import mondrian.test.TestContext;
 
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * End-to-end test for shape-aware {@link MvRegistry} materializations:
  * builds the {@link PlannerRequest} for each MvHit-corpus shape, runs
@@ -59,7 +54,7 @@ public class MvRuleRewriteTest {
     private static RolapSchema rolapSchema;
     private static DataSource ds;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
         // Enable the hand-rolled MV matcher so CalciteSqlPlanner.plan()
@@ -74,7 +69,7 @@ public class MvRuleRewriteTest {
         ds = rc.getDataSource();
     }
 
-    @AfterClass
+    @AfterAll
     public static void close() {
         if (mondrianConn != null) {
             mondrianConn.close();

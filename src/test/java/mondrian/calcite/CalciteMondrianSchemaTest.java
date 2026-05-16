@@ -13,22 +13,17 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 
 import org.apache.calcite.schema.SchemaPlus;
 import org.hsqldb.jdbc.jdbcDataSource;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
-
+import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertNull;import static org.junit.Assert.fail;
 /**
  * Unit tests for {@link CalciteMondrianSchema}: confirm the adapter exposes
  * the FoodMart fact and dimension tables reflected from a HSQLDB DataSource.
  */
 public class CalciteMondrianSchemaTest {
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }

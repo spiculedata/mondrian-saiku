@@ -15,11 +15,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -28,10 +24,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNull;
-
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNull;
 /**
  * Verifies the three-gate pipeline of {@link EquivalenceHarness}:
  * <ul>
@@ -52,19 +45,19 @@ public class EquivalenceHarnessTest {
 
     private String priorSysProp;
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @Before
+    @BeforeEach
     public void captureSysProp() {
         priorSysProp = System.getProperty(EquivalenceHarness.SYS_PROP);
         // Start each test clean — no leakage from prior runs.
         System.clearProperty(EquivalenceHarness.SYS_PROP);
     }
 
-    @After
+    @AfterEach
     public void restoreSysProp() {
         String now = System.getProperty(EquivalenceHarness.SYS_PROP);
         // The harness must restore the sys-prop on the way out. If a test

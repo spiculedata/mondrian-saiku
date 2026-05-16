@@ -13,11 +13,8 @@ import org.apache.calcite.avatica.util.Casing;
 import org.apache.calcite.avatica.util.Quoting;
 import org.apache.calcite.sql.parser.SqlParser;
 
-import org.junit.Test;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import org.junit.jupiter.api.Test;
+import static org.junit.Assert.assertEquals;import static org.junit.Assert.assertTrue;
 /**
  * Unit tests for {@link CalcitePassThrough} — the no-op Calcite interceptor
  * that parses Mondrian-emitted SQL via Calcite's {@code SqlParser} and

@@ -14,10 +14,7 @@ import mondrian.spi.Dialect;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.SmokeCorpus;
 
-import org.junit.Assume;
-import org.junit.Ignore;
-import org.junit.Test;
-
+import org.junit.Assume;import org.junit.jupiter.api.Disabled;import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -37,7 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Double-guarded:
  * <ul>
- *   <li>{@code @Ignore} keeps it out of normal {@code mvn test}.</li>
+ *   <li>{@code @Disabled} keeps it out of normal {@code mvn test}.</li>
  *   <li>{@code Assume.assumeTrue(harness.calcite.coverage)} guards against
  *       accidental runs.</li>
  * </ul>
@@ -54,7 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link System#setProperty}, so the {@code -Dmondrian.sqlInterceptor} flag
  * is optional.
  */
-@Ignore("run manually with -Dharness.calcite.coverage=true")
+@Disabled("run manually with -Dharness.calcite.coverage=true")
 public class BaselineCalciteCoverageTest {
 
     public static final AtomicInteger PARSED = new AtomicInteger();

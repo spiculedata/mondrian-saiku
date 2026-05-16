@@ -15,15 +15,10 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.hsqldb.jdbc.jdbcDataSource;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-
+import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
  * Exercises Phase 3 Task 9: the {@link CalciteSqlPlanner#optimize} step
  * that runs a {@link org.apache.calcite.plan.hep.HepPlanner} with a
@@ -40,7 +35,7 @@ import static org.junit.Assert.assertTrue;
  */
 public class CalciteSqlPlannerHepTest {
 
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }

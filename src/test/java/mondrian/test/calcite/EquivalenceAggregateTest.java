@@ -13,17 +13,15 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.calcite.corpus.AggregateCorpus;
 import mondrian.test.calcite.corpus.SmokeCorpus.NamedMdx;
 
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-import org.junit.runners.Parameterized.Parameters;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Collection;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 
@@ -36,40 +34,30 @@ import static org.junit.Assert.assertEquals;
  *
  * <p>Task 11 of the Calcite Equivalence Harness plan.
  */
-@RunWith(Parameterized.class)
 public class EquivalenceAggregateTest {
 
     private static final Path GOLDEN_DIR =
         Paths.get("src/test/resources/calcite-harness/golden");
 
-    @Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
+    static Stream<Arguments> data() {
         return AggregateCorpus.queries().stream()
-            .map(q -> new Object[]{q.name, q})
-            .collect(Collectors.toList());
+            .map(q -> Arguments.of(q.name, q));
     }
 
-    private final String name;
-    private final NamedMdx mdx;
-
-    public EquivalenceAggregateTest(String name, NamedMdx mdx) {
-        this.name = name;
-        this.mdx = mdx;
-    }
-
-    @BeforeClass
+    @BeforeAll
     public static void bootFoodMart() {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    @AfterClass
+    @AfterAll
     public static void writeReport() throws Exception {
         HarnessReporter.writeHtml(
             Paths.get("target/calcite-harness-report.html"));
     }
 
-    @Test
-    public void equivalent() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("data")
+    public void equivalent(String name, NamedMdx mdx) throws Exception {
         EquivalenceHarness h = new EquivalenceHarness(GOLDEN_DIR);
         HarnessResult r = h.run(mdx, CalcitePassThrough.class);
         HarnessReporter.record(mdx.name, r);

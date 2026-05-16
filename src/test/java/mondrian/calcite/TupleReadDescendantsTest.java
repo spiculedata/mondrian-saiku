@@ -13,16 +13,11 @@ import mondrian.rolap.DescendantsConstraint;
 import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.RolapMember;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
-
+import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
+import static org.junit.Assert.assertTrue;import static org.junit.Assert.fail;
 /**
  * Task Q (worktree #2) — rejection-surface coverage for the
  * {@link DescendantsConstraint} branch of
@@ -32,11 +27,11 @@ import static org.junit.Assert.fail;
  */
 public class TupleReadDescendantsTest {
 
-    @Before public void reset() {
+    @BeforeEach public void reset() {
         CalcitePlannerAdapters.resetUnsupportedCount();
     }
 
-    @After public void clearBackend() {
+    @AfterEach public void clearBackend() {
         System.clearProperty("mondrian.backend");
         CalcitePlannerAdapters.resetUnsupportedCount();
     }

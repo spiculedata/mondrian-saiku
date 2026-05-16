@@ -21,17 +21,13 @@ import mondrian.rolap.agg.PredicateColumn;
 import mondrian.rolap.agg.ValueColumnPredicate;
 import mondrian.test.TestContext;
 
-import org.junit.BeforeClass;
-import org.junit.Test;
-
+import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import static org.junit.Assert.*;
-
-/**
+import static org.junit.Assert.*;/**
  * Unit tests for the per-column and compound predicate walkers used by
  * {@link CalcitePlannerAdapters#fromSegmentLoad}.
  *
@@ -46,7 +42,7 @@ public class SegmentLoadPredicateTranslationTest {
 
     private static RolapStar sales;
 
-    @BeforeClass public static void bootFoodMart() {
+    @BeforeAll public static void bootFoodMart() {
         // Grab the Sales star once; reused across tests.
         mondrian.olap.Connection conn = TestContext.instance().getConnection();
         RolapSchema schema = (RolapSchema) conn.getSchema();
