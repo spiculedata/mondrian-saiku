@@ -383,6 +383,12 @@ public final class PlannerRequest {
      *  Other {@link #filters} are ignored by the renderer.
      *  Added for segment-load predicate translation (Task F). */
     public final boolean universalFalse;
+    /** Row-limit clause to emit ({@code LIMIT n} or its dialect-specific
+     *  equivalent). 0 (the default) means no limit. Used in place of
+     *  {@code Statement.setMaxRows} so multi-backend correctness no longer
+     *  depends on driver-specific JDBC behaviour — DuckDB JDBC silently
+     *  ignores setMaxRows. */
+    public final int limit;
 
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
@@ -397,6 +403,7 @@ public final class PlannerRequest {
         this.orderBy = List.copyOf(b.orderBy);
         this.distinct = b.distinct;
         this.universalFalse = b.universalFalse;
+        this.limit = b.limit;
         if (this.distinct
             && (!this.measures.isEmpty() || !this.groupBy.isEmpty()))
         {
@@ -428,6 +435,7 @@ public final class PlannerRequest {
         private final List<OrderBy> orderBy = new ArrayList<>();
         private boolean distinct;
         private boolean universalFalse;
+        private int limit;
 
         private Builder(String factTable) {
             if (factTable == null || factTable.isEmpty()) {
@@ -466,6 +474,14 @@ public final class PlannerRequest {
         public Builder distinct(boolean d) { this.distinct = d; return this; }
         public Builder universalFalse(boolean f) {
             this.universalFalse = f;
+            return this;
+        }
+        public Builder limit(int n) {
+            if (n < 0) {
+                throw new IllegalArgumentException(
+                    "limit must be >= 0 (got " + n + ")");
+            }
+            this.limit = n;
             return this;
         }
 

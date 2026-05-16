@@ -879,14 +879,21 @@ public final class CalcitePlannerAdapters {
         PlannerRequest.Builder b,
         mondrian.rolap.RolapNativeTopCount.TopCountConstraint constraint)
     {
+        // Record the row limit on the request so the emitted SQL
+        // includes an explicit LIMIT n clause. Relying on
+        // Statement.setMaxRows() is not portable: DuckDB JDBC silently
+        // ignores it (1.3.1.0 returns getMaxRows()=0 immediately after
+        // setMaxRows(n)), so a multi-backend setup would otherwise
+        // return the entire result set and produce wrong top-N rows.
+        if (constraint.getTopCount() > 0) {
+            b.limit(constraint.getTopCount());
+        }
         mondrian.olap.Exp orderByExpr = constraint.getOrderByExpr();
         if (orderByExpr == null) {
             // TopCount without an explicit sort expression (2-arg form
-            // TopCount(<set>, <count>)). The SetEvaluator's setMaxRows
-            // trims the result to <count> rows; no ORDER BY needs to
-            // be added here — the per-target key ORDER BY emitted by
-            // emitNecjTargetProjections is enough to make the prefix
-            // deterministic.
+            // TopCount(<set>, <count>)). The per-target key ORDER BY
+            // emitted by emitNecjTargetProjections plus the LIMIT n
+            // recorded above give a deterministic prefix.
             return;
         }
         if (!(orderByExpr instanceof mondrian.mdx.MemberExpr)) {
