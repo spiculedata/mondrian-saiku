@@ -1221,12 +1221,99 @@ public final class CalcitePlannerAdapters {
                 // Level.members — no additional filter.
                 return;
             }
-            // Descendants of a real member — would require constraining
-            // every ancestor column, defer.
-            throw new UnsupportedTranslation(
-                "fromTupleRead: DescendantsCrossJoinArg rooted at a real "
-                + "member not yet supported (arg level="
-                + arg.getLevel() + ")");
+            // Descendants of one or more real members: constrain the
+            // ancestor level's key columns to each member's key. All
+            // members must share a single ancestor level (Mondrian
+            // emits separate args otherwise) so the column set is
+            // fixed. The ancestor's relation must already be joined
+            // — shapeFor() walks parent-level keyLists so the chain
+            // covers ancestor relations.
+            RolapCubeLevel ancLevel = null;
+            for (RolapMember m : members) {
+                if (m == null || m.isCalculated() || m.isAll()) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: DescendantsCrossJoinArg contains "
+                        + "calc/all/null member " + m);
+                }
+                if (!(m.getLevel() instanceof RolapCubeLevel)) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: DescendantsCrossJoinArg member "
+                        + m + " level is not a RolapCubeLevel");
+                }
+                RolapCubeLevel ml = (RolapCubeLevel) m.getLevel();
+                if (ancLevel == null) {
+                    ancLevel = ml;
+                } else if (ancLevel != ml) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: DescendantsCrossJoinArg members "
+                        + "span multiple ancestor levels ("
+                        + ancLevel.getUniqueName() + " vs "
+                        + ml.getUniqueName() + ")");
+                }
+            }
+            List<RolapSchema.PhysColumn> ancKeyList =
+                ancLevel.getAttribute().getKeyList();
+            for (RolapSchema.PhysColumn kc : ancKeyList) {
+                if (!(kc instanceof RolapSchema.PhysRealColumn)) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: DescendantsCrossJoinArg ancestor "
+                        + "key column is non-real ("
+                        + kc.getClass().getName() + ")");
+                }
+            }
+            if (ancKeyList.size() == 1) {
+                RolapSchema.PhysColumn leaf = ancKeyList.get(0);
+                PlannerRequest.Column col = new PlannerRequest.Column(
+                    leaf.relation == null
+                        ? shape.tableAlias
+                        : leaf.relation.getAlias(),
+                    ((RolapSchema.PhysRealColumn) leaf).name);
+                List<Object> values =
+                    new java.util.ArrayList<>(members.size());
+                for (RolapMember m : members) {
+                    values.add(memberKeyLiteral(m));
+                }
+                if (values.size() == 1) {
+                    b.addFilter(
+                        new PlannerRequest.Filter(col, values.get(0)));
+                } else {
+                    b.addFilter(
+                        new PlannerRequest.Filter(
+                            col, PlannerRequest.Operator.IN, values));
+                }
+            } else {
+                // Composite ancestor key → TupleFilter
+                List<PlannerRequest.Column> cols =
+                    new java.util.ArrayList<>(ancKeyList.size());
+                for (RolapSchema.PhysColumn kc : ancKeyList) {
+                    cols.add(new PlannerRequest.Column(
+                        kc.relation == null
+                            ? shape.tableAlias
+                            : kc.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) kc).name));
+                }
+                List<List<Object>> rows =
+                    new java.util.ArrayList<>(members.size());
+                for (RolapMember m : members) {
+                    List<Comparable> keyParts = m.getKeyAsList();
+                    if (keyParts.size() != ancKeyList.size()) {
+                        throw new UnsupportedTranslation(
+                            "fromTupleRead: DescendantsCrossJoinArg member "
+                            + m + " key arity " + keyParts.size()
+                            + " != ancestor keyList arity "
+                            + ancKeyList.size());
+                    }
+                    List<Object> row =
+                        new java.util.ArrayList<>(keyParts.size());
+                    for (Object v : keyParts) {
+                        row.add(unwrapSqlNull(v));
+                    }
+                    rows.add(row);
+                }
+                b.addTupleFilter(
+                    new PlannerRequest.TupleFilter(cols, rows));
+            }
+            return;
         }
         if (arg instanceof MemberListCrossJoinArg) {
             List<RolapMember> members = arg.getMembers();
@@ -1444,24 +1531,62 @@ public final class CalcitePlannerAdapters {
             }
             List<RolapSchema.PhysColumn> keyList =
                 shape.attribute.getKeyList();
-            if (keyList.size() != 1) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: slicer member " + m
-                    + " on composite-key level (keyList.size="
-                    + keyList.size() + ") not yet supported");
+            for (RolapSchema.PhysColumn kc : keyList) {
+                if (!(kc instanceof RolapSchema.PhysRealColumn)) {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: slicer member " + m
+                        + " key column is non-real ("
+                        + kc.getClass().getName() + ")");
+                }
             }
-            RolapSchema.PhysColumn kc = keyList.get(0);
-            if (!(kc instanceof RolapSchema.PhysRealColumn)) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: slicer member " + m
-                    + " key is a non-real column");
-            }
-            PlannerRequest.Column col =
-                new PlannerRequest.Column(
-                    shape.tableAlias,
+            if (keyList.size() == 1) {
+                RolapSchema.PhysColumn kc = keyList.get(0);
+                PlannerRequest.Column col = new PlannerRequest.Column(
+                    kc.relation == null
+                        ? shape.tableAlias
+                        : kc.relation.getAlias(),
                     ((RolapSchema.PhysRealColumn) kc).name);
-            b.addFilter(
-                new PlannerRequest.Filter(col, memberKeyLiteral(m)));
+                b.addFilter(
+                    new PlannerRequest.Filter(col, memberKeyLiteral(m)));
+            } else {
+                // Composite key: filter every column. Member's
+                // getKeyAsList() yields a list of values aligned to
+                // keyList for composite-keyed members; single-value
+                // keys fall back to the leaf-most column (consistent
+                // with MemberListCrossJoinArg leaf-only handling).
+                List<Comparable> keyParts = m.getKeyAsList();
+                if (keyParts.size() == keyList.size()) {
+                    for (int ki = 0; ki < keyList.size(); ki++) {
+                        RolapSchema.PhysColumn kc = keyList.get(ki);
+                        PlannerRequest.Column col =
+                            new PlannerRequest.Column(
+                                kc.relation == null
+                                    ? shape.tableAlias
+                                    : kc.relation.getAlias(),
+                                ((RolapSchema.PhysRealColumn) kc).name);
+                        b.addFilter(
+                            new PlannerRequest.Filter(
+                                col, unwrapSqlNull(keyParts.get(ki))));
+                    }
+                } else if (keyParts.size() == 1) {
+                    RolapSchema.PhysColumn leaf =
+                        keyList.get(keyList.size() - 1);
+                    PlannerRequest.Column col = new PlannerRequest.Column(
+                        leaf.relation == null
+                            ? shape.tableAlias
+                            : leaf.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) leaf).name);
+                    b.addFilter(
+                        new PlannerRequest.Filter(
+                            col, unwrapSqlNull(m.getKey())));
+                } else {
+                    throw new UnsupportedTranslation(
+                        "fromTupleRead: slicer member " + m
+                        + " key arity " + keyParts.size()
+                        + " is neither 1 nor keyList arity "
+                        + keyList.size());
+                }
+            }
         }
     }
 
