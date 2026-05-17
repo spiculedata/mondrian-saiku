@@ -177,6 +177,16 @@
       <version>19.0.0</version>
       <optional>true</optional>
     </dependency>
+    <!-- Arrow C data interface — required to consume Arrow streams
+         from native producers (DuckDB's arrowExportStream, etc.) via
+         org.apache.arrow.c.ArrowArrayStream. Test scope: only the #36
+         spike uses it today. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-c-data</artifactId>
+      <version>19.0.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
@@ -411,6 +421,11 @@ class MondrianServerVersion {
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.1.2</version>
         <configuration>
+          <!-- Arrow 19 needs JDK 21 module-opens for sun.misc.Unsafe +
+               DirectByteBuffer access (off-heap allocators + C data
+               interface). Only loaded by tests that touch Arrow, but
+               we set globally so the JVM doesn't have to be restarted. -->
+          <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argLine>
           <!-- Exclude tests that depend on olap4j-tck (not in deps), or legacy JUnit 3 loader. -->
           <excludes>
             <exclude>**/AbstractMondrianOlap4jTester.java</exclude>
