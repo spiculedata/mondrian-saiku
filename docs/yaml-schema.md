@@ -283,12 +283,21 @@ A `cubes/sales.yaml` file can in turn `$ref: measures.yaml` from `cubes/` withou
 
 ## CLI: `mondrian-schema`
 
-`mondrian.schema.yaml.SchemaCli` (currently invoked via `mvn exec:java -Dexec.mainClass=mondrian.schema.yaml.SchemaCli -Dexec.args="..."`) wraps the converters with three subcommands:
+The repo ships a wrapper script at `scripts/mondrian-schema` that handles the classpath + main-class plumbing for `mondrian.schema.yaml.SchemaCli`:
 
 ```
-mondrian-schema to-yaml <input.xml>  [-o output.yaml]
-mondrian-schema to-xml  <input.yaml> [-o output.xml]
-mondrian-schema lint    <input.{yaml,xml}>
+./scripts/mondrian-schema to-yaml <input.xml>  [-o output.yaml]
+./scripts/mondrian-schema to-xml  <input.yaml> [-o output.xml]
+./scripts/mondrian-schema lint    <input.{yaml,xml}>
+```
+
+First run rebuilds the classpath cache (`target/dependency/classpath.txt`); subsequent runs are ~130ms. Cache is invalidated automatically when `pom.xml` is newer than it.
+
+Equivalent direct invocation (no script):
+
+```
+mvn exec:java -Dexec.mainClass=mondrian.schema.yaml.SchemaCli \
+  -Dexec.args="lint mySchema.yaml"
 ```
 
 | Subcommand | Behaviour |
