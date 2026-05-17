@@ -1440,8 +1440,19 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         void addAllKeys(PhysRelationImpl relation) {
+            // Issue #46 / PR #51 sibling: re-bind each key's columns to
+            // this clone's own column instances. Without this, the cloned
+            // PhysTable's keys keep pointing back at the source relation's
+            // columns, so any PhysPath that walks the key resolves to the
+            // pre-clone relation — fatal when two shared dims target the
+            // same physical table and only the second has been cloned.
             for (PhysKey physKey : relation.getKeyList()) {
-                addKey(physKey.name, physKey.columnList);
+                final List<PhysColumn> reboundColumns =
+                    new ArrayList<PhysColumn>(physKey.columnList.size());
+                for (PhysColumn original : physKey.columnList) {
+                    reboundColumns.add(getColumn(original.name, true));
+                }
+                addKey(physKey.name, reboundColumns);
             }
         }
 

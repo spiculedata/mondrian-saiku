@@ -141,6 +141,14 @@ public class RolapSchemaLoader {
         new SimpleDateFormat("yyyy-MM-dd");
 
     private final MultiValueMap cubeToDimMap = new MultiValueMap();
+    /**
+     * Issue #46 / PR #51 sibling: tracks the set of physical table names
+     * already bound by a shared dimension in a given cube. Used by
+     * {@link #useSharedDimension} to detect when two <em>different</em>
+     * shared dims target the same physical table and clone the second
+     * occupant's {@link RolapSchema.PhysRelation} with a fresh alias.
+     */
+    private final MultiValueMap cubeToPhysTableMap = new MultiValueMap();
 
     private final List<RolapMember> measureList = new ArrayList<RolapMember>();
     private final List<RolapMember> aggFactCountMeasureList =
@@ -3042,8 +3050,20 @@ public class RolapSchemaLoader {
             .holder(new MondrianDef.MeasureGroups())
             .list()
             .add(xmlMeasureGroup);
+        // Issue #46 / PR #51 sibling: the auto-private cube for a shared
+        // dim must anchor on the dim's *original* physical table, not on
+        // any cube-scoped clone that useSharedDimension may have minted
+        // for a different cube. The dimension param's keyAttribute can
+        // carry the cloned relation if the dim's first encounter was in
+        // a cube that needed deduplication; prefer the shared XML's
+        // declared table to keep the private cube canonical.
+        final MondrianDef.Dimension originalSharedDim =
+            xmlSchema.getDimensions().get(source);
         xmlMeasureGroup.table =
-            dimension.keyAttribute.getKeyList().get(0).relation.getAlias();
+            originalSharedDim != null && originalSharedDim.table != null
+                ? originalSharedDim.table
+                : dimension.keyAttribute.getKeyList().get(0)
+                    .relation.getAlias();
 
         final MondrianDef.Measure xmlMeasure = new MondrianDef.Measure();
         xmlMeasureGroup.children
@@ -3103,11 +3123,27 @@ public class RolapSchemaLoader {
         // this section of code handles the case where the schema uses the
         // same shared dimension multiple times.  The SQL generated uses
         // the phys schema objects so we need to create copies of those
-        // objects with a different alias
+        // objects with a different alias.
+        //
+        // Issue #46 / PR #51 sibling: also clone when a *different* shared
+        // dim targets a physical table that another shared dim already
+        // bound in this cube. Without this, two shared dims (e.g.
+        // Store2 + Store3, both table='store') hand the same
+        // PhysRelation to SqlQueryBuilder, which asserts "query already
+        // contains alias 'store'" at SqlQuery.addFromTable. Scope-trim:
+        // this handles the single-hop case only (shared dim → single
+        // physical table → single FK link). Snowflake mid-chain hops are
+        // tracked as a separate follow-up.
         MondrianDef.Dimension clonedDim = null;
-        if (cubeToDimMap.containsKey(cube)
-            && cubeToDimMap.getCollection(cube).contains(sharedDimension))
-        {
+        boolean dupSharedDim =
+            cubeToDimMap.containsKey(cube)
+                && cubeToDimMap.getCollection(cube).contains(sharedDimension);
+        boolean dupPhysTable =
+            sharedDimension.table != null
+                && cubeToPhysTableMap.containsKey(cube)
+                && cubeToPhysTableMap.getCollection(cube)
+                    .contains(sharedDimension.table);
+        if (dupSharedDim || dupPhysTable) {
             try {
                 LinkedHashMap<String, RolapSchema.PhysRelation> tbls =
                     schema.getPhysicalSchema().tablesByName;
@@ -3127,6 +3163,13 @@ public class RolapSchemaLoader {
             }
         }
         cubeToDimMap.put(cube, sharedDimension);
+        if (sharedDimension.table != null) {
+            // Track on the original physical table name so subsequent
+            // shared dims in this cube can detect a collision and trigger
+            // the clone above. The clone itself isn't tracked — only the
+            // first occupant of a given physical name.
+            cubeToPhysTableMap.put(cube, sharedDimension.table);
+        }
         if (clonedDim != null) {
             xmlDimension = clonedDim;
         } else {
