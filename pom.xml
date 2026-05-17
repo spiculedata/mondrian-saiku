@@ -245,6 +245,15 @@
       <version>1.51.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- YAML schema loader (#34). Calcite already pulls jackson-databind at
+         compile + jackson-dataformat-yaml at runtime; promote the YAML
+         module to compile so YamlSchemaConverter can import it. Version
+         pinned to the same line Calcite resolves to. -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
+      <version>2.18.4</version>
+    </dependency>
   </dependencies>
 
   <build>
