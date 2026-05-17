@@ -259,12 +259,14 @@ public class SegmentLoader {
                                 + ex.getClass().getSimpleName()
                                 + ": " + ex.getMessage());
                         }
-                        if (LOGGER.isDebugEnabled()) {
-                            LOGGER.debug(
-                                "Calcite segment-load translation failed; "
-                                + "falling back to legacy SQL: "
-                                + ex.getMessage());
-                        }
+                        // #10: WARN + per-fallback counter so production
+                        // logs + dashboards surface every fallback.
+                        LOGGER.warn(
+                            "Calcite segment-load translation failed; "
+                            + "falling back to legacy SQL: "
+                            + ex.getMessage());
+                        mondrian.observability.MondrianMetrics
+                            .recordCalciteFallback("segment-load", ex);
                         // Issue #46: known translator gaps
                         // (UnsupportedTranslation, including the wrapped
                         // RelBuilder.field IAE from #8) always fall back.
@@ -865,12 +867,13 @@ public class SegmentLoader {
                         // Translator gap (snowflake mid-chain, CASE-expr
                         // measure) — leave calciteSql null so the legacy
                         // `sql` from pair.left is used below.
-                        if (LOGGER.isDebugEnabled()) {
-                            LOGGER.debug(
-                                "Calcite segment-load translation failed "
-                                + "on worker; falling back to legacy SQL: "
-                                + ex.getMessage());
-                        }
+                        // #10: WARN + per-fallback counter (worker-thread site).
+                        LOGGER.warn(
+                            "Calcite segment-load translation failed "
+                            + "on worker; falling back to legacy SQL: "
+                            + ex.getMessage());
+                        mondrian.observability.MondrianMetrics
+                            .recordCalciteFallback("segment-load-worker", ex);
                     }
                 }
             }

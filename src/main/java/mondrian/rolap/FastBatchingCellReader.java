@@ -128,6 +128,10 @@ public class FastBatchingCellReader implements CellReader {
         assert o != Boolean.TRUE : "getCellFromCache no longer returns TRUE";
         if (o != null) {
             ++hitCount;
+            // #33 Session 5: OTel cache hit counter. LongCounter.add is
+            // an atomic CAS — equivalent cost to the ++hitCount above.
+            // No measurable hot-path overhead.
+            mondrian.observability.MondrianMetrics.cacheSegmentHits().add(1);
             return o;
         }
 
@@ -143,6 +147,8 @@ public class FastBatchingCellReader implements CellReader {
                     aggMgr.getCellFromCache(request, pinnedSegments);
                 if (o2 != null) {
                     ++hitCount;
+                    mondrian.observability.MondrianMetrics.cacheSegmentHits()
+                        .add(1);
                     return o2;
                 }
             }
@@ -169,6 +175,8 @@ public class FastBatchingCellReader implements CellReader {
     public final void recordCellRequest(CellRequest request) {
         assert !request.isUnsatisfiable();
         ++missCount;
+        // #33 Session 5: OTel cache miss counter (paired with hits above).
+        mondrian.observability.MondrianMetrics.cacheSegmentMisses().add(1);
         cellRequests.add(request);
         if (cellRequests.size() % cellRequestLimit == 0) {
             // Signal that it's time to ask the cache manager if it has cells

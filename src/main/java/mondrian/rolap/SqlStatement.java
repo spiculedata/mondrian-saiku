@@ -146,23 +146,24 @@ public class SqlStatement implements DBStatement {
      * Executes the current statement, and handles any SQLException.
      */
     public void execute() {
-        // #33 mondrian.sql.execute span. Wraps the whole method so the
-        // span captures pool wait + JDBC executeQuery + first-row skip.
-        // The kind attribute distinguishes segment-load / member-read /
-        // drillthrough / other so dashboards can break down SQL cost
-        // by what Mondrian was trying to do.
+        // #33 mondrian.sql.execute span + sql.duration histogram +
+        // sql.statements counter. All tagged with mondrian.sql.kind so
+        // dashboards can break down JDBC time by what Mondrian was
+        // trying to do (segment-load / member-read / drillthrough / other).
+        final String kind = purposeToKind(getPurpose());
         final io.opentelemetry.api.trace.Span span =
             mondrian.observability.MondrianTracing.tracer()
                 .spanBuilder("mondrian.sql.execute")
                 .setAttribute(
                     io.opentelemetry.api.common.AttributeKey.stringKey(
                         "mondrian.sql.kind"),
-                    purposeToKind(getPurpose()))
+                    kind)
                 .setAttribute(
                     io.opentelemetry.api.common.AttributeKey.longKey(
                         "mondrian.sql.id"),
                     (long) id)
                 .startSpan();
+        final long sqlStart = System.nanoTime();
         try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
             executeImpl();
         } catch (RuntimeException | Error t) {
@@ -174,6 +175,20 @@ public class SqlStatement implements DBStatement {
             throw t;
         } finally {
             span.end();
+            try {
+                long elapsedMs =
+                    (System.nanoTime() - sqlStart) / 1_000_000L;
+                io.opentelemetry.api.common.Attributes attrs =
+                    io.opentelemetry.api.common.Attributes.of(
+                        io.opentelemetry.api.common.AttributeKey.stringKey(
+                            "mondrian.sql.kind"), kind);
+                mondrian.observability.MondrianMetrics.sqlStatements()
+                    .add(1, attrs);
+                mondrian.observability.MondrianMetrics.sqlDuration()
+                    .record(elapsedMs, attrs);
+            } catch (RuntimeException ignored) {
+                // Metric recording must never break execution.
+            }
         }
     }
 

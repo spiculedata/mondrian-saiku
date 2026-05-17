@@ -595,13 +595,20 @@ public class SqlTupleReader implements TupleReader {
                                     + ex.getClass().getSimpleName()
                                     + ": " + ex.getMessage());
                             }
-                            if (LOGGER.isDebugEnabled()) {
-                                LOGGER.debug(
-                                    "Calcite backend: tuple-read fallback "
-                                    + "to legacy SQL ("
-                                    + ex.getClass().getSimpleName()
-                                    + "): " + ex.getMessage());
-                            }
+                            // #10: WARN (not DEBUG) so production logs
+                            // surface the fallback without needing debug
+                            // logging enabled. Pairs with the OTel
+                            // mondrian.calcite.fallback counter below.
+                            LOGGER.warn(
+                                "Calcite backend: tuple-read fallback "
+                                + "to legacy SQL ("
+                                + ex.getClass().getSimpleName()
+                                + "): " + ex.getMessage());
+                            // #10: per-fallback counter (composes with
+                            // mondrian.calcite.fallback.site + exception
+                            // attributes for dashboard breakdowns).
+                            mondrian.observability.MondrianMetrics
+                                .recordCalciteFallback("tuple-read", ex);
                             // Issue #46: differentiate "known translator
                             // gap" from "unknown Calcite bug". An
                             // UnsupportedTranslation is the planner's
