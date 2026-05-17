@@ -362,8 +362,10 @@ public class PostgresArrowFactReadSpikeTest {
                     ps.setFetchSize(fetchSize);
                 }
                 try (ResultSet rs = ps.executeQuery()) {
+                    // Every shape in this file aliases the numeric measure
+                    // column as "amount". Reading by name is shape-agnostic.
                     while (rs.next()) {
-                        total += rs.getDouble(2);
+                        total += rs.getDouble("amount");
                     }
                 }
             }
@@ -419,6 +421,153 @@ public class PostgresArrowFactReadSpikeTest {
             }
         }
         return total;
+    }
+
+    /**
+     * Corpus benchmark — companion to
+     * <a href="https://articles.concepttocloud.com/p/swapping-mondrians-sql-emitter-for">the
+     * Calcite-vs-legacy emitter blog post</a>. Where that post measured the
+     * <em>planner</em> side (Mondrian's legacy SQL builder vs Calcite's
+     * SqlDialect emission), this benchmark measures the <em>wire</em>
+     * side (JDBC vs native ADBC) for the same Postgres FoodMart fixture
+     * at the same scale (FACT_SCALE=1000, ~86.8M rows in sales_fact_1997).
+     *
+     * <p>Runs ~7 representative SQL shapes drawn from Mondrian's typical
+     * fact-read patterns (raw scan, single-dim agg, multi-dim agg,
+     * time-filtered, multi-measure, joined-with-dim, agg-table read).
+     * For each shape: times JDBC default + the best native ADBC variant
+     * (bypass wrapper + NULL_CHECKING_ENABLED defaults to whatever's
+     * configured). Prints a per-shape comparison table + a geomean
+     * summary matching the prior blog's methodology.
+     *
+     * <p>Skip-friendly like the rest of the file: needs
+     * CALCITE_HARNESS_BACKEND=POSTGRES + sales_fact_1997 present +
+     * libadbc_driver_postgresql.dylib loadable.
+     */
+    @Test
+    public void perfCorpus_jdbcVsNativeAdbc_acrossShapes() throws Exception {
+        Shape[] shapes = {
+            new Shape("raw scan (LIMIT N)",
+                "SELECT store_id, store_sales::DOUBLE PRECISION AS amount "
+                + "FROM sales_fact_1997 ORDER BY product_id LIMIT " + limit),
+            new Shape("single-dim agg (store)",
+                "SELECT store_id, "
+                + "SUM(store_sales::DOUBLE PRECISION) AS amount "
+                + "FROM sales_fact_1997 GROUP BY store_id "
+                + "ORDER BY store_id"),
+            new Shape("multi-dim agg (store, time)",
+                "SELECT store_id, time_id, "
+                + "SUM(store_sales::DOUBLE PRECISION) AS amount "
+                + "FROM sales_fact_1997 GROUP BY store_id, time_id "
+                + "ORDER BY store_id, time_id"),
+            new Shape("time-filtered single-dim",
+                "SELECT store_id, "
+                + "SUM(store_sales::DOUBLE PRECISION) AS amount "
+                + "FROM sales_fact_1997 "
+                + "WHERE time_id BETWEEN 366 AND 731 "
+                + "GROUP BY store_id ORDER BY store_id"),
+            new Shape("multi-measure single-dim",
+                "SELECT store_id, "
+                + "SUM(store_sales::DOUBLE PRECISION) AS amount, "
+                + "SUM(unit_sales::DOUBLE PRECISION) AS units "
+                + "FROM sales_fact_1997 GROUP BY store_id "
+                + "ORDER BY store_id"),
+            new Shape("joined-with-dim (year rollup)",
+                "SELECT t.the_year, "
+                + "SUM(f.store_sales::DOUBLE PRECISION) AS amount "
+                + "FROM sales_fact_1997 f "
+                + "JOIN time_by_day t ON f.time_id = t.time_id "
+                + "GROUP BY t.the_year ORDER BY t.the_year"),
+            new Shape("agg-table read (pre-rolled-up)",
+                "SELECT product_category, gender, the_year, "
+                + "SUM(store_sales::DOUBLE PRECISION) AS amount "
+                + "FROM agg_g_ms_pcat_sales_fact_1997 "
+                + "GROUP BY product_category, gender, the_year "
+                + "ORDER BY product_category, gender, the_year")
+        };
+
+        // Pre-flight: native ADBC must be available for this to mean
+        // anything. Skip the whole test if not (more useful than printing
+        // a row of skips per shape).
+        Long probe = tryNativeAdbc(shapes[0].sql, true);
+        Assume.assumeTrue(
+            "Native ADBC Postgres driver not loadable — see "
+                + "/opt/homebrew/lib/libadbc_driver_postgresql.dylib + "
+                + "ADBC_POSTGRES_DRIVER_LIB env var",
+            probe != null);
+
+        // Warmup all paths on all shapes
+        for (Shape s : shapes) {
+            sumStoreSalesJdbc(s.sql, 0);
+            sumStoreSalesNativeAdbc(s.sql, true);
+        }
+
+        long[] jdbcTimes = new long[shapes.length];
+        long[] arrowTimes = new long[shapes.length];
+
+        for (int i = 0; i < shapes.length; i++) {
+            // 3 timed runs per shape, take the min (less JIT/GC noise)
+            long bestJdbc = Long.MAX_VALUE;
+            long bestArrow = Long.MAX_VALUE;
+            for (int rep = 0; rep < 3; rep++) {
+                final Shape s = shapes[i];
+                long tJ = time(() -> sumStoreSalesJdbc(s.sql, 0));
+                long tA = time(() -> sumStoreSalesNativeAdbc(s.sql, true));
+                if (tJ < bestJdbc) bestJdbc = tJ;
+                if (tA < bestArrow) bestArrow = tA;
+            }
+            jdbcTimes[i] = bestJdbc;
+            arrowTimes[i] = bestArrow;
+        }
+
+        System.err.println();
+        System.err.printf(
+            "[#36 PG corpus benchmark — companion to "
+                + "concepttocloud.com Calcite-vs-legacy post]%n");
+        System.err.printf(
+            "Postgres FoodMart scale=1000 (~86.8M-row sales_fact_1997). "
+                + "LIMIT=%d on raw-scan shape.%n",
+            limit);
+        System.err.printf(
+            "Best of 3 timed runs per cell. Both paths use the tuning "
+                + "recipe (native ADBC = bypass wrapper).%n%n");
+        System.err.printf(
+            "  %-40s %10s %10s %10s%n",
+            "shape", "jdbc(ms)", "adbc(ms)", "adbc/jdbc");
+        System.err.printf(
+            "  %-40s %10s %10s %10s%n",
+            "-----", "--------", "--------", "---------");
+
+        double geomeanRatio = 1.0;
+        int n = shapes.length;
+        for (int i = 0; i < n; i++) {
+            double ratio = (double) arrowTimes[i] / jdbcTimes[i];
+            geomeanRatio *= ratio;
+            System.err.printf(
+                "  %-40s %10.1f %10.1f %10.3fx%n",
+                shapes[i].label,
+                jdbcTimes[i] / 1e6,
+                arrowTimes[i] / 1e6,
+                ratio);
+        }
+        geomeanRatio = Math.pow(geomeanRatio, 1.0 / n);
+        System.err.printf(
+            "%n  %-40s %10s %10s %10.3fx  ← Arrow / JDBC%n",
+            "GEOMEAN across " + n + " shapes",
+            "", "", geomeanRatio);
+        System.err.printf(
+            "  (NULL_CHECKING_ENABLED = %s)%n",
+            NullCheckingForGet.NULL_CHECKING_ENABLED);
+    }
+
+    /** Named SQL shape for the corpus benchmark output. */
+    private static final class Shape {
+        final String label;
+        final String sql;
+        Shape(String label, String sql) {
+            this.label = label;
+            this.sql = sql;
+        }
     }
 
     @FunctionalInterface
