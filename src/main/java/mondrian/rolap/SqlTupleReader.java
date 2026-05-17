@@ -602,15 +602,32 @@ public class SqlTupleReader implements TupleReader {
                                     + ex.getClass().getSimpleName()
                                     + "): " + ex.getMessage());
                             }
+                            // Issue #46: differentiate "known translator
+                            // gap" from "unknown Calcite bug". An
+                            // UnsupportedTranslation is the planner's
+                            // explicit signal that we cannot translate
+                            // this request shape (covers the original
+                            // adapter-side gaps AND the wrapped
+                            // RelBuilder.field IAE from #8) — always
+                            // fall back, regardless of strict mode.
+                            // Strict mode still applies to any other
+                            // RuntimeException, which by definition is an
+                            // unknown failure mode worth surfacing.
+                            //
                             // saiku#809-followup: strict mode is ON by
-                            // default — Calcite gaps surface as hard
-                            // failures instead of silently passing through
-                            // to the legacy Mondrian planner (which masks
-                            // bugs). Escape hatch:
+                            // default — unknown Calcite failures surface
+                            // as hard errors instead of silently passing
+                            // through to the legacy Mondrian planner
+                            // (which masks bugs). Escape hatch:
                             // -Dmondrian.calcite.strict=false reverts to
-                            // legacy fallback.
-                            if (!"false".equals(
-                                System.getProperty("mondrian.calcite.strict")))
+                            // silent fallback for any RuntimeException.
+                            boolean known =
+                                ex instanceof mondrian.calcite
+                                    .UnsupportedTranslation;
+                            if (!known
+                                && !"false".equals(
+                                    System.getProperty(
+                                        "mondrian.calcite.strict")))
                             {
                                 throw ex;
                             }
