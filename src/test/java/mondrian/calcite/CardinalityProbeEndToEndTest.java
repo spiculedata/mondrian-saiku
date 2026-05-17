@@ -186,6 +186,66 @@ public class CardinalityProbeEndToEndTest {
             CalcitePlannerAdapters.cardinalityProbeUnsupportedCount());
     }
 
+    /**
+     * Issue #46 follow-up: the 4.8.1.10 wrap (commit a010b64) reclassifies the
+     * {@code RelBuilder.field} {@link IllegalArgumentException} as
+     * {@link UnsupportedTranslation} inside {@link CalciteSqlPlanner#plan}.
+     * The probe call site in {@link SqlStatisticsProvider#getColumnCardinality}
+     * still only catches {@code IllegalArgumentException}, so the rebranded
+     * exception now escapes and kills the user's MDX query during
+     * {@code Aggregation.optimizePredicates} on multi-dim shapes.
+     *
+     * <p>Asserts: the wrap is caught and the call falls back to legacy SQL.
+     * The legacy SQL itself is allowed to fail (the probed column doesn't
+     * exist) — the contract under test is "no {@link UnsupportedTranslation}
+     * escapes the stats path", not "the probe succeeds for nonsense columns".
+     */
+    @Test public void plannerUnsupportedTranslationFallsBackToLegacySql()
+        throws Exception
+    {
+        javax.sql.DataSource ds = FoodMartHsqldbBootstrap.dataSource();
+
+        // Sanity: planner does wrap the IAE as UnsupportedTranslation.
+        // Guards against bit-rot in the wrap if it's ever weakened.
+        CalciteMondrianSchema schema =
+            new CalciteMondrianSchema(ds, "mondrian");
+        CalciteSqlPlanner planner = new CalciteSqlPlanner(
+            schema, CalciteDialectMap.forProductName("HSQLDB"));
+        PlannerRequest req =
+            CalcitePlannerAdapters.fromCardinalityProbe(
+                null, "product", "no_such_column_46");
+        org.junit.jupiter.api.Assertions.assertThrows(
+            UnsupportedTranslation.class, () -> planner.plan(req));
+
+        // Drive the real stats path with backend=calcite so the dispatch
+        // in getColumnCardinality actually runs. Pre-fix: the wrapped IAE
+        // escapes the IAE-only catch. Post-fix: it's caught, we fall back
+        // to the legacy probe SQL, which HSQLDB rejects with a column-not-
+        // found SQLException → MondrianException. Either way,
+        // UnsupportedTranslation must not leave this method.
+        System.setProperty("mondrian.backend", "calcite");
+        Dialect dialect;
+        try (Connection conn = ds.getConnection()) {
+            dialect = DialectManager.createDialect(ds, conn);
+        }
+        SqlStatisticsProvider provider = new SqlStatisticsProvider();
+        try {
+            provider.getColumnCardinality(
+                dialect, ds, null, null, "product",
+                "no_such_column_46",
+                mondrian.server.Execution.NONE);
+            // Returning without throwing is also acceptable — the contract
+            // is "UnsupportedTranslation does not escape".
+        } catch (UnsupportedTranslation ex) {
+            fail(
+                "UnsupportedTranslation must not escape "
+                + "getColumnCardinality (issue #46 follow-up): " + ex);
+        } catch (RuntimeException expected) {
+            // Legacy-SQL failure for the bogus column surfaces here.
+            // Any non-UnsupportedTranslation runtime is fine.
+        }
+    }
+
     @Test public void measureCtorKeepsDistinctFalseByDefault() {
         // The legacy 3-arg ctor must keep distinct=false so every pre-Task-C
         // call site (segment-load translator, existing tests) continues to

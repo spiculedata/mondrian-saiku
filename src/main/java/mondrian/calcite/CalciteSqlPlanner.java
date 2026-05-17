@@ -629,10 +629,32 @@ public final class CalciteSqlPlanner {
     }
 
     private RelNode build(RelBuilder b, PlannerRequest req) {
-        b.scan(req.factTable);
+        // Issue #46 third-class fix: when the schema aliases the fact
+        // table (rare but valid), scan by physical name and rename to
+        // the alias so subsequent field refs and joins resolve through
+        // RelBuilder's stack by the alias the request uses everywhere
+        // else. When physName is null (the common case) the scan call
+        // is the same as before.
+        if (req.factPhysName != null
+            && !req.factPhysName.equals(req.factTable))
+        {
+            b.scan(req.factPhysName).as(req.factTable);
+        } else {
+            b.scan(req.factTable);
+        }
 
         for (PlannerRequest.Join j : req.joins) {
-            b.scan(j.dimTable);
+            // Same alias-aware scan for the dim side. Multiple
+            // DimensionUsages of the same shared dim (e.g. Store,
+            // Store2, Store3 on a virtual cube) produce aliased
+            // PhysTables — scan the physical table and rename to the
+            // alias so b.field(2, dimAlias, ...) below resolves against
+            // the correct LHS slot.
+            if (j.physName != null && !j.physName.equals(j.dimTable)) {
+                b.scan(j.physName).as(j.dimTable);
+            } else {
+                b.scan(j.dimTable);
+            }
             if (j.kind == PlannerRequest.JoinKind.CROSS) {
                 // Unconditional cross-join: RelBuilder has no native
                 // cartesian helper, so emit an INNER join on TRUE. Calcite's
