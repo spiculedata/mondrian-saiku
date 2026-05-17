@@ -176,15 +176,37 @@ public final class SchemaCli {
                 "error: YAML → XML conversion failed: " + e.getMessage());
             return 2;
         }
-        // Run the XML through Mondrian's own XOM-backed parser. If
-        // MondrianDef.Schema's constructor accepts it, the schema is
-        // structurally valid (element/attribute names, nesting,
-        // required fields). Runtime concerns like "does this table
-        // exist in the DB" aren't checked.
+        // Two-tier validation:
+        //
+        //   (1) XML parses cleanly via Mondrian's own XOM parser.
+        //       Always required.
+        //   (2) MondrianDef.Schema's modern XOM constructor accepts
+        //       it — full structural validation against the modern
+        //       (Mondrian 4) XSD. Skipped for legacy (Mondrian 3)
+        //       schemas because the modern constructor rejects
+        //       legacy enum values (e.g. type="TimeDimension" — the
+        //       legacy upgrader rewrites this to "TIME" but lint
+        //       doesn't run the upgrader since that needs a real
+        //       RolapSchemaLoader + datasource context).
+        //
+        // Legacy detection mirrors RolapSchemaLoader.isLegacy /
+        // hasMondrian4Elements: a schema with neither a
+        // <PhysicalSchema> child nor any <Cube><MeasureGroups> child
+        // is treated as Mondrian-3 legacy.
+        DOMWrapper def;
         try {
             Parser xmlParser = XOMUtil.createDefaultParser();
             xmlParser.setKeepPositions(true);
-            DOMWrapper def = xmlParser.parse(xml);
+            def = xmlParser.parse(xml);
+        } catch (Exception e) {
+            err.println("error: XML parse failed: " + e.getMessage());
+            return 2;
+        }
+        if (looksLegacy(def)) {
+            out.println("ok (legacy): " + input);
+            return 0;
+        }
+        try {
             new MondrianDef.Schema(def);
         } catch (Exception e) {
             err.println("error: schema failed structural validation: "
@@ -193,6 +215,28 @@ public final class SchemaCli {
         }
         out.println("ok: " + input);
         return 0;
+    }
+
+    /**
+     * Mirror of {@code RolapSchemaLoader.isLegacy + hasMondrian4Elements}.
+     * A schema is legacy (Mondrian 3) unless it contains
+     * {@code <PhysicalSchema>} as a direct child or any
+     * {@code <Cube><MeasureGroups>} grandchild.
+     */
+    private static boolean looksLegacy(DOMWrapper schemaDom) {
+        for (DOMWrapper child : schemaDom.getChildren()) {
+            if ("PhysicalSchema".equals(child.getTagName())) {
+                return false;
+            }
+            if ("Cube".equals(child.getTagName())) {
+                for (DOMWrapper grandchild : child.getChildren()) {
+                    if ("MeasureGroups".equals(grandchild.getTagName())) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean isYamlPath(Path p) {
