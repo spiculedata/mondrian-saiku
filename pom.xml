@@ -187,6 +187,18 @@
       <version>19.0.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- Arrow JDBC adapter — converts any JDBC ResultSet to an Arrow
+         VectorSchemaRoot stream. Used by the #36 Postgres validation
+         spike to apply the tuning recipe (single batch + bypass
+         Float8Vector wrapper) against a remote backend. Test scope —
+         the JDBC-row-shaped underlying read is not the production target;
+         a native ADBC Postgres driver would be. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-jdbc</artifactId>
+      <version>19.0.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
