@@ -207,9 +207,18 @@ public class SqlQueryBuilder {
                 return null;
             } else {
                 path = fact.dimensionMap3.get(dimension);
-                if (path.getLinks().isEmpty()) {
-                    assert physRelation == fact.getFactRelation();
-                    return null; // degenerate dimension
+                // Issue #46 follow-up: dimensionMap3 only carries dimensions
+                // linked to this measure group. Composite ("virtual") cubes
+                // route queries that combine a dimension from one base cube
+                // with a measure from another (e.g. [Customer] rows against
+                // a Warehouse measure on the "Warehouse and Sales" cube) —
+                // the map returns null for the unlinked dimension. Treat
+                // that the same as the empty-hops degenerate case below
+                // rather than NPE'ing.
+                if (path == null || path.getLinks().isEmpty()) {
+                    assert path == null
+                        || physRelation == fact.getFactRelation();
+                    return null; // degenerate / unlinked dimension
                 }
                 final RolapSchema.PhysLink link = path.getLinks().get(0);
                 Table table = table(link.targetRelation, null);
