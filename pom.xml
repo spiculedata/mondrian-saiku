@@ -199,6 +199,30 @@
       <version>19.0.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- ADBC Java SPI + driver manager + JNI bridge. Lets PostgresArrowFactReadSpikeTest
+         load the native libadbc_driver_postgresql.dylib (built from
+         apache/arrow-adbc source) for the wire-level Arrow benchmark.
+         adbc-driver-jni bundles its own libadbc_driver_jni shim and
+         service-loader-registers JniDriverFactory automatically.
+         Test scope — production wiring is future work. -->
+    <dependency>
+      <groupId>org.apache.arrow.adbc</groupId>
+      <artifactId>adbc-core</artifactId>
+      <version>0.23.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow.adbc</groupId>
+      <artifactId>adbc-driver-manager</artifactId>
+      <version>0.23.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow.adbc</groupId>
+      <artifactId>adbc-driver-jni</artifactId>
+      <version>0.23.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

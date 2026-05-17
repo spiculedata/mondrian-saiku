@@ -16,12 +16,20 @@ import org.apache.arrow.adapter.jdbc.ArrowVectorIterator;
 import org.apache.arrow.adapter.jdbc.JdbcToArrow;
 import org.apache.arrow.adapter.jdbc.JdbcToArrowConfig;
 import org.apache.arrow.adapter.jdbc.JdbcToArrowConfigBuilder;
+import org.apache.arrow.adbc.core.AdbcConnection;
+import org.apache.arrow.adbc.core.AdbcDatabase;
+import org.apache.arrow.adbc.core.AdbcDriver;
+import org.apache.arrow.adbc.core.AdbcStatement;
+import org.apache.arrow.adbc.driver.jni.JniDriver;
+import org.apache.arrow.adbc.driver.jni.JniDriverFactory;
+import org.apache.arrow.adbc.drivermanager.AdbcDriverManager;
 import org.apache.arrow.memory.ArrowBuf;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.NullCheckingForGet;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowReader;
 import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
@@ -34,6 +42,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Calendar;
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -178,6 +188,11 @@ public class PostgresArrowFactReadSpikeTest {
         long arrowSingleBatch = time(() -> sumStoreSalesArrow(sql, limit, false));
         long arrowBoth = time(() -> sumStoreSalesArrow(sql, limit, true));
 
+        // Native ADBC Postgres path — needs libadbc_driver_postgresql.dylib
+        // installed on system library path. Skip variant cleanly if not.
+        Long adbcNativeWrapped = tryNativeAdbc(sql, false);
+        Long adbcNativeBypass = tryNativeAdbc(sql, true);
+
         long baseline = jdbcDefault;
 
         System.err.println();
@@ -190,14 +205,127 @@ public class PostgresArrowFactReadSpikeTest {
         printRow("arrow-jdbc + bypass wrapper         ", arrowBypass, baseline);
         printRow("arrow-jdbc + single-batch config    ", arrowSingleBatch, baseline);
         printRow("arrow-jdbc + bypass + single batch  ", arrowBoth, baseline);
+        if (adbcNativeWrapped != null) {
+            printRow("ADBC native pg (wrapper read)       ", adbcNativeWrapped, baseline);
+        } else {
+            System.err.println(
+                "  ADBC native pg (wrapper read)        SKIPPED — libadbc_driver_postgresql not loadable");
+        }
+        if (adbcNativeBypass != null) {
+            printRow("ADBC native pg + bypass wrapper     ", adbcNativeBypass, baseline);
+        }
         System.err.printf(
             "  (NULL_CHECKING_ENABLED = %s — set -Darrow.enable_null_check_for_get=false to compare)%n",
             NullCheckingForGet.NULL_CHECKING_ENABLED);
         System.err.println(
-            "  NOTE: Postgres Arrow path uses arrow-jdbc (Java-side "
-            + "JDBC→Arrow conversion). Underlying wire transfer is still "
-            + "row-shaped JDBC. Native libadbc-postgresql would deliver "
-            + "actual wire-level columnar.");
+            "  arrow-jdbc rows go through row-shaped JDBC then convert "
+            + "Java-side; ADBC native talks Postgres wire format directly "
+            + "via libadbc_driver_postgresql + libpq.");
+    }
+
+    /**
+     * Attempts the native ADBC Postgres path via the JNI bridge. Returns
+     * elapsed nanos or {@code null} if the native lib isn't loadable
+     * (e.g. libadbc_driver_postgresql.dylib not installed).
+     */
+    private Long tryNativeAdbc(String sql, boolean bypassWrapper) {
+        try {
+            sumStoreSalesNativeAdbc(sql, bypassWrapper);  // warmup
+            long t0 = System.nanoTime();
+            sumStoreSalesNativeAdbc(sql, bypassWrapper);
+            return System.nanoTime() - t0;
+        } catch (UnsatisfiedLinkError | NoClassDefFoundError missing) {
+            System.err.println(
+                "  ADBC native skip reason: " + missing.getMessage());
+            return null;
+        } catch (Exception probable) {
+            String msg = probable.getMessage();
+            System.err.println(
+                "  ADBC native skip reason (" + probable.getClass().getSimpleName()
+                    + "): " + msg);
+            return null;
+        }
+    }
+
+    private double sumStoreSalesNativeAdbc(String sql, boolean bypassWrapper)
+        throws Exception
+    {
+        // Convert "jdbc:postgresql://host/db" → "postgresql://host/db"
+        String jdbcUrl = mondrian.test.calcite.PostgresFoodMartDataSource.DEFAULT_URL;
+        String adbcUri = jdbcUrl.startsWith("jdbc:")
+            ? jdbcUrl.substring("jdbc:".length()) : jdbcUrl;
+
+        // ADBC driver discovery uses manifest TOMLs by short name OR a
+        // direct path to the .so/.dylib. Allow override via
+        // ADBC_POSTGRES_DRIVER_LIB env var; default to the Homebrew
+        // install path used by `brew install apache-arrow-adbc` + a
+        // source-built libadbc_driver_postgresql.dylib copied alongside
+        // the driver manager.
+        String driverLib = System.getenv("ADBC_POSTGRES_DRIVER_LIB");
+        if (driverLib == null || driverLib.isEmpty()) {
+            driverLib =
+                "/opt/homebrew/lib/libadbc_driver_postgresql.dylib";
+        }
+        Map<String, Object> params = new HashMap<>();
+        params.put(JniDriver.PARAM_DRIVER.getKey(), driverLib);
+        params.put(AdbcDriver.PARAM_URI.getKey(), adbcUri);
+
+        double total = 0;
+        // ServiceLoader registers factories by canonical class name,
+        // not by short alias. Use the FQCN for the JNI driver factory.
+        //
+        // Manual close-in-reverse-order, not try-with-resources, because
+        // the JNI bridge's auto-close of QueryResult also closes the
+        // ArrowReader's backing ArrowArrayStream — and try-with-resources
+        // then double-closes, throwing "ArrowArrayStream is already
+        // closed". The manual order with quietClose() swallows that.
+        AdbcDatabase db = null;
+        AdbcConnection conn = null;
+        AdbcStatement stmt = null;
+        AdbcStatement.QueryResult qr = null;
+        ArrowReader reader = null;
+        try {
+            db = AdbcDriverManager.getInstance()
+                .connect(JniDriverFactory.class.getCanonicalName(),
+                         allocator, params);
+            conn = db.connect();
+            stmt = conn.createStatement();
+            stmt.setSqlQuery(sql);
+            qr = stmt.executeQuery();
+            reader = qr.getReader();
+            while (reader.loadNextBatch()) {
+                VectorSchemaRoot root = reader.getVectorSchemaRoot();
+                Float8Vector amounts =
+                    (Float8Vector) root.getVector("amount");
+                int rowCount = root.getRowCount();
+                if (bypassWrapper) {
+                    ArrowBuf buf = amounts.getDataBuffer();
+                    for (int i = 0; i < rowCount; i++) {
+                        total += buf.getDouble((long) i << 3);
+                    }
+                } else {
+                    for (int i = 0; i < rowCount; i++) {
+                        total += amounts.get(i);
+                    }
+                }
+            }
+        } finally {
+            quietClose(reader);
+            quietClose(stmt);
+            quietClose(conn);
+            quietClose(db);
+        }
+        return total;
+    }
+
+    private static void quietClose(AutoCloseable c) {
+        if (c == null) {
+            return;
+        }
+        try {
+            c.close();
+        } catch (Exception ignored) {
+        }
     }
 
     private static void printRow(String label, long elapsed, long baseline) {
