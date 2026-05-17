@@ -89,12 +89,25 @@ public final class YamlSchemaConverter {
                 }
             }
 
+            // Schema-scoped NamedSets land BEFORE cubes — matches the
+            // natural top-down reading order of a YAML schema and
+            // mirrors the canonical layout (declarations first, then
+            // the cubes that use them). MondrianDef accepts either
+            // order; we pick this one for readability.
+            for (Object ns : listOrEmpty(root, "named_sets")) {
+                emitNamedSet(buf, (Map<?, ?>) ns, "  ");
+            }
             Object cubes = root.get("cubes");
             if (cubes instanceof Map) {
                 for (Map.Entry<?, ?> e : ((Map<?, ?>) cubes).entrySet()) {
                     emitCube(buf,
                         (String) e.getKey(), (Map<?, ?>) e.getValue());
                 }
+            }
+            // Roles come last — they reference cubes by name, so cubes
+            // must be declared first.
+            for (Object r : listOrEmpty(root, "roles")) {
+                emitRole(buf, (Map<?, ?>) r);
             }
             buf.append("</Schema>\n");
             return buf.toString();
@@ -127,6 +140,9 @@ public final class YamlSchemaConverter {
         }
         for (Object cm : listOrEmpty(c, "calculated_members")) {
             emitCalculatedMember(buf, (Map<?, ?>) cm);
+        }
+        for (Object ns : listOrEmpty(c, "named_sets")) {
+            emitNamedSet(buf, (Map<?, ?>) ns, "    ");
         }
         buf.append("  </Cube>\n");
     }
@@ -454,6 +470,123 @@ public final class YamlSchemaConverter {
                 .append("</Annotation>\n");
         }
         buf.append(indent).append("</Annotations>\n");
+    }
+
+    /**
+     * Emits a {@code <NamedSet>}. Mirrors {@link #emitCalculatedMember}:
+     * inline {@code formula:} attribute → self-closing element, or
+     * {@code formula_body:} → {@code <Formula>} child element for
+     * multi-line MDX.
+     *
+     * <p>NamedSets are valid at cube scope (inside {@code <Cube>}) and
+     * schema scope (directly under {@code <Schema>}); same emitter,
+     * different indent.
+     */
+    private static void emitNamedSet(
+        StringBuilder buf, Map<?, ?> ns, String indent)
+    {
+        String formulaBody = strOpt(ns, "formula_body");
+        if (formulaBody == null) {
+            buf.append(indent).append("<NamedSet");
+            attrIfPresent(buf, ns, "name", "name");
+            attrIfPresent(buf, ns, "caption", "caption");
+            attrIfPresent(buf, ns, "formula", "formula");
+            buf.append("/>\n");
+            return;
+        }
+        buf.append(indent).append("<NamedSet");
+        attrIfPresent(buf, ns, "name", "name");
+        attrIfPresent(buf, ns, "caption", "caption");
+        buf.append(">\n");
+        buf.append(indent).append("  <Formula>")
+            .append(escape(formulaBody.trim()))
+            .append("</Formula>\n");
+        buf.append(indent).append("</NamedSet>\n");
+    }
+
+    /**
+     * Emits a {@code <Role>} with a nested {@code SchemaGrant} →
+     * {@code CubeGrant} → {@code HierarchyGrant} → {@code MemberGrant}
+     * tree. Mondrian's row/cube-level security model — every grant
+     * carries an {@code access} attribute ({@code all}, {@code none},
+     * {@code custom}, {@code all_dimensions}). Each level inherits
+     * unless overridden lower down.
+     */
+    private static void emitRole(StringBuilder buf, Map<?, ?> r) {
+        buf.append("  <Role name=\"")
+            .append(escape(strRequired(r, "name"))).append("\">\n");
+        Map<?, ?> sg = mapOrNull(r, "schema_grant");
+        if (sg != null) {
+            emitSchemaGrant(buf, sg);
+        }
+        buf.append("  </Role>\n");
+    }
+
+    private static void emitSchemaGrant(StringBuilder buf, Map<?, ?> sg) {
+        List<?> cubes = listOrEmpty(sg, "cubes");
+        if (cubes.isEmpty()) {
+            buf.append("    <SchemaGrant");
+            attrIfPresent(buf, sg, "access", "access");
+            buf.append("/>\n");
+            return;
+        }
+        buf.append("    <SchemaGrant");
+        attrIfPresent(buf, sg, "access", "access");
+        buf.append(">\n");
+        for (Object c : cubes) {
+            emitCubeGrant(buf, (Map<?, ?>) c);
+        }
+        buf.append("    </SchemaGrant>\n");
+    }
+
+    private static void emitCubeGrant(StringBuilder buf, Map<?, ?> cg) {
+        List<?> hiers = listOrEmpty(cg, "hierarchies");
+        if (hiers.isEmpty()) {
+            buf.append("      <CubeGrant");
+            attrIfPresent(buf, cg, "cube", "cube");
+            attrIfPresent(buf, cg, "access", "access");
+            buf.append("/>\n");
+            return;
+        }
+        buf.append("      <CubeGrant");
+        attrIfPresent(buf, cg, "cube", "cube");
+        attrIfPresent(buf, cg, "access", "access");
+        buf.append(">\n");
+        for (Object h : hiers) {
+            emitHierarchyGrant(buf, (Map<?, ?>) h);
+        }
+        buf.append("      </CubeGrant>\n");
+    }
+
+    private static void emitHierarchyGrant(
+        StringBuilder buf, Map<?, ?> hg)
+    {
+        List<?> members = listOrEmpty(hg, "members");
+        if (members.isEmpty()) {
+            buf.append("        <HierarchyGrant");
+            attrIfPresent(buf, hg, "hierarchy", "hierarchy");
+            attrIfPresent(buf, hg, "access", "access");
+            attrIfPresent(buf, hg, "top_level", "topLevel");
+            attrIfPresent(buf, hg, "bottom_level", "bottomLevel");
+            attrIfPresent(buf, hg, "rollup_policy", "rollupPolicy");
+            buf.append("/>\n");
+            return;
+        }
+        buf.append("        <HierarchyGrant");
+        attrIfPresent(buf, hg, "hierarchy", "hierarchy");
+        attrIfPresent(buf, hg, "access", "access");
+        attrIfPresent(buf, hg, "top_level", "topLevel");
+        attrIfPresent(buf, hg, "bottom_level", "bottomLevel");
+        attrIfPresent(buf, hg, "rollup_policy", "rollupPolicy");
+        buf.append(">\n");
+        for (Object m : members) {
+            Map<?, ?> mm = (Map<?, ?>) m;
+            buf.append("          <MemberGrant");
+            attrIfPresent(buf, mm, "member", "member");
+            attrIfPresent(buf, mm, "access", "access");
+            buf.append("/>\n");
+        }
+        buf.append("        </HierarchyGrant>\n");
     }
 
     // ---------- helpers ----------
