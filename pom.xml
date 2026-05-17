@@ -223,6 +223,28 @@
       <version>0.23.0</version>
       <scope>test</scope>
     </dependency>
+    <!-- OpenTelemetry API (#33). API is small (~50KB) and includes a
+         no-op default tracer — if no OTel SDK is registered at runtime,
+         all instrumentation calls are zero-allocation no-ops. Hard
+         compile dep is the standard pattern. SDK + sdk-testing pulled in
+         at test scope for assertion-based span tests. -->
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-api</artifactId>
+      <version>1.51.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk</artifactId>
+      <version>1.51.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk-testing</artifactId>
+      <version>1.51.0</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
