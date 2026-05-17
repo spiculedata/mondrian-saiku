@@ -20,10 +20,12 @@ import mondrian.spi.*;
 import mondrian.util.*;
 
 import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.context.Scope;
+import mondrian.observability.MondrianMetrics;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -476,6 +478,11 @@ public class RolapConnection extends ConnectionBase {
             // a less-decorated span.
         }
         final Span span = builder.startSpan();
+        // #33 Session 5: record query.duration histogram + queries.executed
+        // counter alongside the span. Both are cheap atomic ops, no
+        // measurable overhead when no SDK is wired.
+        final long startNanos = System.nanoTime();
+        String outcome = "success";
         try (Scope ignored = span.makeCurrent()) {
             return server.getResultShepherd()
                 .shepherdExecution(
@@ -486,6 +493,7 @@ public class RolapConnection extends ConnectionBase {
                         }
                     });
         } catch (RuntimeException | Error t) {
+            outcome = "failure";
             span.recordException(t);
             span.setStatus(StatusCode.ERROR,
                 t.getClass().getSimpleName()
@@ -493,6 +501,17 @@ public class RolapConnection extends ConnectionBase {
             throw t;
         } finally {
             span.end();
+            try {
+                long elapsedMs =
+                    (System.nanoTime() - startNanos) / 1_000_000L;
+                Attributes attrs = Attributes.of(
+                    AttributeKey.stringKey("mondrian.query.outcome"),
+                    outcome);
+                MondrianMetrics.queriesExecuted().add(1, attrs);
+                MondrianMetrics.queryDuration().record(elapsedMs, attrs);
+            } catch (RuntimeException ignored) {
+                // Metric recording must never break execution.
+            }
         }
     }
 
