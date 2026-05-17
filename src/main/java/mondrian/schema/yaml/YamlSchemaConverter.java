@@ -496,12 +496,26 @@ public final class YamlSchemaConverter {
         attrIfPresent(buf, l, "level_type", "levelType");
         attrIfPresent(buf, l, "approx_row_count", "approxRowCount");
         List<?> props = listOrEmpty(l, "properties");
-        if (props.isEmpty()) {
+        List<?> keyEx = listOrEmpty(l, "key_expression");
+        List<?> nameEx = listOrEmpty(l, "name_expression");
+        List<?> ordEx = listOrEmpty(l, "ordinal_expression");
+        List<?> capEx = listOrEmpty(l, "caption_expression");
+        boolean hasChildren = !props.isEmpty()
+            || !keyEx.isEmpty() || !nameEx.isEmpty()
+            || !ordEx.isEmpty() || !capEx.isEmpty();
+        if (!hasChildren) {
             buf.append("/>\n");
             return;
         }
         buf.append(">\n");
         String inner = indent + "  ";
+        // Expression elements first (mirror MondrianDef's accepted
+        // order — KeyExpression / NameExpression / CaptionExpression
+        // / OrdinalExpression, then Property).
+        emitSqlDialectList(buf, keyEx, "KeyExpression", inner);
+        emitSqlDialectList(buf, nameEx, "NameExpression", inner);
+        emitSqlDialectList(buf, capEx, "CaptionExpression", inner);
+        emitSqlDialectList(buf, ordEx, "OrdinalExpression", inner);
         for (Object p : props) {
             Map<?, ?> pm = (Map<?, ?>) p;
             buf.append(inner).append("<Property");
@@ -511,6 +525,59 @@ public final class YamlSchemaConverter {
             buf.append("/>\n");
         }
         buf.append(indent).append("</Level>\n");
+    }
+
+    /**
+     * Emits a sequence of {@code <SQL dialect="...">...</SQL>} blocks
+     * inside the named wrapper element ({@code KeyExpression},
+     * {@code NameExpression}, {@code MeasureExpression}, etc.). Each
+     * input map needs a {@code dialect} string (defaults to
+     * {@code generic} if omitted) and {@code text} for the SQL body.
+     *
+     * <p>The SQL body is written via XML attribute escaping — users
+     * can include {@code &lt;Column table="..." name="..."/>} inline
+     * refs by writing the markup literally in their YAML
+     * {@code text:} value; Mondrian's own dialect-SQL parser handles
+     * the substitution at schema-load time.
+     */
+    private static void emitSqlDialectList(
+        StringBuilder buf, List<?> blocks, String wrapper, String indent)
+    {
+        if (blocks.isEmpty()) {
+            return;
+        }
+        buf.append(indent).append('<').append(wrapper).append(">\n");
+        String inner = indent + "  ";
+        for (Object b : blocks) {
+            Map<?, ?> bm = (Map<?, ?>) b;
+            String dialect = strOpt(bm, "dialect");
+            if (dialect == null) {
+                dialect = "generic";
+            }
+            String text = strOpt(bm, "text");
+            buf.append(inner).append("<SQL dialect=\"")
+                .append(escape(dialect)).append("\">")
+                .append(text == null ? "" : escapeText(text))
+                .append("</SQL>\n");
+        }
+        buf.append(indent).append("</").append(wrapper).append(">\n");
+    }
+
+    /** XML element text content escaping. Only need {@code &amp;},
+     *  {@code &lt;}, {@code &gt;} — attribute-only chars
+     *  ({@code "}, {@code '}) pass through unchanged. */
+    private static String escapeText(String s) {
+        StringBuilder out = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+            case '&':  out.append("&amp;"); break;
+            case '<':  out.append("&lt;"); break;
+            case '>':  out.append("&gt;"); break;
+            default:   out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     /**
@@ -537,7 +604,14 @@ public final class YamlSchemaConverter {
         attrIfPresent(buf, m, "format_string", "formatString");
         attrIfPresent(buf, m, "datatype", "datatype");
         attrIfPresent(buf, m, "visible", "visible");
-        buf.append("/>\n");
+        List<?> measureEx = listOrEmpty(m, "measure_expression");
+        if (measureEx.isEmpty()) {
+            buf.append("/>\n");
+            return;
+        }
+        buf.append(">\n");
+        emitSqlDialectList(buf, measureEx, "MeasureExpression", "      ");
+        buf.append("    </Measure>\n");
     }
 
     /**
