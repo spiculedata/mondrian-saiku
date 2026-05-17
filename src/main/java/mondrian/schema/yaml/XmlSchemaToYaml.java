@@ -219,6 +219,8 @@ public final class XmlSchemaToYaml {
                 putAttrIfPresent(mm, m, "formatString", "format_string");
                 putAttrIfPresent(mm, m, "datatype", "datatype");
                 putAttrIfPresent(mm, m, "visible", "visible");
+                putSqlDialectList(mm, m, "MeasureExpression",
+                    "measure_expression");
                 measures.add(mm);
             }
             if (!measures.isEmpty()) {
@@ -382,6 +384,10 @@ public final class XmlSchemaToYaml {
         putAttrIfPresent(m, l, "uniqueMembers", "unique_members");
         putAttrIfPresent(m, l, "levelType", "level_type");
         putAttrIfPresent(m, l, "approxRowCount", "approx_row_count");
+        putSqlDialectList(m, l, "KeyExpression", "key_expression");
+        putSqlDialectList(m, l, "NameExpression", "name_expression");
+        putSqlDialectList(m, l, "CaptionExpression", "caption_expression");
+        putSqlDialectList(m, l, "OrdinalExpression", "ordinal_expression");
         List<Map<String, Object>> props = new ArrayList<>();
         for (Element p : directChildren(l, "Property")) {
             Map<String, Object> pm = new LinkedHashMap<>();
@@ -394,6 +400,81 @@ public final class XmlSchemaToYaml {
             m.put("properties", props);
         }
         return m;
+    }
+
+    /**
+     * Lift a {@code <KeyExpression>}/{@code <MeasureExpression>}/etc.
+     * wrapper into a YAML list of {@code {dialect, text}} maps. Skips
+     * silently when the wrapper isn't present.
+     *
+     * <p>SQL body capture is "full text content" — any inline
+     * {@code <Column .../>} child elements get serialized back as
+     * literal XML markup inside the captured text (DOM
+     * {@link Node#getNodeValue()} on the text nodes only captures
+     * text, so we reconstruct the full original element body via a
+     * fresh DOM walk).
+     */
+    private static void putSqlDialectList(
+        Map<String, Object> out, Element parent,
+        String wrapperTag, String yamlKey)
+    {
+        Element wrapper = firstChild(parent, wrapperTag);
+        if (wrapper == null) {
+            return;
+        }
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        for (Element sql : directChildren(wrapper, "SQL")) {
+            Map<String, Object> b = new LinkedHashMap<>();
+            String dialect = sql.getAttribute("dialect");
+            b.put("dialect", dialect.isEmpty() ? "generic" : dialect);
+            b.put("text", elementBodyAsText(sql));
+            blocks.add(b);
+        }
+        if (!blocks.isEmpty()) {
+            out.put(yamlKey, blocks);
+        }
+    }
+
+    /**
+     * Serialise an element's body (children + text) back into a
+     * string. Used to preserve inline {@code <Column .../>} refs
+     * inside {@code <SQL>} dialect blocks as literal XML markup —
+     * the user's YAML round-trip then contains the same markup the
+     * original XML had.
+     */
+    private static String elementBodyAsText(Element e) {
+        StringBuilder sb = new StringBuilder();
+        NodeList kids = e.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            Node n = kids.item(i);
+            switch (n.getNodeType()) {
+            case Node.TEXT_NODE:
+            case Node.CDATA_SECTION_NODE:
+                sb.append(n.getNodeValue());
+                break;
+            case Node.ELEMENT_NODE:
+                Element child = (Element) n;
+                sb.append('<').append(child.getTagName());
+                org.w3c.dom.NamedNodeMap attrs = child.getAttributes();
+                for (int a = 0; a < attrs.getLength(); a++) {
+                    Node att = attrs.item(a);
+                    sb.append(' ').append(att.getNodeName())
+                      .append("=\"").append(att.getNodeValue())
+                      .append('"');
+                }
+                if (!child.hasChildNodes()) {
+                    sb.append("/>");
+                } else {
+                    sb.append('>')
+                      .append(elementBodyAsText(child))
+                      .append("</").append(child.getTagName()).append('>');
+                }
+                break;
+            default:
+                // skip comments / processing instructions
+            }
+        }
+        return sb.toString().trim();
     }
 
     private static Map<String, Object> toCalculatedMember(Element cm) {
