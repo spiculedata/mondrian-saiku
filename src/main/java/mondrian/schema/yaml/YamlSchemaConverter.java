@@ -12,9 +12,17 @@ package mondrian.schema.yaml;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * #34 schema-as-code: convert a YAML schema document into the
@@ -68,9 +76,137 @@ public final class YamlSchemaConverter {
      * {@code DriverManager.getConnection("Jdbc=...; Catalog=...")}
      * with the XML inlined.
      */
+    /**
+     * Parse the YAML schema at {@code path}, resolve any {@code $ref}
+     * include directives relative to the file containing them, and
+     * return the equivalent Mondrian XML.
+     *
+     * <p>A YAML map containing exactly the key {@code $ref} (with a
+     * relative file path string as value) is spliced — the loaded
+     * file's root content replaces the {@code $ref} map in-place.
+     * Refs resolve relative to the parent directory of the file in
+     * which they appear, so a project layout like
+     *
+     * <pre>
+     *   schema.yaml
+     *   shared/store.yaml
+     *   cubes/sales.yaml
+     * </pre>
+     *
+     * <p>works without any reference needing to know the project root.
+     *
+     * <p>Cyclic includes ({@code a → b → a}) are detected and
+     * rejected with an {@link IllegalArgumentException}.
+     */
+    public static String toXmlFromPath(Path path) {
+        try {
+            String text = Files.readString(path, StandardCharsets.UTF_8);
+            Object root = YAML.readValue(text, Object.class);
+            Set<Path> stack = new LinkedHashSet<>();
+            stack.add(path.toAbsolutePath().normalize());
+            Object resolved = resolveRefs(root, path.toAbsolutePath()
+                .getParent(), stack);
+            if (!(resolved instanceof Map)) {
+                throw new IllegalArgumentException(
+                    "schema root must be a YAML map, got: "
+                        + (resolved == null
+                            ? "null" : resolved.getClass().getSimpleName()));
+            }
+            return emitFromRoot((Map<?, ?>) resolved);
+        } catch (IOException e) {
+            throw new IllegalArgumentException(
+                "failed to read " + path + ": " + e.getMessage(), e);
+        } catch (Exception e) {
+            // re-throw the IAE if it's already that; otherwise wrap
+            if (e instanceof IllegalArgumentException) {
+                throw (IllegalArgumentException) e;
+            }
+            throw new IllegalArgumentException(
+                "failed to convert YAML schema at " + path
+                    + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Recursively resolve {@code $ref} keys in a YAML tree.
+     *
+     * @param node     current node (Map, List, scalar, or null)
+     * @param baseDir  directory to resolve relative ref paths against
+     * @param stack    visited absolute paths — used for cycle detection
+     */
+    private static Object resolveRefs(
+        Object node, Path baseDir, Set<Path> stack)
+        throws IOException
+    {
+        if (node instanceof Map) {
+            Map<?, ?> m = (Map<?, ?>) node;
+            if (m.size() == 1 && m.containsKey("$ref")) {
+                Object refObj = m.get("$ref");
+                if (!(refObj instanceof String)) {
+                    throw new IllegalArgumentException(
+                        "$ref value must be a string path, got: " + refObj);
+                }
+                String refPath = (String) refObj;
+                Path target = baseDir.resolve(refPath).normalize();
+                if (!Files.exists(target)) {
+                    throw new IllegalArgumentException(
+                        "$ref target does not exist: " + refPath
+                            + " (resolved to " + target + ")");
+                }
+                if (stack.contains(target)) {
+                    throw new IllegalArgumentException(
+                        "cycle detected in $ref chain: "
+                            + describeCycle(stack, target));
+                }
+                String text = Files.readString(target, StandardCharsets.UTF_8);
+                Object loaded = YAML.readValue(text, Object.class);
+                Set<Path> nextStack = new LinkedHashSet<>(stack);
+                nextStack.add(target);
+                return resolveRefs(loaded, target.getParent(), nextStack);
+            }
+            Map<Object, Object> out = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                out.put(e.getKey(),
+                    resolveRefs(e.getValue(), baseDir, stack));
+            }
+            return out;
+        }
+        if (node instanceof List) {
+            List<Object> out = new ArrayList<>();
+            for (Object item : (List<?>) node) {
+                out.add(resolveRefs(item, baseDir, stack));
+            }
+            return out;
+        }
+        return node;
+    }
+
+    private static String describeCycle(Set<Path> stack, Path target) {
+        StringBuilder sb = new StringBuilder();
+        for (Path p : stack) {
+            sb.append(p).append(" → ");
+        }
+        sb.append(target);
+        return sb.toString();
+    }
+
     public static String toXml(String yamlText) {
         try {
             Map<?, ?> root = YAML.readValue(yamlText, Map.class);
+            return emitFromRoot(root);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                "Failed to convert YAML schema to XML: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Shared emit pipeline used by both {@link #toXml(String)} and
+     * {@link #toXmlFromPath(Path)}. Takes a fully-resolved root map
+     * (no {@code $ref}s remaining) and emits Mondrian XML.
+     */
+    private static String emitFromRoot(Map<?, ?> root) {
+        try {
             StringBuilder buf = new StringBuilder(1024);
             buf.append("<?xml version=\"1.0\"?>\n");
             buf.append("<Schema name=\"")
