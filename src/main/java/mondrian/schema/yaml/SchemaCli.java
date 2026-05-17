@@ -113,18 +113,24 @@ public final class SchemaCli {
                 output = Paths.get(args[++i]);
             }
         }
-        String inputText;
-        try {
-            inputText = Files.readString(input, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            err.println("error: cannot read " + input + ": " + e.getMessage());
-            return 1;
-        }
         String converted;
         try {
-            converted = toYaml
-                ? XmlSchemaToYaml.toYaml(inputText)
-                : YamlSchemaConverter.toXml(inputText);
+            if (toYaml) {
+                // XML → YAML: just slurp the file; no includes.
+                String inputText = Files.readString(
+                    input, StandardCharsets.UTF_8);
+                converted = XmlSchemaToYaml.toYaml(inputText);
+            } else {
+                // YAML → XML: use path-based entry so any $ref
+                // includes resolve relative to the file.
+                converted = YamlSchemaConverter.toXmlFromPath(input);
+            }
+        } catch (java.nio.file.NoSuchFileException e) {
+            err.println("error: cannot read " + input + ": no such file");
+            return 1;
+        } catch (java.io.IOException e) {
+            err.println("error: cannot read " + input + ": " + e.getMessage());
+            return 1;
         } catch (Exception e) {
             err.println("error: conversion failed: " + e.getMessage());
             return 2;
@@ -150,18 +156,21 @@ public final class SchemaCli {
             return 1;
         }
         Path input = Paths.get(args[1]);
-        String inputText;
-        try {
-            inputText = Files.readString(input, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            err.println("error: cannot read " + input + ": " + e.getMessage());
-            return 1;
-        }
         String xml;
         try {
-            xml = isYamlPath(input)
-                ? YamlSchemaConverter.toXml(inputText)
-                : inputText;
+            if (isYamlPath(input)) {
+                // Path-based entry resolves any $ref includes for the
+                // realistic multi-file deployment case.
+                xml = YamlSchemaConverter.toXmlFromPath(input);
+            } else {
+                xml = Files.readString(input, StandardCharsets.UTF_8);
+            }
+        } catch (java.nio.file.NoSuchFileException e) {
+            err.println("error: cannot read " + input + ": no such file");
+            return 1;
+        } catch (java.io.IOException e) {
+            err.println("error: cannot read " + input + ": " + e.getMessage());
+            return 1;
         } catch (Exception e) {
             err.println(
                 "error: YAML → XML conversion failed: " + e.getMessage());
