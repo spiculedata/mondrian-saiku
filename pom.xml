@@ -159,6 +159,24 @@
       <version>42.7.4</version>
       <scope>test</scope>
     </dependency>
+    <!-- Apache Arrow Java: foundation for the Arrow-backed SegmentVector
+         spike (#37 Phase 1). arrow-vector exposes the Float8Vector / IntVector
+         / etc. used by mondrian.rolap.agg.ArrowDoubleSegmentVector;
+         arrow-memory-unsafe supplies a BufferAllocator without pulling in
+         Netty. Tagged optional so downstream consumers of mondrian don't
+         transitively inherit Arrow unless they explicitly want it. -->
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-vector</artifactId>
+      <version>19.0.0</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.arrow</groupId>
+      <artifactId>arrow-memory-unsafe</artifactId>
+      <version>19.0.0</version>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
 
   <build>
