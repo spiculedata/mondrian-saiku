@@ -442,13 +442,51 @@ public class Query extends QueryPart {
      */
     public void resolve() {
         final Validator validator = createValidator();
-        resolve(validator); // resolve self and children
+        // #33: mondrian.mdx.validate. Nests under mdx.parse when called
+        // from the parser; emits as an orphan when callers invoke
+        // Query.resolve() directly after AST mutation.
+        final io.opentelemetry.api.trace.Span validateSpan =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.mdx.validate")
+                .startSpan();
+        try (io.opentelemetry.context.Scope vIgnored =
+                 validateSpan.makeCurrent())
+        {
+            resolve(validator); // resolve self and children
+        } catch (RuntimeException | Error t) {
+            validateSpan.recordException(t);
+            validateSpan.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            validateSpan.end();
+        }
         // Create a dummy result so we can use its evaluator
         final Evaluator evaluator = RolapUtil.createEvaluator(statement);
         ExpCompiler compiler =
             createCompiler(
                 evaluator, validator, Collections.singletonList(resultStyle));
-        compile(compiler);
+        // #33: mondrian.mdx.compile (calc tree generation)
+        final io.opentelemetry.api.trace.Span compileSpan =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.mdx.compile")
+                .startSpan();
+        try (io.opentelemetry.context.Scope cIgnored =
+                 compileSpan.makeCurrent())
+        {
+            compile(compiler);
+        } catch (RuntimeException | Error t) {
+            compileSpan.recordException(t);
+            compileSpan.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            compileSpan.end();
+        }
     }
 
     /**
