@@ -14,9 +14,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
-import org.hsqldb.jdbc.jdbcDataSource;
 import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
-import javax.sql.DataSource;
 
 import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
@@ -29,17 +27,10 @@ public class CalciteSqlPlannerTest {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    private static DataSource foodmartDs() {
-        jdbcDataSource ds = new jdbcDataSource();
-        ds.setDatabase("jdbc:hsqldb:file:target/foodmart/foodmart;readonly=true");
-        ds.setUser("sa");
-        ds.setPassword("");
-        return ds;
-    }
-
     private static CalciteSqlPlanner plannerFor(SqlDialect dialect) {
         CalciteMondrianSchema schema =
-            new CalciteMondrianSchema(foodmartDs(), "foodmart");
+            new CalciteMondrianSchema(
+                FoodMartHsqldbBootstrap.dataSource(), "foodmart");
         return new CalciteSqlPlanner(schema, dialect);
     }
 
@@ -474,6 +465,38 @@ public class CalciteSqlPlannerTest {
         assertFalse(
             "HAVING-only alias h0 must not appear in SELECT: " + sql,
             lower.contains("\"h0\"") || lower.contains(" as h0"));
+    }
+
+    /**
+     * Issue #46 regression: when {@link org.apache.calcite.tools.RelBuilder#field}
+     * cannot resolve a field — the canonical symptom of the #8 Calcite-translator
+     * gap (RelBuilder.scan returning an empty input row-type) — the resulting
+     * {@link IllegalArgumentException} must be wrapped as
+     * {@link UnsupportedTranslation} so call-site fallbacks treat it as a
+     * translator-coverage gap rather than letting it escape as an opaque
+     * runtime error.
+     */
+    @Test
+    public void planWrapsRelBuilderIaeAsUnsupportedTranslation() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addProjection(
+                new PlannerRequest.Column(null, "no_such_column_46"))
+            .build();
+        org.junit.jupiter.api.Assertions.assertThrows(
+            UnsupportedTranslation.class, () -> planner.plan(req));
+    }
+
+    /**
+     * The null-request guard remains an {@link IllegalArgumentException}
+     * because that is a programmer error, not a translator gap. Confirms
+     * the issue #46 wrap does not swallow this signal.
+     */
+    @Test
+    public void planNullRequestStillRaisesIllegalArgument() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        org.junit.jupiter.api.Assertions.assertThrows(
+            IllegalArgumentException.class, () -> planner.plan(null));
     }
 }
 

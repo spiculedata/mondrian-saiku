@@ -12,7 +12,6 @@ package mondrian.calcite;
 import mondrian.test.FoodMartHsqldbBootstrap;
 
 import org.apache.calcite.schema.SchemaPlus;
-import org.hsqldb.jdbc.jdbcDataSource;
 import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import javax.sql.DataSource;
 
@@ -29,11 +28,7 @@ public class CalciteMondrianSchemaTest {
     }
 
     private static DataSource foodmartDs() {
-        jdbcDataSource ds = new jdbcDataSource();
-        ds.setDatabase("jdbc:hsqldb:file:target/foodmart/foodmart;readonly=true");
-        ds.setUser("sa");
-        ds.setPassword("");
-        return ds;
+        return FoodMartHsqldbBootstrap.dataSource();
     }
 
     /**

@@ -184,14 +184,10 @@ public class SegmentLoadSnowflakeTranslationTest {
         invokeEnsureChain(b, fact, productClass, joined);
         PlannerRequest req = b.build();
 
-        org.hsqldb.jdbc.jdbcDataSource ds =
-            new org.hsqldb.jdbc.jdbcDataSource();
-        ds.setDatabase(
-            "jdbc:hsqldb:file:target/foodmart/foodmart;readonly=true");
-        ds.setUser("sa");
-        ds.setPassword("");
         CalciteMondrianSchema schema =
-            new CalciteMondrianSchema(ds, "foodmart");
+            new CalciteMondrianSchema(
+                mondrian.test.FoodMartHsqldbBootstrap.dataSource(),
+                "foodmart");
         CalciteSqlPlanner planner = new CalciteSqlPlanner(
             schema,
             org.apache.calcite.sql.dialect.HsqldbSqlDialect.DEFAULT);

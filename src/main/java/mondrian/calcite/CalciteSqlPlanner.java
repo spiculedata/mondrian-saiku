@@ -265,6 +265,28 @@ public final class CalciteSqlPlanner {
 
     /** Render the request as a SQL string in the configured dialect. */
     public String plan(PlannerRequest req) {
+        // Null-request is a programmer error and stays as IAE — keep this
+        // guard above the IAE→UnsupportedTranslation wrap below so the
+        // wrap doesn't mask the contract-violation signal.
+        if (req == null) {
+            throw new IllegalArgumentException("request is null");
+        }
+        try {
+            return planInternal(req);
+        } catch (IllegalArgumentException iae) {
+            // Issue #46 / #8: RelBuilder.field throws IllegalArgumentException
+            // when scan() returns an empty input row-type or the requested
+            // column is unresolvable in the current LHS. Both shapes are
+            // Calcite-translator coverage gaps, not bugs in the call site —
+            // wrap them as UnsupportedTranslation so segment-load and
+            // tuple-read fall back to the legacy SQL string instead of
+            // letting an opaque IAE escape past the strict-mode guard.
+            throw new UnsupportedTranslation(
+                "Calcite translator gap: " + iae.getMessage(), iae);
+        }
+    }
+
+    private String planInternal(PlannerRequest req) {
         long tPlanStart = PROFILE ? System.nanoTime() : 0L;
         // Hand-rolled MV matcher (Option D —
         // docs/reports/perf-investigation-volcano-mv-win.md).
