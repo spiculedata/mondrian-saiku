@@ -11,12 +11,19 @@
 package mondrian.rolap;
 
 import mondrian.calc.*;
+import mondrian.observability.MondrianTracing;
 import mondrian.olap.*;
 import mondrian.parser.MdxParserValidator;
 import mondrian.resource.MondrianResource;
 import mondrian.server.*;
 import mondrian.spi.*;
 import mondrian.util.*;
+
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanBuilder;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.context.Scope;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -438,10 +445,39 @@ public class RolapConnection extends ConnectionBase {
      * @throws QueryTimeoutException if query exceeded timeout specified in
      *     the property file
      */
+    /** Attribute key constants for the {@code mondrian.mdx.execute} span. */
+    private static final AttributeKey<String> ATTR_SCHEMA =
+        AttributeKey.stringKey("mondrian.schema");
+    private static final AttributeKey<String> ATTR_CUBE =
+        AttributeKey.stringKey("mondrian.cube");
+    private static final AttributeKey<Long> ATTR_EXECUTION_ID =
+        AttributeKey.longKey("mondrian.execution.id");
+
     public Result execute(final Execution execution) {
         execution.copyMDC();
-        return
-            server.getResultShepherd()
+        // Root span per MDX query. Zero-overhead when no OTel SDK is
+        // registered (GlobalOpenTelemetry returns a no-op tracer). See
+        // MondrianTracing javadoc for the instrumentation pattern.
+        SpanBuilder builder = MondrianTracing.tracer()
+            .spanBuilder("mondrian.mdx.execute");
+        try {
+            String schemaName = safeSchemaName(execution);
+            if (schemaName != null) {
+                builder.setAttribute(ATTR_SCHEMA, schemaName);
+            }
+            String cubeName = safeCubeName(execution);
+            if (cubeName != null) {
+                builder.setAttribute(ATTR_CUBE, cubeName);
+            }
+            builder.setAttribute(ATTR_EXECUTION_ID, execution.getId());
+        } catch (RuntimeException ignored) {
+            // Attribute extraction must never break execution. If the
+            // statement/query hasn't been wired up yet, fall through with
+            // a less-decorated span.
+        }
+        final Span span = builder.startSpan();
+        try (Scope ignored = span.makeCurrent()) {
+            return server.getResultShepherd()
                 .shepherdExecution(
                     execution,
                     new Callable<Result>() {
@@ -449,6 +485,33 @@ public class RolapConnection extends ConnectionBase {
                             return executeInternal(execution);
                         }
                     });
+        } catch (RuntimeException | Error t) {
+            span.recordException(t);
+            span.setStatus(StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            span.end();
+        }
+    }
+
+    private static String safeSchemaName(Execution execution) {
+        try {
+            return execution.getMondrianStatement()
+                .getQuery().getCube().getSchema().getName();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static String safeCubeName(Execution execution) {
+        try {
+            return execution.getMondrianStatement()
+                .getQuery().getCube().getName();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private Result executeInternal(final Execution execution) {

@@ -126,9 +126,60 @@ public class SqlStatement implements DBStatement {
     }
 
     /**
+     * Maps Mondrian's {@link SqlStatementEvent.Purpose} to the
+     * stable {@code mondrian.sql.kind} OTel attribute value (#33).
+     * Defaults to "other" for {@code OTHER} / unknown — dashboards
+     * group by this value.
+     */
+    private static String purposeToKind(SqlStatementEvent.Purpose p) {
+        if (p == null) return "other";
+        switch (p) {
+        case CELL_SEGMENT:   return "segment-load";
+        case TUPLES:         return "member-read";
+        case DRILL_THROUGH:  return "drillthrough";
+        case OTHER:
+        default:             return "other";
+        }
+    }
+
+    /**
      * Executes the current statement, and handles any SQLException.
      */
     public void execute() {
+        // #33 mondrian.sql.execute span. Wraps the whole method so the
+        // span captures pool wait + JDBC executeQuery + first-row skip.
+        // The kind attribute distinguishes segment-load / member-read /
+        // drillthrough / other so dashboards can break down SQL cost
+        // by what Mondrian was trying to do.
+        final io.opentelemetry.api.trace.Span span =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.sql.execute")
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.stringKey(
+                        "mondrian.sql.kind"),
+                    purposeToKind(getPurpose()))
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.longKey(
+                        "mondrian.sql.id"),
+                    (long) id)
+                .startSpan();
+        try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+            executeImpl();
+        } catch (RuntimeException | Error t) {
+            span.recordException(t);
+            span.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            span.end();
+        }
+    }
+
+    /** Body of the original execute() — extracted so the outer span
+     *  wrapper stays small + the existing try/catch/finally is untouched. */
+    private void executeImpl() {
         assert state == State.FRESH : "cannot re-execute";
         state = State.ACTIVE;
         Counters.SQL_STATEMENT_EXECUTE_COUNT.incrementAndGet();
