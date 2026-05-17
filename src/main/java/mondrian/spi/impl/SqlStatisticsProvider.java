@@ -141,13 +141,19 @@ public class SqlStatisticsProvider implements StatisticsProvider {
         if (sql == null) {
             return -1;
         }
-        // Task C dispatch: third SQL-origin seam. Under backend=calcite the
-        // Calcite path owns the SQL string end-to-end. UnsupportedTranslation
-        // propagates — no fallback to the legacy string, no RuntimeException
-        // swallow. Cardinality probes are trivially translatable in all
-        // observed shapes; if a probe shape exists that the translator
-        // can't handle, that's a hard-fail bug to surface, not a silent
-        // downgrade.
+        // Task C dispatch: third SQL-origin seam. Adapter-level
+        // UnsupportedTranslation (qualified schema, null table/column, etc.)
+        // still propagates out of fromCardinalityProbe — that call sits
+        // outside the try block on purpose, so genuinely unsupported probe
+        // shapes surface as hard errors rather than silently downgrading.
+        //
+        // Issue #46 (4.8.1.10): the wrap in CalciteSqlPlanner.plan now
+        // rebrands the RelBuilder.field IAE as UnsupportedTranslation, so
+        // the saiku#781 "fall back when the probe can't resolve a field"
+        // case has shifted exception types. Catch both — IAE for forward
+        // compatibility if the wrap is ever loosened, and
+        // UnsupportedTranslation for the current shape that the
+        // optimizePredicates path hits on multi-dim queries.
         if (MondrianBackend.current().isCalcite()) {
             CalciteSqlPlanner planner = plannerFor(dataSource);
             if (planner != null) {
@@ -166,16 +172,17 @@ public class SqlStatisticsProvider implements StatisticsProvider {
                             + "  calcite: " + calciteSql);
                     }
                     sql = calciteSql;
-                } catch (IllegalArgumentException e) {
-                    // saiku#781: Calcite's RelBuilder.field throws this when a
-                    // star-schema cardinality probe asks for a column the
-                    // inferred input rowType doesn't carry (Warehouse cube's
-                    // Country level is the known trigger — "field
-                    // [warehouse_country] not found; input fields are: []").
-                    // Cardinality is an optimizer hint; a hard-fail at this
-                    // depth kills the whole user query. Fall back to the
-                    // legacy probe SQL — the planner-side bug is still worth
-                    // fixing but it shouldn't sink the request.
+                } catch (UnsupportedTranslation | IllegalArgumentException e) {
+                    // Calcite's RelBuilder.field throws when a star-schema
+                    // cardinality probe asks for a column the inferred input
+                    // rowType doesn't carry (Warehouse cube's Country level
+                    // is the known trigger — "field [warehouse_country] not
+                    // found; input fields are: []"). Post-4.8.1.10 that IAE
+                    // is wrapped as UnsupportedTranslation in plan(); pre-
+                    // wrap it would surface here directly. Either way,
+                    // cardinality is an optimizer hint and a hard-fail at
+                    // this depth kills the whole user query, so we fall back
+                    // to the legacy probe SQL.
                     if (LOGGER.isDebugEnabled()) {
                         LOGGER.debug(
                             "Calcite cardinality probe failed for "

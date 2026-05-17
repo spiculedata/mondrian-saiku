@@ -188,6 +188,33 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
             return null;
         }
 
+        // Issue #54: any CrossJoinArg whose hierarchy has no
+        // MemberBuilder cannot be evaluated natively — at execution
+        // time RolapNativeSet.addLevel would assert
+        // "MemberBuilder not found". Hanger dimensions (no fact-table
+        // backing — Mondrian's scenario / "Actual VS Budget" shape)
+        // are the canonical trigger: members come from <CalculatedMember>
+        // declarations, so the MemberReader has no SQL-backed builder.
+        // Decline native eval and let the in-memory crossjoin evaluator
+        // handle the axis, matching how the gate already handles
+        // pure-calc dims.
+        for (CrossJoinArg cjArg : cjArgs) {
+            RolapCubeLevel level = cjArg.getLevel();
+            if (level == null) {
+                continue;
+            }
+            MemberReader mr = level.getHierarchy().getMemberReader();
+            if (mr == null || mr.getMemberBuilder() == null) {
+                alertCrossJoinNonNative(
+                    evaluator,
+                    fun,
+                    "hierarchy "
+                    + level.getHierarchy().getUniqueName()
+                    + " has no MemberBuilder (issue #54 hanger-dim shape)");
+                return null;
+            }
+        }
+
         // Verify that args are valid
         List<RolapCubeLevel> levels = new ArrayList<RolapCubeLevel>();
         for (CrossJoinArg cjArg : cjArgs) {
@@ -271,8 +298,8 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
 
             // Use the just the CJ CrossJoiArg for the evaluator context, which
             // will be translated to select list in sql.
-            final SchemaReader schemaReader = evaluator.getSchemaReader();
-            return new SetEvaluator(cjArgs, schemaReader, constraint);
+            return new SetEvaluator(
+                cjArgs, evaluator.getSchemaReader(), constraint);
         } finally {
             evaluator.restore(savepoint);
         }

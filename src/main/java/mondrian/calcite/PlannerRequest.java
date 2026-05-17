@@ -322,6 +322,15 @@ public final class PlannerRequest {
     public enum JoinKind { INNER, CROSS }
 
     public static final class Join {
+        /** Alias the renderer uses to refer to this dim's row-set on the
+         *  builder stack (the LHS for subsequent joins and field
+         *  references). When {@link #physName} is null, this is also the
+         *  physical table name to {@code RelBuilder.scan(...)}. When
+         *  {@code physName} is non-null and differs from this alias, the
+         *  renderer emits {@code b.scan(physName).as(dimTable)} so
+         *  Mondrian-aliased PhysTables (multiple DimensionUsages of the
+         *  same shared dim → {@code store}, {@code store_1}, {@code
+         *  store_2}) resolve correctly against {@code JdbcSchema}. */
         public final String dimTable;
         public final String factKey;
         public final String dimKey;
@@ -333,27 +342,49 @@ public final class PlannerRequest {
          *  resolve {@link #factKey} against the correct input of a
          *  multi-hop snowflake chain (Task I). */
         public final String leftTable;
+        /** Optional physical table name. {@code null} means {@link
+         *  #dimTable} <em>is</em> the physical table name (back-compat:
+         *  single-DimensionUsage cubes never need an alias). Non-null
+         *  when the cube schema aliases the same shared dim across
+         *  multiple DimensionUsages — e.g. {@code physName="store"} with
+         *  {@code dimTable="store_2"} for the third Store usage. Issue
+         *  #46 third-class fix. */
+        public final String physName;
         public Join(String dimTable, String factKey, String dimKey) {
-            this(dimTable, factKey, dimKey, JoinKind.INNER, null);
+            this(dimTable, factKey, dimKey, JoinKind.INNER, null, null);
         }
         public Join(
             String dimTable, String factKey, String dimKey, JoinKind kind)
         {
-            this(dimTable, factKey, dimKey, kind, null);
+            this(dimTable, factKey, dimKey, kind, null, null);
         }
         public Join(
             String dimTable, String factKey, String dimKey, JoinKind kind,
             String leftTable)
+        {
+            this(dimTable, factKey, dimKey, kind, leftTable, null);
+        }
+        public Join(
+            String dimTable, String factKey, String dimKey, JoinKind kind,
+            String leftTable, String physName)
         {
             this.dimTable = dimTable;
             this.factKey = factKey;
             this.dimKey = dimKey;
             this.kind = kind;
             this.leftTable = leftTable;
+            this.physName = physName;
         }
         /** Convenience factory for an unconditional CROSS JOIN. */
         public static Join cross(String dimTable) {
-            return new Join(dimTable, null, null, JoinKind.CROSS, null);
+            return new Join(
+                dimTable, null, null, JoinKind.CROSS, null, null);
+        }
+        /** Cross-join variant carrying a physical table name distinct
+         *  from {@code dimAlias}. */
+        public static Join cross(String dimAlias, String physName) {
+            return new Join(
+                dimAlias, null, null, JoinKind.CROSS, null, physName);
         }
         /** Convenience factory for an inner equi-join whose LHS is an
          *  already-joined non-fact table (Task I snowflake multi-hop). */
@@ -362,11 +393,28 @@ public final class PlannerRequest {
             String dimTable, String dimKey)
         {
             return new Join(
-                dimTable, leftKey, dimKey, JoinKind.INNER, leftTable);
+                dimTable, leftKey, dimKey, JoinKind.INNER, leftTable, null);
+        }
+        /** Chained variant carrying a physical table name distinct from
+         *  {@code dimAlias}. */
+        public static Join chained(
+            String leftTable, String leftKey,
+            String dimAlias, String dimKey, String physName)
+        {
+            return new Join(
+                dimAlias, leftKey, dimKey, JoinKind.INNER,
+                leftTable, physName);
         }
     }
 
     public final String factTable;
+    /** Optional physical fact-table name. {@code null} means {@link
+     *  #factTable} <em>is</em> the physical name (back-compat). Non-null
+     *  when the schema aliases the fact table (rare but valid: a cube
+     *  whose MeasureGroup table is referenced under an alias distinct
+     *  from the physical table name). Issue #46 third-class fix —
+     *  parallels {@link Join#physName} for symmetry. */
+    public final String factPhysName;
     public final List<Join> joins;
     public final List<Column> groupBy;
     public final List<Measure> measures;
@@ -392,6 +440,7 @@ public final class PlannerRequest {
 
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
+        this.factPhysName = b.factPhysName;
         this.joins = List.copyOf(b.joins);
         this.groupBy = List.copyOf(b.groupBy);
         this.measures = List.copyOf(b.measures);
@@ -423,6 +472,7 @@ public final class PlannerRequest {
 
     public static final class Builder {
         private final String factTable;
+        private String factPhysName;
         private final List<Join> joins = new ArrayList<>();
         private final List<Column> groupBy = new ArrayList<>();
         private final List<Measure> measures = new ArrayList<>();
@@ -444,6 +494,12 @@ public final class PlannerRequest {
             this.factTable = factTable;
         }
 
+        /** Set the physical fact-table name when it differs from
+         *  {@link #factTable}. See {@link PlannerRequest#factPhysName}. */
+        public Builder factPhysName(String physName) {
+            this.factPhysName = physName;
+            return this;
+        }
         public Builder addJoin(Join j) { joins.add(j); return this; }
         public Builder addGroupBy(Column c) { groupBy.add(c); return this; }
         public Builder addMeasure(Measure m) { measures.add(m); return this; }

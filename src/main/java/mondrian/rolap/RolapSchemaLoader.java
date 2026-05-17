@@ -141,6 +141,14 @@ public class RolapSchemaLoader {
         new SimpleDateFormat("yyyy-MM-dd");
 
     private final MultiValueMap cubeToDimMap = new MultiValueMap();
+    /**
+     * Issue #46 / PR #51 sibling: tracks the set of physical table names
+     * already bound by a shared dimension in a given cube. Used by
+     * {@link #useSharedDimension} to detect when two <em>different</em>
+     * shared dims target the same physical table and clone the second
+     * occupant's {@link RolapSchema.PhysRelation} with a fresh alias.
+     */
+    private final MultiValueMap cubeToPhysTableMap = new MultiValueMap();
 
     private final List<RolapMember> measureList = new ArrayList<RolapMember>();
     private final List<RolapMember> aggFactCountMeasureList =
@@ -3137,8 +3145,20 @@ public class RolapSchemaLoader {
             .holder(new MondrianDef.MeasureGroups())
             .list()
             .add(xmlMeasureGroup);
+        // Issue #46 / PR #51 sibling: the auto-private cube for a shared
+        // dim must anchor on the dim's *original* physical table, not on
+        // any cube-scoped clone that useSharedDimension may have minted
+        // for a different cube. The dimension param's keyAttribute can
+        // carry the cloned relation if the dim's first encounter was in
+        // a cube that needed deduplication; prefer the shared XML's
+        // declared table to keep the private cube canonical.
+        final MondrianDef.Dimension originalSharedDim =
+            xmlSchema.getDimensions().get(source);
         xmlMeasureGroup.table =
-            dimension.keyAttribute.getKeyList().get(0).relation.getAlias();
+            originalSharedDim != null && originalSharedDim.table != null
+                ? originalSharedDim.table
+                : dimension.keyAttribute.getKeyList().get(0)
+                    .relation.getAlias();
 
         final MondrianDef.Measure xmlMeasure = new MondrianDef.Measure();
         xmlMeasureGroup.children
@@ -3198,36 +3218,149 @@ public class RolapSchemaLoader {
         // this section of code handles the case where the schema uses the
         // same shared dimension multiple times.  The SQL generated uses
         // the phys schema objects so we need to create copies of those
-        // objects with a different alias
+        // objects with a different alias.
+        //
+        // Issue #46 / PR #51 sibling: also clone when a *different* shared
+        // dim targets a physical table that another shared dim already
+        // bound in this cube. Without this, two shared dims (e.g.
+        // Store2 + Store3, both table='store') hand the same
+        // PhysRelation to SqlQueryBuilder, which asserts "query already
+        // contains alias 'store'" at SqlQuery.addFromTable. Scope-trim:
+        // this handles the single-hop case only (shared dim → single
+        // physical table → single FK link). Snowflake mid-chain hops are
+        // tracked as a separate follow-up.
+        //
+        // Issue #74 follow-up: the original physical-table lookup keyed
+        // on sharedDimension.table, which is null when the dim declares
+        // its physical table via attribute-scoped attrs
+        // (<Attribute table='store'/>) instead of <Dimension table='store'>.
+        // resolveSharedDimTable() falls back to the first non-null
+        // <Attribute>.table when the dim-level field is absent, so the
+        // attribute-scoped variant lands in the same clone-on-collision
+        // path Store3 already enjoys.
+        final String effectiveTable =
+            resolveSharedDimTable(sharedDimension);
         MondrianDef.Dimension clonedDim = null;
-        if (cubeToDimMap.containsKey(cube)
-            && cubeToDimMap.getCollection(cube).contains(sharedDimension))
-        {
+        boolean dupSharedDim =
+            cubeToDimMap.containsKey(cube)
+                && cubeToDimMap.getCollection(cube).contains(sharedDimension);
+        boolean dupPhysTable =
+            effectiveTable != null
+                && cubeToPhysTableMap.containsKey(cube)
+                && cubeToPhysTableMap.getCollection(cube)
+                    .contains(effectiveTable);
+        if (dupSharedDim || dupPhysTable) {
             try {
                 LinkedHashMap<String, RolapSchema.PhysRelation> tbls =
                     schema.getPhysicalSchema().tablesByName;
                 RolapSchema.PhysRelation physRelation =
-                    tbls.get(sharedDimension.table);
+                    tbls.get(effectiveTable);
                 if (physRelation != null) {
                     String newAlias = newTableAlias(physRelation, tbls);
                     RolapSchema.PhysRelation clonedRelation =
                         physRelation.cloneWithAlias(newAlias);
                     tbls.put(newAlias, clonedRelation);
                     clonedDim =
-                        new MondrianDef.Dimension(sharedDimension._def);
-                    clonedDim.table = newAlias;
+                        cloneSharedDimForAliasOverride(
+                            sharedDimension, newAlias);
                 }
             } catch (XOMException e) {
                 throw new MondrianException(e);
             }
         }
         cubeToDimMap.put(cube, sharedDimension);
+        if (effectiveTable != null) {
+            // Track on the original physical table name so subsequent
+            // shared dims in this cube can detect a collision and trigger
+            // the clone above. The clone itself isn't tracked — only the
+            // first occupant of a given physical name.
+            cubeToPhysTableMap.put(cube, effectiveTable);
+        }
         if (clonedDim != null) {
             xmlDimension = clonedDim;
         } else {
             xmlDimension = sharedDimension;
         }
         return xmlDimension;
+    }
+
+    /**
+     * Issue #77: clone a shared {@link MondrianDef.Dimension} for the
+     * alias-collision rewrite path, with the {@code table} attribute
+     * overridden to {@code newAlias}. Robust to both:
+     *
+     * <ul>
+     *   <li><b>M4 / XOM-parsed dims</b> where {@code _def} is the
+     *       backing DOMWrapper — uses the wrapper-aware constructor
+     *       so the clone carries the same children + position info as
+     *       the original.</li>
+     *   <li><b>M3 / upgrader-built dims</b> where {@code _def} is
+     *       {@code null} (the {@code RolapSchemaUpgrader} constructs
+     *       fresh Dimension instances programmatically) — uses the
+     *       no-arg constructor + field-copy. Without this branch the
+     *       wrapper-aware constructor NPEs because {@code _def} is
+     *       passed to {@code DOMElementParser} which immediately
+     *       dereferences it.</li>
+     * </ul>
+     *
+     * <p>Pre-existing behaviour (the wrapper-aware path) is preserved
+     * verbatim — the {@code childArray} carries over via the
+     * DOMElementParser when {@code _def} is non-null. The new
+     * fallback path shallow-copies {@code childArray} (so cloned and
+     * source dims share child Hierarchy / Attribute / Annotation
+     * references) which matches the wrapper-aware path's semantics:
+     * the only field the caller overrides is {@code table}.
+     */
+    private static MondrianDef.Dimension cloneSharedDimForAliasOverride(
+        MondrianDef.Dimension sharedDimension, String newAlias)
+        throws XOMException
+    {
+        MondrianDef.Dimension clonedDim;
+        if (sharedDimension._def != null) {
+            clonedDim = new MondrianDef.Dimension(sharedDimension._def);
+        } else {
+            clonedDim = new MondrianDef.Dimension();
+            clonedDim.name = sharedDimension.name;
+            clonedDim.caption = sharedDimension.caption;
+            clonedDim.description = sharedDimension.description;
+            clonedDim.visible = sharedDimension.visible;
+            clonedDim.type = sharedDimension.type;
+            clonedDim.key = sharedDimension.key;
+            clonedDim.hanger = sharedDimension.hanger;
+            clonedDim.childArray = sharedDimension.childArray;
+        }
+        clonedDim.table = newAlias;
+        return clonedDim;
+    }
+
+    /**
+     * Issue #74: resolve a shared dimension's effective physical table
+     * name. Prefers the dim-level {@code table=} attribute when set,
+     * falls back to the first non-null {@code table=} on the dim's
+     * {@code <Attribute>} children (the attribute-scoped variant that
+     * #63's fix missed). Shared dimensions always source from a single
+     * physical table, so the first attribute is a reliable proxy when
+     * the dim-level attribute is absent.
+     *
+     * @return the effective physical table name, or {@code null} when
+     *         neither the dim nor any attribute declares one (e.g.
+     *         degenerate dimensions, fact-table-only dims)
+     */
+    private static String resolveSharedDimTable(
+        MondrianDef.Dimension sharedDimension)
+    {
+        if (sharedDimension.table != null) {
+            return sharedDimension.table;
+        }
+        if (sharedDimension.getAttributes() == null) {
+            return null;
+        }
+        for (MondrianDef.Attribute attr : sharedDimension.getAttributes()) {
+            if (attr.table != null) {
+                return attr.table;
+            }
+        }
+        return null;
     }
 
     private String newTableAlias(
