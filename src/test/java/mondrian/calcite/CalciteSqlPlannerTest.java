@@ -14,9 +14,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
-import org.hsqldb.jdbc.jdbcDataSource;
 import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
-import javax.sql.DataSource;
 
 import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
 /**
@@ -29,17 +27,10 @@ public class CalciteSqlPlannerTest {
         FoodMartHsqldbBootstrap.ensureExtracted();
     }
 
-    private static DataSource foodmartDs() {
-        jdbcDataSource ds = new jdbcDataSource();
-        ds.setDatabase("jdbc:hsqldb:file:target/foodmart/foodmart;readonly=true");
-        ds.setUser("sa");
-        ds.setPassword("");
-        return ds;
-    }
-
     private static CalciteSqlPlanner plannerFor(SqlDialect dialect) {
         CalciteMondrianSchema schema =
-            new CalciteMondrianSchema(foodmartDs(), "foodmart");
+            new CalciteMondrianSchema(
+                FoodMartHsqldbBootstrap.dataSource(), "foodmart");
         return new CalciteSqlPlanner(schema, dialect);
     }
 

@@ -14,7 +14,6 @@ import mondrian.spi.DialectManager;
 import mondrian.spi.impl.SqlStatisticsProvider;
 import mondrian.test.FoodMartHsqldbBootstrap;
 
-import org.hsqldb.jdbc.jdbcDataSource;
 import org.junit.jupiter.api.AfterEach;import org.junit.jupiter.api.AfterAll;import org.junit.jupiter.api.BeforeEach;import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 import java.sql.Connection;
 
@@ -136,11 +135,7 @@ public class CardinalityProbeEndToEndTest {
         // works for a cardinality probe, which is what the Task C
         // dispatch in SqlStatisticsProvider wires up. The dispatch
         // counter observation stays on the pure unit tests above.
-        jdbcDataSource ds = new jdbcDataSource();
-        ds.setDatabase(
-            "jdbc:hsqldb:file:target/foodmart/foodmart;readonly=true");
-        ds.setUser("sa");
-        ds.setPassword("");
+        javax.sql.DataSource ds = FoodMartHsqldbBootstrap.dataSource();
 
         Dialect dialect;
         try (Connection conn = ds.getConnection()) {
