@@ -96,6 +96,11 @@ public final class XmlSchemaToYaml {
         if (!cubes.isEmpty()) {
             root.put("cubes", cubes);
         }
+        Map<String, Map<String, Object>> vcubes =
+            collectVirtualCubes(schema);
+        if (!vcubes.isEmpty()) {
+            root.put("virtual_cubes", vcubes);
+        }
         List<Map<String, Object>> roles = collectRoles(schema);
         if (!roles.isEmpty()) {
             root.put("roles", roles);
@@ -380,14 +385,30 @@ public final class XmlSchemaToYaml {
         putAttrIfPresent(m, l, "name", "name");
         putAttrIfPresent(m, l, "table", "table");
         putAttrIfPresent(m, l, "column", "column");
+        putAttrIfPresent(m, l, "nameColumn", "name_column");
+        putAttrIfPresent(m, l, "ordinalColumn", "ordinal_column");
+        putAttrIfPresent(m, l, "parentColumn", "parent_column");
+        putAttrIfPresent(m, l, "nullParentValue", "null_parent_value");
         putAttrIfPresent(m, l, "type", "type");
         putAttrIfPresent(m, l, "uniqueMembers", "unique_members");
         putAttrIfPresent(m, l, "levelType", "level_type");
+        putAttrIfPresent(m, l, "hideMemberIf", "hide_member_if");
         putAttrIfPresent(m, l, "approxRowCount", "approx_row_count");
         putSqlDialectList(m, l, "KeyExpression", "key_expression");
         putSqlDialectList(m, l, "NameExpression", "name_expression");
         putSqlDialectList(m, l, "CaptionExpression", "caption_expression");
         putSqlDialectList(m, l, "OrdinalExpression", "ordinal_expression");
+        Element closure = firstChild(l, "Closure");
+        if (closure != null) {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            putAttrIfPresent(cm, closure, "parentColumn", "parent_column");
+            putAttrIfPresent(cm, closure, "childColumn", "child_column");
+            Element ct = firstChild(closure, "Table");
+            if (ct != null) {
+                cm.put("table", ct.getAttribute("name"));
+            }
+            m.put("closure", cm);
+        }
         List<Map<String, Object>> props = new ArrayList<>();
         for (Element p : directChildren(l, "Property")) {
             Map<String, Object> pm = new LinkedHashMap<>();
@@ -400,6 +421,59 @@ public final class XmlSchemaToYaml {
             m.put("properties", props);
         }
         return m;
+    }
+
+    private static Map<String, Map<String, Object>> collectVirtualCubes(
+        Element schema)
+    {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Element vc : directChildren(schema, "VirtualCube")) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            putAttrIfPresent(body, vc, "defaultMeasure", "default_measure");
+            putAttrIfPresent(body, vc, "caption", "caption");
+            putAttrIfPresent(body, vc, "visible", "visible");
+            putAttrIfPresent(body, vc, "enabled", "enabled");
+            Map<String, String> ann = collectAnnotations(vc);
+            if (ann != null) {
+                body.put("annotations", ann);
+            }
+            List<Map<String, Object>> dims = new ArrayList<>();
+            for (Element vd : directChildren(vc, "VirtualCubeDimension")) {
+                Map<String, Object> dm = new LinkedHashMap<>();
+                putAttrIfPresent(dm, vd, "cubeName", "cube_name");
+                putAttrIfPresent(dm, vd, "name", "name");
+                putAttrIfPresent(dm, vd, "caption", "caption");
+                putAttrIfPresent(dm, vd, "visible", "visible");
+                dims.add(dm);
+            }
+            if (!dims.isEmpty()) {
+                body.put("dimensions", dims);
+            }
+            List<Map<String, Object>> ms = new ArrayList<>();
+            for (Element vm : directChildren(vc, "VirtualCubeMeasure")) {
+                Map<String, Object> mm = new LinkedHashMap<>();
+                putAttrIfPresent(mm, vm, "cubeName", "cube_name");
+                putAttrIfPresent(mm, vm, "name", "name");
+                putAttrIfPresent(mm, vm, "visible", "visible");
+                ms.add(mm);
+            }
+            if (!ms.isEmpty()) {
+                body.put("measures", ms);
+            }
+            List<Map<String, Object>> cms = new ArrayList<>();
+            for (Element cm : directChildren(vc, "CalculatedMember")) {
+                cms.add(toCalculatedMember(cm));
+            }
+            if (!cms.isEmpty()) {
+                body.put("calculated_members", cms);
+            }
+            List<Map<String, Object>> nss = collectNamedSets(vc);
+            if (!nss.isEmpty()) {
+                body.put("named_sets", nss);
+            }
+            out.put(vc.getAttribute("name"), body);
+        }
+        return out;
     }
 
     /**

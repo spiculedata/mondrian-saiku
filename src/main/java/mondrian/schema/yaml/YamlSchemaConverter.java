@@ -240,6 +240,15 @@ public final class YamlSchemaConverter {
                         (String) e.getKey(), (Map<?, ?>) e.getValue());
                 }
             }
+            // VirtualCubes reference base cubes (by cubeName), so they
+            // must come AFTER the base cubes they cite.
+            Map<?, ?> vcubes = mapOrNull(root, "virtual_cubes");
+            if (vcubes != null) {
+                for (Map.Entry<?, ?> e : vcubes.entrySet()) {
+                    emitVirtualCube(buf,
+                        (String) e.getKey(), (Map<?, ?>) e.getValue());
+                }
+            }
             // Roles come last — they reference cubes by name, so cubes
             // must be declared first.
             for (Object r : listOrEmpty(root, "roles")) {
@@ -491,18 +500,25 @@ public final class YamlSchemaConverter {
         attrIfPresent(buf, l, "name", "name");
         attrIfPresent(buf, l, "table", "table");
         attrIfPresent(buf, l, "column", "column");
+        attrIfPresent(buf, l, "name_column", "nameColumn");
+        attrIfPresent(buf, l, "ordinal_column", "ordinalColumn");
+        attrIfPresent(buf, l, "parent_column", "parentColumn");
+        attrIfPresent(buf, l, "null_parent_value", "nullParentValue");
         attrIfPresent(buf, l, "type", "type");
         attrIfPresent(buf, l, "unique_members", "uniqueMembers");
         attrIfPresent(buf, l, "level_type", "levelType");
+        attrIfPresent(buf, l, "hide_member_if", "hideMemberIf");
         attrIfPresent(buf, l, "approx_row_count", "approxRowCount");
         List<?> props = listOrEmpty(l, "properties");
         List<?> keyEx = listOrEmpty(l, "key_expression");
         List<?> nameEx = listOrEmpty(l, "name_expression");
         List<?> ordEx = listOrEmpty(l, "ordinal_expression");
         List<?> capEx = listOrEmpty(l, "caption_expression");
+        Map<?, ?> closure = mapOrNull(l, "closure");
         boolean hasChildren = !props.isEmpty()
             || !keyEx.isEmpty() || !nameEx.isEmpty()
-            || !ordEx.isEmpty() || !capEx.isEmpty();
+            || !ordEx.isEmpty() || !capEx.isEmpty()
+            || closure != null;
         if (!hasChildren) {
             buf.append("/>\n");
             return;
@@ -511,11 +527,23 @@ public final class YamlSchemaConverter {
         String inner = indent + "  ";
         // Expression elements first (mirror MondrianDef's accepted
         // order — KeyExpression / NameExpression / CaptionExpression
-        // / OrdinalExpression, then Property).
+        // / OrdinalExpression, then Closure, then Property).
         emitSqlDialectList(buf, keyEx, "KeyExpression", inner);
         emitSqlDialectList(buf, nameEx, "NameExpression", inner);
         emitSqlDialectList(buf, capEx, "CaptionExpression", inner);
         emitSqlDialectList(buf, ordEx, "OrdinalExpression", inner);
+        if (closure != null) {
+            buf.append(inner).append("<Closure");
+            attrIfPresent(buf, closure, "parent_column", "parentColumn");
+            attrIfPresent(buf, closure, "child_column", "childColumn");
+            buf.append(">\n");
+            String closureTable = strOpt(closure, "table");
+            if (closureTable != null) {
+                buf.append(inner).append("  <Table name=\"")
+                    .append(escape(closureTable)).append("\"/>\n");
+            }
+            buf.append(inner).append("</Closure>\n");
+        }
         for (Object p : props) {
             Map<?, ?> pm = (Map<?, ?>) p;
             buf.append(inner).append("<Property");
@@ -567,6 +595,53 @@ public final class YamlSchemaConverter {
                 .append("</SQL>\n");
         }
         buf.append(indent).append("</").append(wrapper).append(">\n");
+    }
+
+    /**
+     * Emits a {@code <VirtualCube>} — a composite cube that re-exposes
+     * dimensions and measures from one or more base cubes. Base-cube
+     * refs use {@code cube_name:} to identify the source cube. When
+     * the dimension already exists at schema scope (shared), {@code
+     * cube_name} may be omitted.
+     *
+     * <p>Element order: VirtualCubeDimension → VirtualCubeMeasure →
+     * CalculatedMember → NamedSet. Matches MondrianDef's expected
+     * order.
+     */
+    private static void emitVirtualCube(
+        StringBuilder buf, String name, Map<?, ?> vc)
+    {
+        buf.append("  <VirtualCube name=\"").append(escape(name)).append("\"");
+        attrIfPresent(buf, vc, "default_measure", "defaultMeasure");
+        attrIfPresent(buf, vc, "caption", "caption");
+        attrIfPresent(buf, vc, "visible", "visible");
+        attrIfPresent(buf, vc, "enabled", "enabled");
+        buf.append(">\n");
+        emitAnnotations(buf, mapOrNull(vc, "annotations"), "    ");
+        for (Object d : listOrEmpty(vc, "dimensions")) {
+            Map<?, ?> dm = (Map<?, ?>) d;
+            buf.append("    <VirtualCubeDimension");
+            attrIfPresent(buf, dm, "cube_name", "cubeName");
+            attrIfPresent(buf, dm, "name", "name");
+            attrIfPresent(buf, dm, "caption", "caption");
+            attrIfPresent(buf, dm, "visible", "visible");
+            buf.append("/>\n");
+        }
+        for (Object m : listOrEmpty(vc, "measures")) {
+            Map<?, ?> mm = (Map<?, ?>) m;
+            buf.append("    <VirtualCubeMeasure");
+            attrIfPresent(buf, mm, "cube_name", "cubeName");
+            attrIfPresent(buf, mm, "name", "name");
+            attrIfPresent(buf, mm, "visible", "visible");
+            buf.append("/>\n");
+        }
+        for (Object cm : listOrEmpty(vc, "calculated_members")) {
+            emitCalculatedMember(buf, (Map<?, ?>) cm);
+        }
+        for (Object ns : listOrEmpty(vc, "named_sets")) {
+            emitNamedSet(buf, (Map<?, ?>) ns, "    ");
+        }
+        buf.append("  </VirtualCube>\n");
     }
 
     /**
