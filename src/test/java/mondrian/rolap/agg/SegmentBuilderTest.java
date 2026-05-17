@@ -65,8 +65,8 @@ public class SegmentBuilderTest extends BatchTestCase {
                 new HashSet<String>(Arrays.asList("col2")),
                 null, RolapAggregator.Sum, Dialect.Datatype.Numeric);
         assertArraysAreEqual(
-            (double[]) rollupNoNulls.getValue().getValueArray(),
-            (double[]) rollupWithNullMembers.getValue().getValueArray());
+            ((mondrian.spi.DoubleSegmentVector) rollupNoNulls.getValue().getValues()).toDoubleArray(),
+            ((mondrian.spi.DoubleSegmentVector) rollupWithNullMembers.getValue().getValues()).toDoubleArray());
         assertTrue(
             "Rolled up column should have nullAxisFlag set.",
             rollupWithNullMembers.getValue().getNullAxisFlags().length == 1
@@ -95,7 +95,7 @@ public class SegmentBuilderTest extends BatchTestCase {
         double expectedVal = 6 * MOCK_CELL_VALUE;
         assertArraysAreEqual(
             new double[] { expectedVal, expectedVal, expectedVal },
-            (double[]) rollup.getValue().getValueArray());
+            ((mondrian.spi.DoubleSegmentVector) rollup.getValue().getValues()).toDoubleArray());
         assertTrue(
             "Rolled up column should have nullAxisFlag set.",
             rollup.getValue().getNullAxisFlags().length == 1
@@ -125,7 +125,7 @@ public class SegmentBuilderTest extends BatchTestCase {
         assertArraysAreEqual(
             new double[] {expectedVal, expectedVal, expectedVal,
                 expectedVal, expectedVal, expectedVal},
-            (double[]) rollup.getValue().getValueArray());
+            ((mondrian.spi.DoubleSegmentVector) rollup.getValue().getValues()).toDoubleArray());
         assertTrue(
             "Rolled up column should have nullAxisFlag set to false for "
             + "the first column, true for second column.",
@@ -175,7 +175,7 @@ public class SegmentBuilderTest extends BatchTestCase {
         double expectedVal = 10 * MOCK_CELL_VALUE;
         assertArraysAreEqual(
             new double[]{ expectedVal, expectedVal},
-            (double[]) rollup.getValue().getValueArray());
+            ((mondrian.spi.DoubleSegmentVector) rollup.getValue().getValues()).toDoubleArray());
         assertTrue(
             "Rolled up column should have nullAxisFlag set to true for "
             + "a single column.",

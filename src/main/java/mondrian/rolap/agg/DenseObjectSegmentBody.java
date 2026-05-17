@@ -42,8 +42,8 @@ class DenseObjectSegmentBody extends AbstractSegmentBody {
     }
 
     @Override
-    public Object getValueArray() {
-        return values;
+    public mondrian.spi.ObjectSegmentVector getValues() {
+        return new ObjectArraySegmentVector(values);
     }
 
     @Override

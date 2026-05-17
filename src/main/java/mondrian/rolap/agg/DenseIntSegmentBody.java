@@ -49,8 +49,8 @@ class DenseIntSegmentBody extends AbstractSegmentBody {
     }
 
     @Override
-    public Object getValueArray() {
-        return values;
+    public mondrian.spi.IntSegmentVector getValues() {
+        return new IntArraySegmentVector(values, nullValues);
     }
 
     @Override

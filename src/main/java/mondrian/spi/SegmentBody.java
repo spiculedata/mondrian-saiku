@@ -33,13 +33,21 @@ public interface SegmentBody extends Serializable {
     Map<CellKey, Object> getValueMap();
 
     /**
-     * Returns an array of values.
+     * Returns the value vector for this dense segment.
      *
-     * <p>Use only for dense segments.</p>
+     * <p>The concrete vector subtype reflects the underlying value
+     * type — {@link DoubleSegmentVector} for double-valued measures,
+     * {@link IntSegmentVector} for int, {@link ObjectSegmentVector}
+     * for boxed objects (String, BigDecimal, ...). Callers narrow with
+     * {@code instanceof} before calling type-specific accessors such
+     * as {@link DoubleSegmentVector#toDoubleArray()}.
      *
-     * @return An array of values
+     * <p>Use only for dense segments. Sparse segments return their
+     * payload via {@link #getValueMap()}.
+     *
+     * @return A type-specific {@link SegmentVector}
      */
-    Object getValueArray();
+    SegmentVector getValues();
 
     /**
      * Returns a bit-set indicating whether values are null. The ordinals in

@@ -76,21 +76,27 @@ public class SegmentBuilder {
     {
         final SegmentDataset dataSet;
         if (body instanceof DenseDoubleSegmentBody) {
+            mondrian.spi.DoubleSegmentVector v =
+                (mondrian.spi.DoubleSegmentVector) body.getValues();
             dataSet =
                 new DenseDoubleSegmentDataset(
                     axes,
-                    (double[]) body.getValueArray(),
+                    v.toDoubleArray(),
                     body.getNullValueIndicators());
         } else if (body instanceof DenseIntSegmentBody) {
+            mondrian.spi.IntSegmentVector v =
+                (mondrian.spi.IntSegmentVector) body.getValues();
             dataSet =
                 new DenseIntSegmentDataset(
                     axes,
-                    (int[]) body.getValueArray(),
+                    v.toIntArray(),
                     body.getNullValueIndicators());
         } else if (body instanceof DenseObjectSegmentBody) {
+            mondrian.spi.ObjectSegmentVector v =
+                (mondrian.spi.ObjectSegmentVector) body.getValues();
             dataSet =
                 new DenseObjectSegmentDataset(
-                    axes, (Object[]) body.getValueArray());
+                    axes, v.toObjectArray());
         } else if (body instanceof SparseSegmentBody) {
             dataSet = new SparseSegmentDataset(body.getValueMap());
         } else {

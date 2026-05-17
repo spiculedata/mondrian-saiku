@@ -9,6 +9,7 @@
 */
 package mondrian.rolap.agg;
 
+import mondrian.spi.DoubleSegmentVector;
 import mondrian.util.Pair;
 
 import java.util.*;
@@ -49,8 +50,8 @@ class DenseDoubleSegmentBody extends AbstractSegmentBody {
     }
 
     @Override
-    public Object getValueArray() {
-        return values;
+    public DoubleSegmentVector getValues() {
+        return new DoubleArraySegmentVector(values, nullValues);
     }
 
     @Override
