@@ -2355,9 +2355,20 @@ public final class CalcitePlannerAdapters {
                     + ")");
             }
             String ancestorAlias = ancestor.getAlias();
+            // Issue #46 third-class fix: pass physical name so
+            // CalciteSqlPlanner.build can scan(physName).as(alias) for
+            // schemas with multiple DimensionUsages of the same shared
+            // dim (Mondrian aliases each as store_1, store_2, ...).
+            String ancestorPhysName =
+                ancestor instanceof RolapSchema.PhysTable
+                    ? ((RolapSchema.PhysTable) ancestor).getName()
+                    : null;
             PlannerRequest.Join edge = new PlannerRequest.Join(
                 ancestorAlias, leftKey, rightKey,
-                PlannerRequest.JoinKind.INNER, prevAlias);
+                PlannerRequest.JoinKind.INNER, prevAlias,
+                (ancestorPhysName == null
+                    || ancestorPhysName.equals(ancestorAlias))
+                    ? null : ancestorPhysName);
             out.add(edge);
             prevAlias = ancestorAlias;
         }
@@ -3434,13 +3445,27 @@ public final class CalcitePlannerAdapters {
         // Snowflake mid-chain edge: set leftTable to the parent alias.
         String leftTableAlias =
             parent.getParentTable() == null ? null : parent.getAlias();
+        // Issue #46 third-class fix: when the child's alias differs from
+        // its physical table name (e.g. multiple DimensionUsages of the
+        // same shared dim → store / store_1 / store_2), pass the
+        // physical name so CalciteSqlPlanner.build can scan(physName)
+        // .as(alias) instead of trying to look up the alias as a real
+        // table in JdbcSchema.
+        String childPhysName =
+            childRel instanceof RolapSchema.PhysTable
+                ? ((RolapSchema.PhysTable) childRel).getName()
+                : null;
+        String childAlias = child.getAlias();
         b.addJoin(
             new PlannerRequest.Join(
-                child.getAlias(),
+                childAlias,
                 leftKey,
                 rightKey,
                 PlannerRequest.JoinKind.INNER,
-                leftTableAlias));
+                leftTableAlias,
+                (childPhysName == null
+                    || childPhysName.equals(childAlias))
+                    ? null : childPhysName));
     }
 
     /**
