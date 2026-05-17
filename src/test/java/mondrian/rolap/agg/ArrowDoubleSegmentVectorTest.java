@@ -172,19 +172,25 @@ public class ArrowDoubleSegmentVectorTest {
      * preferred but adds dep weight for a spike).
      *
      * <p>Reads 100M doubles from a 100k-cell vector through each
-     * backing. The Arrow path is expected to be slower per cell — JIT
-     * inlines {@code double[i]} better than {@code Float8Vector.get(i)}
-     * which crosses off-heap memory and checks the validity bit. The
-     * floor: Arrow must be within <strong>10×</strong> the array path.
-     * Anything worse than 10× means we've hit a JIT pessimisation
-     * (e.g. boxing, JNI per access, off-heap fence) and the spike
-     * should report "Phase 1 not perf-viable as-is".
+     * backing. The Arrow path uses the optimised hot path
+     * ({@code arrowBuf.getDouble(i << 3)}, bypassing
+     * {@code Float8Vector.get(i)}'s null-check wrapper). Measured
+     * ratio at the time of writing: ~1.38× — gap from baseline is
+     * interface-method-dispatch through {@code DoubleSegmentVector}
+     * (see {@link ArrowReadPerfDiagnosticTest} for layer-by-layer
+     * breakdown).
+     *
+     * <p>Floor: Arrow must stay within <strong>3×</strong> the array
+     * path. Anything worse than 3× means we've regressed — either the
+     * wrapper-bypass optimisation broke, the JIT lost a devirt
+     * opportunity, or an underlying Arrow library change tanked
+     * per-cell read.
      *
      * <p>Logs both timings so the test output captures the actual ratio
-     * for the spike report — even when the floor passes.
+     * even when the floor passes.
      */
     @Test
-    public void perfSanityFloor_arrowWithin10xOfArray() {
+    public void perfSanityFloor_arrowWithin3xOfArray() {
         final int N = 100_000;
         final int iterations = 1_000;
         Random rng = new Random(0xC0FFEEL);
@@ -226,9 +232,9 @@ public class ArrowDoubleSegmentVectorTest {
 
         assertTrue(
             String.format(
-                "Arrow per-cell read too slow vs array (ratio %.2fx > 10x)",
+                "Arrow per-cell read too slow vs array (ratio %.2fx > 3x)",
                 ratio),
-            ratio < 10.0);
+            ratio < 3.0);
         // Floor only — no upper-bound floor on the array path.
         assertFalse("array path produced NaN", Double.isNaN(arraySum));
     }
