@@ -78,6 +78,17 @@ public final class YamlSchemaConverter {
                 .append("\">\n");
             emitAnnotations(buf, mapOrNull(root, "annotations"), "  ");
 
+            // Shared (schema-scoped) dimensions land before cubes so the
+            // cubes' DimensionUsage refs can resolve them — order matters
+            // to MondrianDef.
+            Map<?, ?> sharedDims = mapOrNull(root, "shared_dimensions");
+            if (sharedDims != null) {
+                for (Map.Entry<?, ?> e : sharedDims.entrySet()) {
+                    emitSharedDimension(buf,
+                        (String) e.getKey(), (Map<?, ?>) e.getValue());
+                }
+            }
+
             Object cubes = root.get("cubes");
             if (cubes instanceof Map) {
                 for (Map.Entry<?, ?> e : ((Map<?, ?>) cubes).entrySet()) {
@@ -105,8 +116,11 @@ public final class YamlSchemaConverter {
 
         emitFactTable(buf, c.get("fact_table"));
 
+        for (Object du : listOrEmpty(c, "dimension_usages")) {
+            emitDimensionUsage(buf, (Map<?, ?>) du);
+        }
         for (Object dim : listOrEmpty(c, "dimensions")) {
-            emitDimension(buf, (Map<?, ?>) dim);
+            emitDimension(buf, (Map<?, ?>) dim, "    ");
         }
         for (Object m : listOrEmpty(c, "measures")) {
             emitMeasure(buf, (Map<?, ?>) m);
@@ -201,43 +215,165 @@ public final class YamlSchemaConverter {
         buf.append("      </AggName>\n");
     }
 
-    private static void emitDimension(StringBuilder buf, Map<?, ?> d) {
-        buf.append("    <Dimension name=\"")
+    /**
+     * Schema-scoped shared dimension. Identical in body to the
+     * cube-scoped form except: (a) two-space outer indent, (b) takes
+     * its name from the YAML map key (not a {@code name:} field), and
+     * (c) MUST NOT carry {@code foreignKey} (that belongs on the
+     * {@code DimensionUsage}, not the shared dim).
+     */
+    private static void emitSharedDimension(
+        StringBuilder buf, String name, Map<?, ?> d)
+    {
+        buf.append("  <Dimension name=\"").append(escape(name)).append("\"");
+        attrIfPresent(buf, d, "type", "type");
+        buf.append(">\n");
+        emitDimensionBody(buf, d, "    ");
+        buf.append("  </Dimension>\n");
+    }
+
+    /**
+     * Cube-scoped private dimension. Differs from a shared dimension
+     * in carrying {@code foreignKey} and indenting one level deeper.
+     */
+    private static void emitDimension(
+        StringBuilder buf, Map<?, ?> d, String indent)
+    {
+        buf.append(indent).append("<Dimension name=\"")
             .append(escape(strRequired(d, "name"))).append("\"");
         attrIfPresent(buf, d, "foreign_key", "foreignKey");
         attrIfPresent(buf, d, "type", "type");
         buf.append(">\n");
-        Map<?, ?> h = (Map<?, ?>) d.get("hierarchy");
-        if (h != null) {
-            emitHierarchy(buf, h);
-        }
-        buf.append("    </Dimension>\n");
+        emitDimensionBody(buf, d, indent + "  ");
+        buf.append(indent).append("</Dimension>\n");
     }
 
-    private static void emitHierarchy(StringBuilder buf, Map<?, ?> h) {
-        buf.append("      <Hierarchy");
+    /**
+     * Common dimension body (one or more hierarchies). Accepts either
+     * a single {@code hierarchy:} map or a {@code hierarchies:} list
+     * (multi-hierarchy dimensions like FoodMart {@code Time}).
+     */
+    private static void emitDimensionBody(
+        StringBuilder buf, Map<?, ?> d, String indent)
+    {
+        Map<?, ?> single = mapOrNull(d, "hierarchy");
+        if (single != null) {
+            emitHierarchy(buf, single, indent);
+        }
+        for (Object h : listOrEmpty(d, "hierarchies")) {
+            emitHierarchy(buf, (Map<?, ?>) h, indent);
+        }
+    }
+
+    private static void emitHierarchy(
+        StringBuilder buf, Map<?, ?> h, String indent)
+    {
+        buf.append(indent).append("<Hierarchy");
+        attrIfPresent(buf, h, "name", "name");
         attrIfPresent(buf, h, "has_all", "hasAll");
         attrIfPresent(buf, h, "primary_key", "primaryKey");
+        attrIfPresent(buf, h, "primary_key_table", "primaryKeyTable");
         attrIfPresent(buf, h, "all_member_name", "allMemberName");
+        attrIfPresent(buf, h, "default_member", "defaultMember");
         buf.append(">\n");
+        String inner = indent + "  ";
         String table = strOpt(h, "table");
-        if (table != null) {
-            buf.append("        <Table name=\"")
+        Map<?, ?> join = mapOrNull(h, "join");
+        if (join != null) {
+            emitJoin(buf, join, inner);
+        } else if (table != null) {
+            buf.append(inner).append("<Table name=\"")
                 .append(escape(table)).append("\"/>\n");
         }
         for (Object lvl : listOrEmpty(h, "levels")) {
-            emitLevel(buf, (Map<?, ?>) lvl);
+            emitLevel(buf, (Map<?, ?>) lvl, inner);
         }
-        buf.append("      </Hierarchy>\n");
+        buf.append(indent).append("</Hierarchy>\n");
     }
 
-    private static void emitLevel(StringBuilder buf, Map<?, ?> l) {
-        buf.append("        <Level");
+    /**
+     * Two-way {@code <Join>} (FoodMart's standard shape — product +
+     * product_class). The YAML {@code tables} list MUST contain
+     * exactly two entries, each either a bare string (table name) or
+     * a map with at least {@code name}.
+     */
+    private static void emitJoin(
+        StringBuilder buf, Map<?, ?> join, String indent)
+    {
+        buf.append(indent).append("<Join");
+        attrIfPresent(buf, join, "left_alias", "leftAlias");
+        attrIfPresent(buf, join, "left_key", "leftKey");
+        attrIfPresent(buf, join, "right_alias", "rightAlias");
+        attrIfPresent(buf, join, "right_key", "rightKey");
+        buf.append(">\n");
+        String inner = indent + "  ";
+        List<?> tables = listOrEmpty(join, "tables");
+        if (tables.size() != 2) {
+            throw new IllegalArgumentException(
+                "join.tables must have exactly 2 entries, got "
+                    + tables.size());
+        }
+        for (Object t : tables) {
+            if (t instanceof String) {
+                buf.append(inner).append("<Table name=\"")
+                    .append(escape((String) t)).append("\"/>\n");
+            } else if (t instanceof Map) {
+                Map<?, ?> tm = (Map<?, ?>) t;
+                buf.append(inner).append("<Table name=\"")
+                    .append(escape(strRequired(tm, "name"))).append("\"");
+                attrIfPresent(buf, tm, "schema", "schema");
+                attrIfPresent(buf, tm, "alias", "alias");
+                buf.append("/>\n");
+            } else {
+                throw new IllegalArgumentException(
+                    "join.tables entries must be string or map");
+            }
+        }
+        buf.append(indent).append("</Join>\n");
+    }
+
+    private static void emitLevel(
+        StringBuilder buf, Map<?, ?> l, String indent)
+    {
+        buf.append(indent).append("<Level");
         attrIfPresent(buf, l, "name", "name");
+        attrIfPresent(buf, l, "table", "table");
         attrIfPresent(buf, l, "column", "column");
         attrIfPresent(buf, l, "type", "type");
         attrIfPresent(buf, l, "unique_members", "uniqueMembers");
         attrIfPresent(buf, l, "level_type", "levelType");
+        attrIfPresent(buf, l, "approx_row_count", "approxRowCount");
+        List<?> props = listOrEmpty(l, "properties");
+        if (props.isEmpty()) {
+            buf.append("/>\n");
+            return;
+        }
+        buf.append(">\n");
+        String inner = indent + "  ";
+        for (Object p : props) {
+            Map<?, ?> pm = (Map<?, ?>) p;
+            buf.append(inner).append("<Property");
+            attrIfPresent(buf, pm, "name", "name");
+            attrIfPresent(buf, pm, "column", "column");
+            attrIfPresent(buf, pm, "type", "type");
+            buf.append("/>\n");
+        }
+        buf.append(indent).append("</Level>\n");
+    }
+
+    /**
+     * Cube-scoped {@code <DimensionUsage>} — a reference to a shared
+     * dimension declared at schema scope. The optional {@code name}
+     * key lets the cube alias the shared dimension (useful when the
+     * same shared dim is used for multiple roles in one cube).
+     */
+    private static void emitDimensionUsage(StringBuilder buf, Map<?, ?> du) {
+        buf.append("    <DimensionUsage");
+        attrIfPresent(buf, du, "name", "name");
+        attrIfPresent(buf, du, "source", "source");
+        attrIfPresent(buf, du, "foreign_key", "foreignKey");
+        attrIfPresent(buf, du, "level", "level");
+        attrIfPresent(buf, du, "usage_prefix", "usagePrefix");
         buf.append("/>\n");
     }
 
