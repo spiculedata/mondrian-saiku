@@ -227,6 +227,23 @@ public class RolapSchemaLoader {
                         + catalogStr);
                 }
             } else {
+                // #34: YAML catalog detection by content. If the
+                // catalog string is YAML (starts with `schema:` after
+                // skipping whitespace + comments + doc markers, with
+                // no leading `<`), forward-convert to Mondrian XML
+                // before handing off to the XOM parser. When the
+                // companion `Catalog` URL is a file:// path we re-read
+                // the file via the path-based converter entry so any
+                // `$ref` includes resolve relative to the file's
+                // directory. When the URL is non-file (http, jar, or
+                // absent because CatalogContent was passed directly),
+                // include resolution is skipped — the string is
+                // converted with no base dir.
+                if (looksLikeYaml(catalogStr)) {
+                    catalogStr =
+                        convertYamlCatalog(catalogStr, catalogUrl);
+                }
+
                 if (LOGGER.isDebugEnabled()) {
                     LOGGER.debug(
                         "RolapSchema.load: catalogStr: \n"
@@ -350,6 +367,84 @@ public class RolapSchemaLoader {
      * @param def Parsed schema
      * @return Whether schema is in legacy format
      */
+    /**
+     * #34: detect whether a {@code CatalogContent} string is YAML
+     * (starts with {@code schema:} after skipping whitespace and YAML
+     * comments / document markers). XML schemas always start with
+     * {@code <?xml} or {@code <Schema}, so the {@code <} prefix is a
+     * clear discriminator.
+     */
+    private static boolean looksLikeYaml(String catalogStr) {
+        if (catalogStr == null) {
+            return false;
+        }
+        int i = 0;
+        int n = catalogStr.length();
+        // Skip leading whitespace, YAML comments, doc-start marker.
+        while (i < n) {
+            char c = catalogStr.charAt(i);
+            if (Character.isWhitespace(c)) {
+                i++;
+                continue;
+            }
+            if (c == '#') {
+                // skip to end of line
+                while (i < n && catalogStr.charAt(i) != '\n') {
+                    i++;
+                }
+                continue;
+            }
+            if (c == '-'
+                && i + 2 < n
+                && catalogStr.charAt(i + 1) == '-'
+                && catalogStr.charAt(i + 2) == '-')
+            {
+                // YAML document start marker '---'
+                i += 3;
+                continue;
+            }
+            break;
+        }
+        if (i >= n) {
+            return false;
+        }
+        // XML schemas start with '<' — clear discriminator.
+        if (catalogStr.charAt(i) == '<') {
+            return false;
+        }
+        return catalogStr.regionMatches(true, i, "schema:", 0, 7);
+    }
+
+    /**
+     * #34: convert a YAML catalog string to Mondrian XML, with
+     * {@code $ref} include resolution when a companion file URL is
+     * available. The {@code catalogStr} is the YAML content; the
+     * {@code catalogUrl} (may be null) is used solely to determine
+     * the base directory for relative {@code $ref} paths.
+     *
+     * <p>When {@code catalogUrl} is a {@code file://} URL, this
+     * delegates to {@link mondrian.schema.yaml.YamlSchemaConverter
+     * #toXmlFromPath(java.nio.file.Path)} so the converter re-reads
+     * the file from disk and resolves includes relative to it.
+     * Otherwise (null URL, http URL, jar URL, etc.) the string form
+     * is converted directly with no include resolution.
+     */
+    private static String convertYamlCatalog(
+        String catalogStr, String catalogUrl)
+    {
+        if (catalogUrl != null && catalogUrl.startsWith("file:")) {
+            try {
+                java.nio.file.Path p = java.nio.file.Paths.get(
+                    new java.net.URI(catalogUrl));
+                return mondrian.schema.yaml.YamlSchemaConverter
+                    .toXmlFromPath(p);
+            } catch (java.net.URISyntaxException e) {
+                // fall through to string conversion
+            }
+        }
+        return mondrian.schema.yaml.YamlSchemaConverter.toXml(catalogStr);
+    }
+
     private boolean isLegacy(DOMWrapper def) {
         final String metamodelVersion =
             def.getAttribute("metamodelVersion");
