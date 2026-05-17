@@ -491,8 +491,13 @@ class MondrianServerVersion {
           <!-- Arrow 19 needs JDK 21 module-opens for sun.misc.Unsafe +
                DirectByteBuffer access (off-heap allocators + C data
                interface). Only loaded by tests that touch Arrow, but
-               we set globally so the JVM doesn't have to be restarted. -->
-          <argLine>--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argLine>
+               we set globally so the JVM doesn't have to be restarted.
+               @{argLine} is Maven late-binding substitution: JaCoCo's
+               prepare-agent goal sets the `argLine` property to its
+               javaagent flag, and surefire concatenates that with our
+               add-opens. Without @{argLine} JaCoCo's coverage agent
+               wouldn't load and the report would be empty. -->
+          <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argLine>
           <!-- Exclude tests that depend on olap4j-tck (not in deps), or legacy JUnit 3 loader. -->
           <excludes>
             <exclude>**/AbstractMondrianOlap4jTester.java</exclude>
@@ -512,6 +517,28 @@ class MondrianServerVersion {
           </excludes>
           <testFailureIgnore>true</testFailureIgnore>
         </configuration>
+      </plugin>
+
+      <!-- #23: JaCoCo coverage. prepare-agent injects -javaagent into
+           surefire's argLine (via @{argLine} above). report runs at
+           the end of test to produce target/site/jacoco/{index.html,
+           jacoco.xml}. No coverage threshold gate yet — baseline-only
+           per the #23 plan. CI uploads the report as an artefact. -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals><goal>prepare-agent</goal></goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals><goal>report</goal></goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
