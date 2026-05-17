@@ -64,7 +64,7 @@ abstract class AbstractSegmentBody implements SegmentBody {
         };
     }
 
-    public Object getValueArray() {
+    public mondrian.spi.SegmentVector getValues() {
         throw new UnsupportedOperationException(
             "This method is only supported for dense segments");
     }
