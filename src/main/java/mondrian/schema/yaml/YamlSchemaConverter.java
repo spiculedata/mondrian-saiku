@@ -534,11 +534,17 @@ public final class YamlSchemaConverter {
      * input map needs a {@code dialect} string (defaults to
      * {@code generic} if omitted) and {@code text} for the SQL body.
      *
-     * <p>The SQL body is written via XML attribute escaping — users
-     * can include {@code &lt;Column table="..." name="..."/>} inline
-     * refs by writing the markup literally in their YAML
-     * {@code text:} value; Mondrian's own dialect-SQL parser handles
-     * the substitution at schema-load time.
+     * <p><b>SQL body is emitted raw — angle brackets are NOT escaped.</b>
+     * This is deliberate: Mondrian's dialect-SQL processor expects
+     * {@code <Column table="..." name="..."/>} to be a parsed child
+     * element of {@code <SQL>}, not literal text. If we escaped
+     * {@code <} to {@code &lt;} the substitution would silently fail
+     * and queries would pass the literal markup down to JDBC. The
+     * user is responsible for ensuring valid XML in their SQL —
+     * which in practice means writing {@code &lt;}, {@code &gt;},
+     * {@code &amp;} themselves if those characters appear as SQL
+     * operators (e.g. {@code WHERE x &lt; 5}) rather than as
+     * element markup.
      */
     private static void emitSqlDialectList(
         StringBuilder buf, List<?> blocks, String wrapper, String indent)
@@ -557,27 +563,10 @@ public final class YamlSchemaConverter {
             String text = strOpt(bm, "text");
             buf.append(inner).append("<SQL dialect=\"")
                 .append(escape(dialect)).append("\">")
-                .append(text == null ? "" : escapeText(text))
+                .append(text == null ? "" : text)
                 .append("</SQL>\n");
         }
         buf.append(indent).append("</").append(wrapper).append(">\n");
-    }
-
-    /** XML element text content escaping. Only need {@code &amp;},
-     *  {@code &lt;}, {@code &gt;} — attribute-only chars
-     *  ({@code "}, {@code '}) pass through unchanged. */
-    private static String escapeText(String s) {
-        StringBuilder out = new StringBuilder(s.length() + 8);
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-            case '&':  out.append("&amp;"); break;
-            case '<':  out.append("&lt;"); break;
-            case '>':  out.append("&gt;"); break;
-            default:   out.append(c);
-            }
-        }
-        return out.toString();
     }
 
     /**
