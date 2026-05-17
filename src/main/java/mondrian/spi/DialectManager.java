@@ -9,6 +9,7 @@
 */
 package mondrian.spi;
 
+import mondrian.calcite.CalciteBackedDialectFactory;
 import mondrian.olap.Util;
 import mondrian.spi.impl.JdbcDialectFactory;
 import mondrian.spi.impl.JdbcDialectImpl;
@@ -218,16 +219,32 @@ public abstract class DialectManager {
                 };
             // The system dialect factory first walks the chain of registered
             // dialect factories (registered implicitly based on service
-            // discovery, or explicitly by calling register), then uses the JDBC
-            // dialect factory as a fallback.
+            // discovery, or explicitly by calling register), then tries the
+            // Calcite-backed bridge for any backend Calcite recognises but
+            // Mondrian has no hand-written dialect for, then falls back to
+            // the generic JdbcDialectImpl.
+            //
+            // Resolution order: registered → calcite-bridge → generic.
+            // The bridge is strictly additive — backends with a registered
+            // Mondrian dialect always resolve to it. See ticket #40 for
+            // the rationale.
+            //
+            // Opt-out via -Dmondrian.dialect.calcite-bridge.enabled=false
+            // (defaults to enabled).
             //
             // It caches based on data source.
+            final List<DialectFactory> chain = new ArrayList<DialectFactory>();
+            chain.add(registeredFactory);
+            if (Boolean.parseBoolean(
+                System.getProperty(
+                    "mondrian.dialect.calcite-bridge.enabled", "true")))
+            {
+                chain.add(CalciteBackedDialectFactory.INSTANCE);
+            }
+            chain.add(fallbackFactory);
             factory =
                 new CachingDialectFactory(
-                    new ChainDialectFactory(
-                        Arrays.asList(
-                            registeredFactory,
-                            fallbackFactory)));
+                    new ChainDialectFactory(chain));
         }
 
         /**
