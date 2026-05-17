@@ -16,6 +16,10 @@ import org.apache.calcite.sql.SqlDialect;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * A Mondrian {@link Dialect} that derives capability flags and identifier
@@ -45,6 +49,45 @@ import java.sql.SQLException;
  * <p>See ticket #40 for the design rationale.
  */
 public class CalciteBackedDialect extends JdbcDialectImpl {
+
+    /**
+     * Calcite {@code DatabaseProduct} enum names of backends known to
+     * support the {@code GROUP BY GROUPING SETS (...)} syntax. Calcite's
+     * own {@code supportsGroupByWithRollup()} / {@code WithCube()} flags
+     * under-claim — most dialect subclasses leave the base {@code false}
+     * defaults in place even when the engine itself supports it (verified
+     * for DuckDB via integration test). Maintain an explicit allowlist
+     * derived from each engine's official docs.
+     *
+     * <p>Conservative: when in doubt, leave out. Engines absent from this
+     * list fall back to the parent's conservative {@code false}.
+     */
+    private static final Set<String> CALCITE_PRODUCTS_WITH_GROUPING_SETS;
+    static {
+        Set<String> s = new HashSet<>(Arrays.asList(
+            // SQL:1999 implementations
+            "POSTGRESQL",   // >= 9.5
+            "ORACLE",
+            "DB2",
+            "MSSQL",        // SQL Server >= 2008
+            // Modern analytical engines
+            "SNOWFLAKE",
+            "BIG_QUERY",
+            "REDSHIFT",
+            "TRINO",
+            "PRESTO",
+            "SPARK",
+            "DUCKDB",
+            "CLICKHOUSE",
+            "VERTICA",
+            "HIVE",
+            "TERADATA",
+            "NETEZZA",
+            "DORIS",
+            "STARROCKS",
+            "EXASOL"));
+        CALCITE_PRODUCTS_WITH_GROUPING_SETS = Collections.unmodifiableSet(s);
+    }
 
     private final SqlDialect calciteDialect;
 
@@ -84,15 +127,33 @@ public class CalciteBackedDialect extends JdbcDialectImpl {
     // ----- capability flags derived from Calcite -----
 
     /**
-     * Engines that support both {@code GROUP BY ... WITH ROLLUP} and
-     * {@code WITH CUBE} effectively always support GROUPING SETS too —
-     * the three are part of the SQL:1999 grouping extension. Where Calcite
-     * doesn't claim both, fall back to the parent's conservative answer.
+     * GROUPING SETS support derivation. Two signals, either suffices:
+     *
+     * <ol>
+     *   <li>Calcite's {@code supportsGroupByWithRollup() &&
+     *       supportsGroupByWithCube()} — true when the dialect subclass
+     *       explicitly opts in.
+     *   <li>The backend's Calcite {@code DatabaseProduct} appears in
+     *       {@link #CALCITE_PRODUCTS_WITH_GROUPING_SETS} — an allowlist
+     *       derived from each engine's docs. Necessary because most
+     *       Calcite dialect subclasses inherit the {@code false} default
+     *       even when the engine itself supports the feature (verified
+     *       for DuckDB via integration test).
+     * </ol>
+     *
+     * <p>If neither signal fires, fall back to the parent's conservative
+     * answer — never over-claim.
      */
     @Override
     public boolean supportsGroupingSets() {
         if (calciteDialect.supportsGroupByWithRollup()
             && calciteDialect.supportsGroupByWithCube())
+        {
+            return true;
+        }
+        SqlDialect.DatabaseProduct cp = calciteDialect.getDatabaseProduct();
+        if (cp != null
+            && CALCITE_PRODUCTS_WITH_GROUPING_SETS.contains(cp.name()))
         {
             return true;
         }
