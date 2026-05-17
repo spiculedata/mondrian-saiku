@@ -3166,8 +3166,8 @@ public class RolapSchemaLoader {
                         physRelation.cloneWithAlias(newAlias);
                     tbls.put(newAlias, clonedRelation);
                     clonedDim =
-                        new MondrianDef.Dimension(sharedDimension._def);
-                    clonedDim.table = newAlias;
+                        cloneSharedDimForAliasOverride(
+                            sharedDimension, newAlias);
                 }
             } catch (XOMException e) {
                 throw new MondrianException(e);
@@ -3187,6 +3187,55 @@ public class RolapSchemaLoader {
             xmlDimension = sharedDimension;
         }
         return xmlDimension;
+    }
+
+    /**
+     * Issue #77: clone a shared {@link MondrianDef.Dimension} for the
+     * alias-collision rewrite path, with the {@code table} attribute
+     * overridden to {@code newAlias}. Robust to both:
+     *
+     * <ul>
+     *   <li><b>M4 / XOM-parsed dims</b> where {@code _def} is the
+     *       backing DOMWrapper — uses the wrapper-aware constructor
+     *       so the clone carries the same children + position info as
+     *       the original.</li>
+     *   <li><b>M3 / upgrader-built dims</b> where {@code _def} is
+     *       {@code null} (the {@code RolapSchemaUpgrader} constructs
+     *       fresh Dimension instances programmatically) — uses the
+     *       no-arg constructor + field-copy. Without this branch the
+     *       wrapper-aware constructor NPEs because {@code _def} is
+     *       passed to {@code DOMElementParser} which immediately
+     *       dereferences it.</li>
+     * </ul>
+     *
+     * <p>Pre-existing behaviour (the wrapper-aware path) is preserved
+     * verbatim — the {@code childArray} carries over via the
+     * DOMElementParser when {@code _def} is non-null. The new
+     * fallback path shallow-copies {@code childArray} (so cloned and
+     * source dims share child Hierarchy / Attribute / Annotation
+     * references) which matches the wrapper-aware path's semantics:
+     * the only field the caller overrides is {@code table}.
+     */
+    private static MondrianDef.Dimension cloneSharedDimForAliasOverride(
+        MondrianDef.Dimension sharedDimension, String newAlias)
+        throws XOMException
+    {
+        MondrianDef.Dimension clonedDim;
+        if (sharedDimension._def != null) {
+            clonedDim = new MondrianDef.Dimension(sharedDimension._def);
+        } else {
+            clonedDim = new MondrianDef.Dimension();
+            clonedDim.name = sharedDimension.name;
+            clonedDim.caption = sharedDimension.caption;
+            clonedDim.description = sharedDimension.description;
+            clonedDim.visible = sharedDimension.visible;
+            clonedDim.type = sharedDimension.type;
+            clonedDim.key = sharedDimension.key;
+            clonedDim.hanger = sharedDimension.hanger;
+            clonedDim.childArray = sharedDimension.childArray;
+        }
+        clonedDim.table = newAlias;
+        return clonedDim;
     }
 
     /**
