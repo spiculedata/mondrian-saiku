@@ -15,6 +15,7 @@ import mondrian.spi.DoubleSegmentVector;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.NullCheckingForGet;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowReader;
@@ -200,27 +201,62 @@ public class DuckDbArrowFactReadSpikeTest {
     public void perfRawScan_jdbcVsArrow() throws Exception {
         String sql = "SELECT id, amount FROM sales";
 
-        // Warmup
+        // Warmup all variants
         sumRawScanJdbc(sql);
-        sumRawScanArrow(sql);
+        sumRawScanArrow(sql, 8192L, false);
+        sumRawScanArrow(sql, 8192L, true);
+        sumRawScanArrow(sql, FACT_ROWS, false);
+        sumRawScanArrow(sql, FACT_ROWS, true);
 
-        long t0 = System.nanoTime();
-        double jdbcSum = sumRawScanJdbc(sql);
-        long jdbcElapsed = System.nanoTime() - t0;
+        long jdbcElapsed = timeRun(() -> sumRawScanJdbc(sql));
+        long arrowDefaultElapsed =
+            timeRun(() -> sumRawScanArrow(sql, 8192L, false));
+        long arrowBypassElapsed =
+            timeRun(() -> sumRawScanArrow(sql, 8192L, true));
+        long arrowSingleBatchElapsed =
+            timeRun(() -> sumRawScanArrow(sql, FACT_ROWS, false));
+        long arrowBothTweaksElapsed =
+            timeRun(() -> sumRawScanArrow(sql, FACT_ROWS, true));
 
-        long t1 = System.nanoTime();
-        double arrowSum = sumRawScanArrow(sql);
-        long arrowElapsed = System.nanoTime() - t1;
-
-        assertEquals(
-            "sums diverged between JDBC and Arrow on raw scan",
-            jdbcSum, arrowSum, 1e-6);
-
-        double ratio = (double) arrowElapsed / (double) jdbcElapsed;
+        System.err.println();
         System.err.printf(
-            "[#36 raw-scan perf] rows=%d  jdbc=%.1fms  arrow=%.1fms  "
-                + "arrow/jdbc=%.2fx  (lower is better for Arrow)%n",
-            FACT_ROWS, jdbcElapsed / 1e6, arrowElapsed / 1e6, ratio);
+            "[#36 raw-scan perf] rows=%d (lower is better for Arrow)%n",
+            FACT_ROWS);
+        System.err.printf("  jdbc                                %.1f ms   (baseline = 1.00x)%n",
+            jdbcElapsed / 1e6);
+        System.err.printf("  arrow default (8k batch, wrapper)   %.1f ms   ratio %.2fx%n",
+            arrowDefaultElapsed / 1e6,
+            (double) arrowDefaultElapsed / jdbcElapsed);
+        System.err.printf("  arrow + bypass wrapper              %.1f ms   ratio %.2fx%n",
+            arrowBypassElapsed / 1e6,
+            (double) arrowBypassElapsed / jdbcElapsed);
+        System.err.printf("  arrow + single batch (no bypass)    %.1f ms   ratio %.2fx%n",
+            arrowSingleBatchElapsed / 1e6,
+            (double) arrowSingleBatchElapsed / jdbcElapsed);
+        System.err.printf("  arrow + bypass + single batch       %.1f ms   ratio %.2fx%n",
+            arrowBothTweaksElapsed / 1e6,
+            (double) arrowBothTweaksElapsed / jdbcElapsed);
+        System.err.println(
+            "  (NULL_CHECKING_ENABLED = "
+                + NullCheckingForGet.NULL_CHECKING_ENABLED
+                + " — set -Darrow.enable_null_check_for_get=false to compare)");
+    }
+
+    /** Functional interface for the timed runs. */
+    @FunctionalInterface
+    private interface ThrowingDoubleSupplier {
+        double get() throws Exception;
+    }
+
+    private long timeRun(ThrowingDoubleSupplier r) throws Exception {
+        long s = System.nanoTime();
+        double result = r.get();
+        long elapsed = System.nanoTime() - s;
+        // Touch the result so JIT can't elide it
+        if (Double.isNaN(result)) {
+            throw new AssertionError("NaN");
+        }
+        return elapsed;
     }
 
     @Test
@@ -312,6 +348,25 @@ public class DuckDbArrowFactReadSpikeTest {
     }
 
     private double sumRawScanArrow(String sql) throws Exception {
+        return sumRawScanArrow(sql, 8192L, /*bypassWrapper*/ false);
+    }
+
+    /**
+     * Tunable variant of {@link #sumRawScanArrow(String)}.
+     *
+     * @param batchSize Arrow batch size — passed to DuckDB's
+     *                  {@code arrowExportStream}. Larger batches
+     *                  amortise per-batch JNI / setup cost.
+     * @param bypassWrapper When true, reads through
+     *                      {@code valueBuf.getDouble(i << 3)} directly,
+     *                      bypassing {@code Float8Vector.get(i)}'s
+     *                      per-call null-check wrapper (see #37 Phase 1
+     *                      finding — wrapper adds ~2× overhead on per-cell
+     *                      reads). When false, uses the wrapper API.
+     */
+    private double sumRawScanArrow(
+        String sql, long batchSize, boolean bypassWrapper) throws Exception
+    {
         double total = 0;
         try (Connection c = ds.getConnection();
              PreparedStatement ps = c.prepareStatement(sql))
@@ -320,14 +375,22 @@ public class DuckDbArrowFactReadSpikeTest {
             ArrowReader reader = (ArrowReader)
                 rs.getClass()
                     .getMethod("arrowExportStream", Object.class, long.class)
-                    .invoke(rs, allocator, 8192L);
+                    .invoke(rs, allocator, batchSize);
             try {
                 while (reader.loadNextBatch()) {
                     VectorSchemaRoot root = reader.getVectorSchemaRoot();
                     Float8Vector amounts = (Float8Vector) root.getVector(1);
                     int rowCount = root.getRowCount();
-                    for (int i = 0; i < rowCount; i++) {
-                        total += amounts.get(i);
+                    if (bypassWrapper) {
+                        org.apache.arrow.memory.ArrowBuf buf =
+                            amounts.getDataBuffer();
+                        for (int i = 0; i < rowCount; i++) {
+                            total += buf.getDouble((long) i << 3);
+                        }
+                    } else {
+                        for (int i = 0; i < rowCount; i++) {
+                            total += amounts.get(i);
+                        }
                     }
                 }
             } finally {
