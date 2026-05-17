@@ -158,6 +158,92 @@ public class CalciteBackedDialectTest {
     }
 
     /**
+     * NULL collation: Mondrian's default {@code generateOrderByNulls}
+     * emits a verbose {@code CASE WHEN expr IS NULL THEN 0 ELSE 1 END}
+     * workaround for engines that don't support the ANSI
+     * {@code NULLS LAST}/{@code NULLS FIRST} syntax. Any backend Calcite
+     * has a SqlDialect for is modern enough to support the ANSI form;
+     * the bridge must emit the cleaner SQL. Regression: parent default
+     * would contain "CASE WHEN".
+     */
+    @Test
+    public void generateOrderItemUsesAnsiNullsClause() throws SQLException {
+        Dialect d = newDialect();
+        String orderBy = d.generateOrderItem(
+            "\"sales\"", true /* nullable */, true /* ascending */,
+            true /* nulls last */);
+        assertTrue(
+            "expected ANSI NULLS LAST syntax, not CASE WHEN — got: " + orderBy,
+            orderBy.toUpperCase().contains("NULLS LAST"));
+        assertFalse(
+            "ANSI form must not fall back to the CASE WHEN workaround — got: "
+                + orderBy,
+            orderBy.toUpperCase().contains("CASE WHEN"));
+    }
+
+    /**
+     * Non-nullable expression: no NULLS clause needed at all. Bridge must
+     * still skip the workaround for this case.
+     */
+    @Test
+    public void generateOrderItemForNonNullableSkipsNullsClause()
+        throws SQLException
+    {
+        Dialect d = newDialect();
+        String orderBy = d.generateOrderItem(
+            "\"sales\"", false /* not nullable */, true, true);
+        assertFalse(
+            "non-nullable expr should have no NULLS clause — got: " + orderBy,
+            orderBy.toUpperCase().contains("NULLS"));
+        assertTrue(
+            "expected ASC direction — got: " + orderBy,
+            orderBy.toUpperCase().contains("ASC"));
+    }
+
+    /**
+     * {@code getDatabaseProduct()} must reflect Calcite's reported product
+     * where Mondrian's enum has a matching value. HSQLDB exists in both
+     * enums so the bridge must return {@link Dialect.DatabaseProduct#HSQLDB}
+     * — letting downstream code that branches on product (e.g. statistics
+     * providers, schema-specific quirks) recognise the engine.
+     */
+    @Test
+    public void getDatabaseProductMapsCalciteHsqldbToMondrian()
+        throws SQLException
+    {
+        Dialect d = newDialect();
+        assertEquals(
+            "bridge must surface HSQLDB from Calcite's DatabaseProduct enum",
+            Dialect.DatabaseProduct.HSQLDB,
+            d.getDatabaseProduct());
+    }
+
+    /**
+     * Calcite-only products (DuckDB, Snowflake, BigQuery, ClickHouse,
+     * Spark, Trino, H2, etc.) have no matching Mondrian enum value. The
+     * bridge must return {@link Dialect.DatabaseProduct#UNKNOWN} for
+     * those — never lie by reporting a different product.
+     */
+    @Test
+    public void getDatabaseProductReturnsUnknownForCalciteOnlyProduct()
+        throws SQLException
+    {
+        // Construct the bridge by hand with a DuckDB Calcite SqlDialect
+        // even though the JDBC connection is HSQLDB. This isolates the
+        // enum-mapping logic from JDBC-product detection.
+        org.apache.calcite.sql.SqlDialect duck =
+            org.apache.calcite.sql.dialect.DuckDBSqlDialect.DEFAULT;
+        try (Connection conn = ds().getConnection()) {
+            CalciteBackedDialect d = new CalciteBackedDialect(conn, duck);
+            assertEquals(
+                "DuckDB has no Mondrian DatabaseProduct enum value — "
+                    + "bridge must return UNKNOWN",
+                Dialect.DatabaseProduct.UNKNOWN,
+                d.getDatabaseProduct());
+        }
+    }
+
+    /**
      * JDBC-metadata-derived properties (max column name length, supported
      * result set concurrency, regex chars) MUST come from the parent
      * {@code JdbcDialectImpl} unchanged — the bridge only overrides what

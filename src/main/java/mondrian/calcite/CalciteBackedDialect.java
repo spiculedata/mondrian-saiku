@@ -114,6 +114,57 @@ public class CalciteBackedDialect extends JdbcDialectImpl {
     public boolean supportsApproxCountDistinct() {
         return calciteDialect.supportsApproxCountDistinct();
     }
+
+    /**
+     * Any backend Calcite has a {@link SqlDialect} for is modern enough to
+     * support the ANSI {@code ORDER BY ... NULLS LAST}/{@code NULLS FIRST}
+     * syntax — Postgres ≥ 8.3, Oracle, DB2, SQL Server 2022, MySQL ≥ 8,
+     * Snowflake, BigQuery, DuckDB, ClickHouse, Trino, Spark. Override the
+     * parent's verbose {@code CASE WHEN expr IS NULL THEN 0 ELSE 1 END}
+     * workaround.
+     *
+     * <p>The handful of engines that don't (MySQL ≤ 5.x, SQL Server ≤ 2019)
+     * have their own hand-written Mondrian dialects, so the bridge never
+     * fires for them. Safe.
+     */
+    @Override
+    protected String generateOrderByNulls(
+        String expr,
+        boolean ascending,
+        boolean collateNullsLast)
+    {
+        return generateOrderByNullsAnsi(expr, ascending, collateNullsLast);
+    }
+
+    /**
+     * Map Calcite's {@code DatabaseProduct} enum to Mondrian's where
+     * names align (HSQLDB, POSTGRESQL, MYSQL, ORACLE, MSSQL, DB2, DERBY,
+     * REDSHIFT, VERTICA, etc.). For Calcite-only products (DuckDB,
+     * Snowflake, BigQuery, ClickHouse, Spark, Trino, H2, Exasol, ...)
+     * return {@link DatabaseProduct#UNKNOWN} — never lie by reporting a
+     * different product to Mondrian code that branches on the enum.
+     */
+    @Override
+    public DatabaseProduct getDatabaseProduct() {
+        // Java constructor-time virtual dispatch: super(connection) invokes
+        // computeStatisticsProviders() → getStatisticsProviderNames() →
+        // getDatabaseProduct() before our calciteDialect field is assigned.
+        // Defer to the parent for that initial call; once the bridge is
+        // fully constructed, derive from Calcite as designed.
+        if (calciteDialect == null) {
+            return super.getDatabaseProduct();
+        }
+        org.apache.calcite.sql.SqlDialect.DatabaseProduct cp =
+            calciteDialect.getDatabaseProduct();
+        if (cp == null) {
+            return super.getDatabaseProduct();
+        }
+        try {
+            return DatabaseProduct.valueOf(cp.name());
+        } catch (IllegalArgumentException calciteOnlyProduct) {
+            return DatabaseProduct.UNKNOWN;
+        }
+    }
 }
 
 // End CalciteBackedDialect.java
