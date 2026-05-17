@@ -3134,21 +3134,32 @@ public class RolapSchemaLoader {
         // this handles the single-hop case only (shared dim → single
         // physical table → single FK link). Snowflake mid-chain hops are
         // tracked as a separate follow-up.
+        //
+        // Issue #74 follow-up: the original physical-table lookup keyed
+        // on sharedDimension.table, which is null when the dim declares
+        // its physical table via attribute-scoped attrs
+        // (<Attribute table='store'/>) instead of <Dimension table='store'>.
+        // resolveSharedDimTable() falls back to the first non-null
+        // <Attribute>.table when the dim-level field is absent, so the
+        // attribute-scoped variant lands in the same clone-on-collision
+        // path Store3 already enjoys.
+        final String effectiveTable =
+            resolveSharedDimTable(sharedDimension);
         MondrianDef.Dimension clonedDim = null;
         boolean dupSharedDim =
             cubeToDimMap.containsKey(cube)
                 && cubeToDimMap.getCollection(cube).contains(sharedDimension);
         boolean dupPhysTable =
-            sharedDimension.table != null
+            effectiveTable != null
                 && cubeToPhysTableMap.containsKey(cube)
                 && cubeToPhysTableMap.getCollection(cube)
-                    .contains(sharedDimension.table);
+                    .contains(effectiveTable);
         if (dupSharedDim || dupPhysTable) {
             try {
                 LinkedHashMap<String, RolapSchema.PhysRelation> tbls =
                     schema.getPhysicalSchema().tablesByName;
                 RolapSchema.PhysRelation physRelation =
-                    tbls.get(sharedDimension.table);
+                    tbls.get(effectiveTable);
                 if (physRelation != null) {
                     String newAlias = newTableAlias(physRelation, tbls);
                     RolapSchema.PhysRelation clonedRelation =
@@ -3163,12 +3174,12 @@ public class RolapSchemaLoader {
             }
         }
         cubeToDimMap.put(cube, sharedDimension);
-        if (sharedDimension.table != null) {
+        if (effectiveTable != null) {
             // Track on the original physical table name so subsequent
             // shared dims in this cube can detect a collision and trigger
             // the clone above. The clone itself isn't tracked — only the
             // first occupant of a given physical name.
-            cubeToPhysTableMap.put(cube, sharedDimension.table);
+            cubeToPhysTableMap.put(cube, effectiveTable);
         }
         if (clonedDim != null) {
             xmlDimension = clonedDim;
@@ -3176,6 +3187,36 @@ public class RolapSchemaLoader {
             xmlDimension = sharedDimension;
         }
         return xmlDimension;
+    }
+
+    /**
+     * Issue #74: resolve a shared dimension's effective physical table
+     * name. Prefers the dim-level {@code table=} attribute when set,
+     * falls back to the first non-null {@code table=} on the dim's
+     * {@code <Attribute>} children (the attribute-scoped variant that
+     * #63's fix missed). Shared dimensions always source from a single
+     * physical table, so the first attribute is a reliable proxy when
+     * the dim-level attribute is absent.
+     *
+     * @return the effective physical table name, or {@code null} when
+     *         neither the dim nor any attribute declares one (e.g.
+     *         degenerate dimensions, fact-table-only dims)
+     */
+    private static String resolveSharedDimTable(
+        MondrianDef.Dimension sharedDimension)
+    {
+        if (sharedDimension.table != null) {
+            return sharedDimension.table;
+        }
+        if (sharedDimension.getAttributes() == null) {
+            return null;
+        }
+        for (MondrianDef.Attribute attr : sharedDimension.getAttributes()) {
+            if (attr.table != null) {
+                return attr.table;
+            }
+        }
+        return null;
     }
 
     private String newTableAlias(
