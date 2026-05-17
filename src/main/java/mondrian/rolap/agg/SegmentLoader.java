@@ -147,6 +147,47 @@ public class SegmentLoader {
         List<StarPredicate> compoundPredicateList,
         List<Future<Map<Segment, SegmentWithData>>> segmentFutures)
     {
+        // #33 mondrian.cache.segment.load span. Wraps the entire segment
+        // load operation — index registration + SQL emission + parsing
+        // results into SegmentBody. mondrian.sql.execute spans nest
+        // inside this one when the load actually hits the source DB.
+        final io.opentelemetry.api.trace.Span span =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.cache.segment.load")
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.longKey(
+                        "mondrian.cache.cell_request_count"),
+                    (long) cellRequestCount)
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.longKey(
+                        "mondrian.cache.grouping_set_count"),
+                    (long) groupingSets.size())
+                .startSpan();
+        try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+            loadInstrumentedBody(cellRequestCount, groupingSets,
+                compoundPredicateList, segmentFutures);
+        } catch (RuntimeException | Error t) {
+            span.recordException(t);
+            span.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            span.end();
+        }
+    }
+
+    /** Body of the original load() — extracted so the outer span wrapper
+     *  stays small + the existing flow is untouched (#33). Named
+     *  loadInstrumentedBody to avoid collision with the existing
+     *  protected {@code loadImpl(Map-returning)} overloads. */
+    private void loadInstrumentedBody(
+        int cellRequestCount,
+        List<GroupingSet> groupingSets,
+        List<StarPredicate> compoundPredicateList,
+        List<Future<Map<Segment, SegmentWithData>>> segmentFutures)
+    {
         if (!MondrianProperties.instance().DisableCaching.get()) {
             for (GroupingSet groupingSet : groupingSets) {
                 for (Segment segment : groupingSet.getSegments()) {

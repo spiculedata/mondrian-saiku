@@ -230,6 +230,72 @@ public class MdxExecuteSpanTest {
     }
 
     /**
+     * Session 3: a cold-cache query emits {@code mondrian.cache.segment.load}
+     * + {@code mondrian.sql.execute} spans. The {@code sql.execute} span
+     * with {@code mondrian.sql.kind=segment-load} proves the kind
+     * attribute is populated correctly.
+     */
+    @Test
+    public void coldCacheQueryEmitsSegmentLoadAndSqlExecuteSpans() {
+        boolean savedDisableCaching =
+            mondrian.olap.MondrianProperties.instance().DisableCaching.get();
+        mondrian.olap.MondrianProperties.instance()
+            .DisableCaching.set(true);
+        try {
+            TestContext ctx = TestContext.instance();
+            Connection conn = ctx.getConnection();
+            try {
+                Query q = conn.parseQuery(
+                    "SELECT [Measures].[Unit Sales] ON COLUMNS, "
+                    + "[Store].[USA].Children ON ROWS FROM [Sales]");
+                Result result = conn.execute(q);
+                result.close();
+            } finally {
+                conn.close();
+            }
+
+            java.util.List<SpanData> sqlExecuteSpans =
+                new java.util.ArrayList<>();
+            java.util.List<SpanData> segmentLoadSpans =
+                new java.util.ArrayList<>();
+            for (SpanData s : exporter.getFinishedSpanItems()) {
+                if ("mondrian.sql.execute".equals(s.getName())) {
+                    sqlExecuteSpans.add(s);
+                } else if ("mondrian.cache.segment.load".equals(s.getName())) {
+                    segmentLoadSpans.add(s);
+                }
+            }
+
+            assertTrue(
+                "expected >=1 mondrian.sql.execute span on cold-cache query"
+                    + " — got " + sqlExecuteSpans.size(),
+                sqlExecuteSpans.size() >= 1);
+            assertTrue(
+                "expected >=1 mondrian.cache.segment.load span on "
+                    + "cold-cache query — got " + segmentLoadSpans.size(),
+                segmentLoadSpans.size() >= 1);
+
+            boolean foundSegmentLoadKind = false;
+            for (SpanData s : sqlExecuteSpans) {
+                String kind = s.getAttributes().get(
+                    io.opentelemetry.api.common.AttributeKey.stringKey(
+                        "mondrian.sql.kind"));
+                if ("segment-load".equals(kind)) {
+                    foundSegmentLoadKind = true;
+                    break;
+                }
+            }
+            assertTrue(
+                "expected >=1 mondrian.sql.execute span with "
+                    + "mondrian.sql.kind=segment-load",
+                foundSegmentLoadKind);
+        } finally {
+            mondrian.olap.MondrianProperties.instance()
+                .DisableCaching.set(savedDisableCaching);
+        }
+    }
+
+    /**
      * Parse failures (e.g. reference to a non-existent member) emit a
      * parse span with ERROR status + an exception event attached. Trace
      * viewers can turn that into a red flag instead of silent success.
