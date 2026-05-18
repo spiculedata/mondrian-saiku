@@ -3135,20 +3135,29 @@ public class RolapSchemaLoader {
         // physical table → single FK link). Snowflake mid-chain hops are
         // tracked as a separate follow-up.
         MondrianDef.Dimension clonedDim = null;
+        // Issue #74: #63 keyed only on sharedDimension.table (the
+        // <Dimension table='store'> form). The launcher's Store2 shape
+        // binds the physical table on each <Attribute table='store'>
+        // instead — that field is null, so the dedup misses and the
+        // alias collision still fires. Resolve the effective physical
+        // table by falling through to the first attribute's table when
+        // the dim-level table attribute is absent.
+        final String effectivePhysTable =
+            effectivePhysTable(sharedDimension);
         boolean dupSharedDim =
             cubeToDimMap.containsKey(cube)
                 && cubeToDimMap.getCollection(cube).contains(sharedDimension);
         boolean dupPhysTable =
-            sharedDimension.table != null
+            effectivePhysTable != null
                 && cubeToPhysTableMap.containsKey(cube)
                 && cubeToPhysTableMap.getCollection(cube)
-                    .contains(sharedDimension.table);
+                    .contains(effectivePhysTable);
         if (dupSharedDim || dupPhysTable) {
             try {
                 LinkedHashMap<String, RolapSchema.PhysRelation> tbls =
                     schema.getPhysicalSchema().tablesByName;
                 RolapSchema.PhysRelation physRelation =
-                    tbls.get(sharedDimension.table);
+                    tbls.get(effectivePhysTable);
                 if (physRelation != null) {
                     String newAlias = newTableAlias(physRelation, tbls);
                     RolapSchema.PhysRelation clonedRelation =
@@ -3163,12 +3172,12 @@ public class RolapSchemaLoader {
             }
         }
         cubeToDimMap.put(cube, sharedDimension);
-        if (sharedDimension.table != null) {
+        if (effectivePhysTable != null) {
             // Track on the original physical table name so subsequent
             // shared dims in this cube can detect a collision and trigger
             // the clone above. The clone itself isn't tracked — only the
             // first occupant of a given physical name.
-            cubeToPhysTableMap.put(cube, sharedDimension.table);
+            cubeToPhysTableMap.put(cube, effectivePhysTable);
         }
         if (clonedDim != null) {
             xmlDimension = clonedDim;
@@ -3176,6 +3185,49 @@ public class RolapSchemaLoader {
             xmlDimension = sharedDimension;
         }
         return xmlDimension;
+    }
+
+    /**
+     * Resolve the effective physical-table name a shared dimension targets.
+     * The {@code <Dimension table='X'>} form sets this directly; the
+     * {@code <Attribute table='X'>} form (issue #74) puts it on each
+     * attribute. When the dim-level field is null we fall through to the
+     * <em>key</em> attribute's table — that's the dim's physical home in
+     * Mondrian's model. Using just the first attribute's table here
+     * over-fires the dedup on schemas where peripheral attributes happen
+     * to bind to a shared lookup table that doesn't represent the dim's
+     * primary FK target.
+     *
+     * <p>Returns null if the shared dim is synthetic (no backing XML
+     * {@code _def}) — those cannot be cloned via the
+     * {@link MondrianDef.Dimension#Dimension(org.eigenbase.xom.DOMWrapper)}
+     * constructor used downstream, so we leave them on the pre-#74
+     * path even if the attribute table would otherwise collide.
+     */
+    private static String effectivePhysTable(
+        MondrianDef.Dimension sharedDimension)
+    {
+        if (sharedDimension.table != null) {
+            return sharedDimension.table;
+        }
+        if (sharedDimension._def == null) {
+            // Synthetic dim (e.g. enableScenarios auto-Scenario, or one
+            // built programmatically by createSubstitutingCube). The
+            // clone path requires a backing _def, so opt out here.
+            return null;
+        }
+        final String keyAttrName = sharedDimension.key;
+        if (keyAttrName == null) {
+            return null;
+        }
+        for (MondrianDef.Attribute attr
+            : sharedDimension.getAttributes())
+        {
+            if (keyAttrName.equals(attr.name) && attr.table != null) {
+                return attr.table;
+            }
+        }
+        return null;
     }
 
     private String newTableAlias(
