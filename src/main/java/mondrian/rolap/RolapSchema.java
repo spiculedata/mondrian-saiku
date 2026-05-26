@@ -1915,14 +1915,24 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 try {
                     jdbcTable = physSchema.jdbcSchema.reloadTable(name);
                 } catch (SQLException e) {
-                    throw Util.newError(
+                    // saiku-cloud#624: preserve the underlying
+                    // SQLException as the cause so operators can
+                    // see what actually failed at the JDBC layer.
+                    throw Util.newError(e,
                         "Error while re-loading table '" + name + "'");
                 }
             }
             try {
                 jdbcTable.load();
             } catch (SQLException e) {
-                throw Util.newError(
+                // saiku-cloud#624: preserve the underlying
+                // SQLException as the cause. Without this, the
+                // generic "Error while loading columns of table X"
+                // surface message is unactionable — the real cause
+                // (driver-side metadata error, type-mismatch,
+                // identifier-case mismatch, etc.) lives in the
+                // SQLException and was being silently dropped.
+                throw Util.newError(e,
                     "Error while loading columns of table '" + name + "'");
             }
 
