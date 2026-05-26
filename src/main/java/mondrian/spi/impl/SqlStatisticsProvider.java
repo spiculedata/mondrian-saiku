@@ -141,11 +141,23 @@ public class SqlStatisticsProvider implements StatisticsProvider {
         if (sql == null) {
             return -1;
         }
-        // Task C dispatch: third SQL-origin seam. Adapter-level
-        // UnsupportedTranslation (qualified schema, null table/column, etc.)
-        // still propagates out of fromCardinalityProbe — that call sits
-        // outside the try block on purpose, so genuinely unsupported probe
-        // shapes surface as hard errors rather than silently downgrading.
+        // Task C dispatch: third SQL-origin seam.
+        //
+        // saiku-cloud#624: fromCardinalityProbe is now INSIDE the try
+        // block. Previously it sat outside, on the rationale that
+        // genuinely-unsupported probe shapes (qualified schema, null
+        // table/column) should surface as hard errors rather than
+        // silently downgrade. That rationale held when qualified-schema
+        // was a design gap. As of saiku-cloud#613 the schema-XML
+        // augmenter stamps `schema='PUBLIC'` on every `<Table>` for
+        // Snowflake + BigQuery, so EVERY cardinality probe carries a
+        // schema qualifier — making the old guard a query-level
+        // hard-fail for those dialects. The legacy probe SQL handles
+        // the qualified-schema shape correctly, so falling back is the
+        // safe + observable behaviour. The same exception counter
+        // (CARDINALITY_PROBE_UNSUPPORTED_COUNT) still fires per the
+        // unchanged adapter, so the "we hit an unsupported shape"
+        // signal is preserved for observability.
         //
         // Issue #46 (4.8.1.10): the wrap in CalciteSqlPlanner.plan now
         // rebrands the RelBuilder.field IAE as UnsupportedTranslation, so
@@ -157,10 +169,10 @@ public class SqlStatisticsProvider implements StatisticsProvider {
         if (MondrianBackend.current().isCalcite()) {
             CalciteSqlPlanner planner = plannerFor(dataSource);
             if (planner != null) {
-                PlannerRequest req =
-                    CalcitePlannerAdapters.fromCardinalityProbe(
-                        schema, table, column);
                 try {
+                    PlannerRequest req =
+                        CalcitePlannerAdapters.fromCardinalityProbe(
+                            schema, table, column);
                     String calciteSql = planner.plan(req);
                     if (Boolean.getBoolean("mondrian.calcite.trace")) {
                         System.err.println("[calcite-ok-probe] " + calciteSql);
