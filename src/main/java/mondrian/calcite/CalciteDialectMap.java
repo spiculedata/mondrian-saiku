@@ -10,8 +10,10 @@
 package mondrian.calcite;
 
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlDialectFactory;
 import org.apache.calcite.sql.SqlDialectFactoryImpl;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
+import org.apache.calcite.sql.dialect.BigQuerySqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
@@ -163,6 +165,58 @@ public final class CalciteDialectMap {
     }
 
     /**
+     * A {@link SqlDialectFactory} that delegates to
+     * {@link #forProductNameOrNull(String)} for the JDBC product name
+     * exposed by {@link DatabaseMetaData}. Falls back to Calcite's
+     * built-in {@link SqlDialectFactoryImpl} only when this map
+     * doesn't recognise the product — and ALWAYS wraps the
+     * auto-detected dialect in {@link #forceQuoting} so case-folding
+     * databases don't case-mangle the FoodMart fixture's lowercase
+     * identifiers.
+     *
+     * <p>Use this when constructing Calcite's
+     * {@code org.apache.calcite.adapter.jdbc.JdbcSchema} (e.g. via
+     * {@code JdbcSchema.create(parentSchema, name, dataSource,
+     * AS_SQL_DIALECT_FACTORY, catalog, schema)}). Without this
+     * factory, JdbcSchema falls through to
+     * {@code SqlDialectFactoryImpl.INSTANCE} which throws "cannot
+     * deduce null collation" on drivers whose DatabaseMetaData
+     * doesn't expose a recognised product name — Google BigQuery
+     * (Simba JDBC) being the canonical case (saiku-cloud#589).
+     */
+    public static final SqlDialectFactory AS_SQL_DIALECT_FACTORY =
+        new SqlDialectFactory() {
+            @Override
+            public SqlDialect create(DatabaseMetaData md) {
+                try {
+                    String product = md.getDatabaseProductName();
+                    SqlDialect curated = forProductNameOrNull(product);
+                    if (curated != null) {
+                        return curated;
+                    }
+                } catch (SQLException ignored) {
+                    // fall through to Calcite's factory
+                }
+                SqlDialect auto;
+                try {
+                    auto = SqlDialectFactoryImpl.INSTANCE.create(md);
+                } catch (IllegalArgumentException e) {
+                    // Calcite's factory throws "cannot deduce null
+                    // collation" on some drivers. Without a curated
+                    // entry we have nothing better to return — pick
+                    // a safe fallback that won't crash downstream
+                    // SQL emission. AnsiSqlDialect with forced
+                    // quoting matches what forDataSource returns.
+                    return forceQuoting(AnsiSqlDialect.DEFAULT);
+                }
+                if (auto == null || auto instanceof AnsiSqlDialect) {
+                    return forceQuoting(AnsiSqlDialect.DEFAULT);
+                }
+                return forceQuoting(auto);
+            }
+        };
+
+    /**
      * Strict variant: throws {@link IllegalArgumentException} if the
      * product name is unknown. Retained for callers that genuinely require
      * a dialect to proceed (e.g. tests asserting we can handle a target
@@ -231,6 +285,16 @@ public final class CalciteDialectMap {
         }
         if (p.contains("luciddb")) {
             return QUOTING_LUCIDDB;
+        }
+        // BigQuery — Google's Simba JDBC driver returns
+        // "Google BigQuery" as the database product name. Calcite ships
+        // BigQuerySqlDialect but its SqlDialectFactoryImpl auto-detect
+        // matches the exact "BigQuery" prefix only (saiku-cloud#589). The
+        // auto-detect fallback in forDataSource() also throws
+        // "cannot deduce null collation" before reaching the dialect
+        // factory's product-name switch, so we MUST hand-curate this.
+        if (p.contains("bigquery")) {
+            return QUOTING_BIGQUERY;
         }
         return null;
     }
@@ -356,6 +420,25 @@ public final class CalciteDialectMap {
         new LucidDbSqlDialect(
             LucidDbSqlDialect.DEFAULT_CONTEXT
                 .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** BigQuery — Google's Simba JDBC driver returns
+     *  "Google BigQuery" as the product name; Calcite's
+     *  SqlDialectFactoryImpl.create() matches the exact "BigQuery"
+     *  prefix only AND throws "cannot deduce null collation" on the
+     *  null-collation deduction step before reaching the dialect
+     *  switch (saiku-cloud#589). Without this hand-curated entry,
+     *  forDataSource() bubbles up the IllegalArgumentException and
+     *  the whole datasource fails to load. */
+    private static final SqlDialect QUOTING_BIGQUERY =
+        new BigQuerySqlDialect(
+            BigQuerySqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("`"))
         {
             @Override
             protected boolean identifierNeedsQuote(String val) {

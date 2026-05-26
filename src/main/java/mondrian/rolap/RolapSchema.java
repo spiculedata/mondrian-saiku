@@ -922,6 +922,30 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 JdbcSchema.makeDB(
                     internalConnection.getDataSource(),
                     dataServicesProvider.getJdbcSchemaFactory());
+            // Apply optional JdbcSchema/JdbcCatalog connect-string
+            // properties before load(), so the JDBC metadata calls
+            // (getTables, getColumns) receive a non-null
+            // schemaPattern/catalog for drivers that don't honour
+            // URL-level default-schema settings during metadata
+            // introspection. saiku-cloud#589 motivated this for
+            // Google BigQuery (Simba JDBC): without
+            // schemaPattern="<dataset>" the getTables call returns
+            // empty + PhysTable.populateColumns fires
+            // "Table '...' does not exist in database".
+            final Util.PropertyList connectInfo =
+                internalConnection.getConnectInfo();
+            if (connectInfo != null) {
+                final String jdbcSchemaName = connectInfo.get(
+                    RolapConnectionProperties.JdbcSchema.name());
+                if (jdbcSchemaName != null && !jdbcSchemaName.isEmpty()) {
+                    jdbcSchema.setSchemaName(jdbcSchemaName);
+                }
+                final String jdbcCatalogName = connectInfo.get(
+                    RolapConnectionProperties.JdbcCatalog.name());
+                if (jdbcCatalogName != null && !jdbcCatalogName.isEmpty()) {
+                    jdbcSchema.setCatalogName(jdbcCatalogName);
+                }
+            }
             jdbcSchema.load();
             statistic = new PhysStatistic(dialect, internalConnection);
         }
@@ -1028,7 +1052,19 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 connection =
                     jdbcSchema.getDataSource().getConnection();
                 pstmt = connection.prepareStatement(sql);
-                final ResultSetMetaData metaData = pstmt.getMetaData();
+                // Some JDBC drivers (notably the Google BigQuery Simba
+                // driver, saiku-cloud#589) don't implement
+                // PreparedStatement.getMetaData() — it returns null
+                // before the query executes. Fall back to executing
+                // the query with LIMIT 0 / WHERE 1=0 semantics is too
+                // dialect-specific; simpler to just execute, take
+                // metadata from the ResultSet, and discard rows.
+                ResultSetMetaData metaData = pstmt.getMetaData();
+                ResultSet metaRs = null;
+                if (metaData == null) {
+                    metaRs = pstmt.executeQuery();
+                    metaData = metaRs.getMetaData();
+                }
                 final int columnCount = metaData.getColumnCount();
                 final List<ColumnInfo> columnInfoList =
                     new ArrayList<ColumnInfo>();
@@ -1062,6 +1098,9 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     }
                     columnInfoList.add(
                         new ColumnInfo(columnName, datatype, columnSize));
+                }
+                if (metaRs != null) {
+                    metaRs.close();
                 }
                 pstmt.close();
                 pstmt = null;

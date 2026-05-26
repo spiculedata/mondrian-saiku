@@ -115,8 +115,16 @@ public final class CalciteMondrianSchema {
 
         // 1) Reflect the JDBC DataSource as a JdbcSchema — keeps
         //    JdbcTableScan / JdbcTable-aware SQL generation intact.
+        //    Pass a SqlDialectFactory that consults CalciteDialectMap
+        //    first (saiku-cloud#589). Calcite's default
+        //    SqlDialectFactoryImpl.create() throws
+        //    "cannot deduce null collation" on JDBC drivers whose
+        //    DatabaseMetaData doesn't expose a recognised product
+        //    name / null-ordering — Google BigQuery (via Simba JDBC)
+        //    is the canonical case.
         JdbcSchema jdbc =
-            JdbcSchema.create(root, schemaName, dataSource, null, null);
+            JdbcSchema.create(root, schemaName, dataSource,
+                CalciteDialectMap.AS_SQL_DIALECT_FACTORY, null, null);
 
         // 2) Validate the JdbcSchema is fully populated before any caller
         //    (e.g. CalcitePlannerCache) caches this instance JVM-wide.
