@@ -56,6 +56,46 @@ public enum RolapConnectionProperties {
     JdbcPassword,
 
     /**
+     * The "JdbcSchema" property is the JDBC schema name passed to
+     * {@link java.sql.DatabaseMetaData#getTables} and
+     * {@link java.sql.DatabaseMetaData#getColumns} during schema-load
+     * metadata introspection. Mondrian otherwise passes {@code null}
+     * (i.e. "any schema"), which works fine for JDBC drivers that
+     * resolve unqualified table references against the URL's default
+     * schema/database setting — but fails on drivers whose metadata
+     * surface ignores connection-level defaults.
+     *
+     * <p>Google BigQuery (via Simba JDBC) is the canonical case
+     * (saiku-cloud#589): the JDBC URL's {@code DefaultDataset=...} drives
+     * query routing but is ignored by {@code getTables/getColumns}, so
+     * {@code <Table name="salary"/>} fails with
+     * {@code "Table 'salary' does not exist in database"} unless the
+     * caller specifies the dataset explicitly. Setting
+     * {@code JdbcSchema=foodmart_saiku_proof} on the .sds connect
+     * string makes Mondrian's internal {@code JdbcSchema} pass
+     * {@code "foodmart_saiku_proof"} as the schemaPattern, so
+     * metadata introspection succeeds.
+     *
+     * <p>For dialects whose metadata layer DOES honour the URL default
+     * (Postgres, MySQL, ClickHouse, Snowflake, DuckDB), leaving this
+     * property unset preserves existing behaviour.
+     */
+    JdbcSchema,
+
+    /**
+     * The "JdbcCatalog" property is the JDBC catalog name passed
+     * alongside {@link #JdbcSchema} to the metadata introspection
+     * calls. Optional; defaults to {@code null} ("any catalog").
+     *
+     * <p>For BigQuery (saiku-cloud#589), {@code DefaultDataset=...}
+     * on the URL doubles as catalog scope in some Simba code paths,
+     * so most deployments don't need this property — but it's
+     * provided for the future case where a driver requires explicit
+     * catalog-level qualification.
+     */
+    JdbcCatalog,
+
+    /**
      * The "Dialect" property specifies the SQL dialect to use for connections
      * to this JDBC database.
      *
