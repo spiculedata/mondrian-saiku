@@ -310,11 +310,138 @@ public final class CalcitePlannerCache {
         @Override
         public String toString() {
             return "CalcitePlannerCache.Key{"
-                + "url=" + url
+                + "url=" + redactJdbcUrl(url)
                 + ", catalog=" + catalog
                 + ", schema=" + schema
                 + ", user=" + user
                 + "}";
+        }
+
+        /**
+         * Mask sensitive {@code key=value} segments inside a JDBC URL
+         * for safe logging (saiku-cloud#627).
+         *
+         * <p>JDBC URLs are constructed by Simba / Snowflake / other
+         * drivers as {@code host;k1=v1;k2=v2} (semicolon-separated) or
+         * {@code host?k1=v1&k2=v2} (query-string-separated). Several of
+         * those {@code key=}s carry credentials in plaintext:
+         *
+         * <ul>
+         *   <li>{@code OAuthPvtKey} (BigQuery Simba JDBC, service-
+         *       account flow) — a full RSA private key, ~1.7 KB of
+         *       base64 between {@code -----BEGIN PRIVATE KEY-----}
+         *       / {@code -----END PRIVATE KEY-----} markers.</li>
+         *   <li>{@code OAuthClientSecret} / {@code OAuthRefreshToken}
+         *       / {@code AccessToken} (BigQuery Simba JDBC, OAuth
+         *       interactive flows).</li>
+         *   <li>{@code password} / {@code pwd} (generic JDBC).</li>
+         * </ul>
+         *
+         * <p>Before this method, {@link Key#toString()} embedded the
+         * full URL verbatim. The 2026-05-26 incident
+         * (saiku-cloud#627) found a customer's BigQuery service-
+         * account private key in the engine log — and then in Loki
+         * because the engine's stdout is slurped by promtail. That's
+         * a credential exposure even for read-only operators.
+         *
+         * <p>The redaction preserves the rest of the URL (host,
+         * dataset name, project id, OAuthType, etc.) so the cache
+         * key is still recognisable in diagnostic logs. Only the
+         * sensitive values are replaced with {@code <redacted>}.
+         *
+         * <p>Case-insensitive on key names (Snowflake JDBC is
+         * case-sensitive; BigQuery Simba is too — but operators
+         * occasionally hand-edit URLs with different cases). The
+         * over-match cost is benign: redacting an extra {@code .password}
+         * never leaks data; under-matching a sensitive key would.
+         *
+         * @param url the raw JDBC URL (may be null or empty)
+         * @return the URL with sensitive {@code key=value} segments
+         *         replaced by {@code key=<redacted>}
+         */
+        static String redactJdbcUrl(String url) {
+            if (url == null || url.isEmpty()) {
+                return url == null ? "" : url;
+            }
+            String redacted = url;
+            for (String sensitive : SENSITIVE_URL_KEYS) {
+                redacted = redactKey(redacted, sensitive);
+            }
+            return redacted;
+        }
+
+        /**
+         * Names of URL parameters whose values must NEVER hit a log.
+         * Add new entries here as we observe leakage from additional
+         * driver shapes. Case-insensitive on match (see
+         * {@link #redactKey}).
+         */
+        private static final String[] SENSITIVE_URL_KEYS = {
+            "OAuthPvtKey",
+            "OAuthClientSecret",
+            "OAuthRefreshToken",
+            "AccessToken",
+            "password",
+            "pwd",
+            "PrivateKey",
+            "OAuthAccessToken"
+        };
+
+        /**
+         * Replace every {@code key=...} segment with
+         * {@code key=<redacted>}, terminating the value at the next
+         * URL delimiter ({@code ;}, {@code &}, end-of-string).
+         *
+         * <p>Special handling for the BigQuery {@code OAuthPvtKey}
+         * shape where the value spans multiple lines (PEM-encoded
+         * private key with embedded newlines): the value runs until
+         * the next {@code ;} delimiter even across newlines.
+         *
+         * <p>Implementation: find {@code key=} at a delimiter
+         * boundary, walk to the next delimiter, replace the entire
+         * range with {@code key=<redacted>}.
+         */
+        private static String redactKey(String url, String key) {
+            StringBuilder out = new StringBuilder(url.length());
+            String lowerUrl = url.toLowerCase(java.util.Locale.ROOT);
+            String lowerKey = key.toLowerCase(java.util.Locale.ROOT) + "=";
+            int cursor = 0;
+            while (cursor < url.length()) {
+                int matchStart = lowerUrl.indexOf(lowerKey, cursor);
+                if (matchStart < 0) {
+                    out.append(url, cursor, url.length());
+                    break;
+                }
+                // Reject mid-token matches: previous char must be a
+                // delimiter, opening separator, or jdbc-subprotocol
+                // marker. Otherwise this is e.g. "RolesPwd=" matching
+                // "Pwd=" inside it.
+                if (matchStart > 0) {
+                    char prev = url.charAt(matchStart - 1);
+                    if (prev != ';' && prev != '&' && prev != '?'
+                        && prev != ':' && prev != '/' && prev != '\n') {
+                        // Skip past this false match and keep looking.
+                        cursor = matchStart + lowerKey.length();
+                        continue;
+                    }
+                }
+                out.append(url, cursor, matchStart);
+                // Re-emit the key name in its original case (so the
+                // log still reads as the customer's URL shape).
+                out.append(url, matchStart, matchStart + key.length());
+                out.append("=<redacted>");
+                // Walk past the value to the next delimiter.
+                int valEnd = matchStart + key.length() + 1; // skip key + '='
+                while (valEnd < url.length()) {
+                    char c = url.charAt(valEnd);
+                    if (c == ';' || c == '&') {
+                        break;
+                    }
+                    valEnd++;
+                }
+                cursor = valEnd;
+            }
+            return out.toString();
         }
     }
 }
