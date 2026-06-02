@@ -12,6 +12,9 @@ package mondrian.schema.yaml;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
+import mondrian.schema.yaml.m4.M4Detection;
+import mondrian.schema.yaml.m4.M4YamlToXml;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -193,8 +196,8 @@ public final class YamlSchemaConverter {
     public static String toXml(String yamlText) {
         try {
             Map<?, ?> root = YAML.readValue(yamlText, Map.class);
-            if (mondrian.schema.yaml.m4.M4Detection.isM4Yaml(root)) {
-                return mondrian.schema.yaml.m4.M4YamlToXml.toXml(yamlText);
+            if (M4Detection.isM4Yaml(root)) {
+                return M4YamlToXml.toXml(yamlText);
             }
             return emitFromRoot(root);
         } catch (Exception e) {
