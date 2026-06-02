@@ -66,11 +66,148 @@ public final class M4YamlToXml {
         if (phys instanceof Map) {
             children.add(buildPhysicalSchema((Map<?, ?>) phys));
         }
+        Object sharedDims = root.get("shared_dimensions");
+        if (sharedDims instanceof Map) {
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) sharedDims).entrySet()) {
+                if (e.getValue() instanceof Map) {
+                    children.add(buildDimension(
+                        str(e.getKey()), (Map<?, ?>) e.getValue()));
+                }
+            }
+        }
         if (!children.isEmpty()) {
             schema.childArray =
                 children.toArray(new MondrianDef.SchemaElement[0]);
         }
         return schema;
+    }
+
+    private static MondrianDef.Dimension buildDimension(
+        String name, Map<?, ?> dim)
+    {
+        MondrianDef.Dimension d = new MondrianDef.Dimension();
+        d.name = name;
+        d.table = str(dim.get("table"));
+        d.key = str(dim.get("key"));
+        d.type = str(dim.get("type"));
+        List<MondrianDef.DimensionElement> dimKids = new ArrayList<>();
+        Object attrs = dim.get("attributes");
+        if (attrs instanceof List && !((List<?>) attrs).isEmpty()) {
+            dimKids.add(buildAttributes((List<?>) attrs));
+        }
+        Object hiers = dim.get("hierarchies");
+        if (hiers instanceof List && !((List<?>) hiers).isEmpty()) {
+            dimKids.add(buildHierarchies((List<?>) hiers));
+        }
+        if (!dimKids.isEmpty()) {
+            d.childArray =
+                dimKids.toArray(new MondrianDef.DimensionElement[0]);
+        }
+        return d;
+    }
+
+    private static MondrianDef.Attributes buildAttributes(List<?> list) {
+        MondrianDef.Attributes wrapper = new MondrianDef.Attributes();
+        List<MondrianDef.Attribute> attrs = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                attrs.add(buildAttribute((Map<?, ?>) item));
+            }
+        }
+        wrapper.array = attrs.toArray(new MondrianDef.Attribute[0]);
+        return wrapper;
+    }
+
+    private static MondrianDef.Attribute buildAttribute(Map<?, ?> m) {
+        MondrianDef.Attribute a = new MondrianDef.Attribute();
+        a.name = str(m.get("name"));
+        a.table = str(m.get("table"));
+        a.keyColumn = str(m.get("key_column"));
+        a.nameColumn = str(m.get("name_column"));
+        a.orderByColumn = str(m.get("order_by_column"));
+        a.captionColumn = str(m.get("caption_column"));
+        a.levelType = str(m.get("level_type"));
+        a.datatype = str(m.get("datatype"));
+        a.hierarchyAllMemberName = str(m.get("hierarchy_all_member_name"));
+        a.hierarchyAllMemberCaption = str(m.get("hierarchy_all_member_caption"));
+        a.hierarchyDefaultMember = str(m.get("hierarchy_default_member"));
+        Object hasHier = m.get("has_hierarchy");
+        if (hasHier != null) {
+            a.hasHierarchy = boolToBoolean(hasHier);
+        }
+        Object hierHasAll = m.get("hierarchy_has_all");
+        if (hierHasAll != null) {
+            a.hierarchyHasAll = boolToBoolean(hierHasAll);
+        }
+        List<MondrianDef.AttributeElement> kids = new ArrayList<>();
+        Object key = m.get("key");
+        if (key instanceof List && !((List<?>) key).isEmpty()) {
+            kids.add(buildKey((List<?>) key));
+        }
+        Object props = m.get("properties");
+        if (props instanceof List) {
+            for (Object p : (List<?>) props) {
+                MondrianDef.Property prop = new MondrianDef.Property();
+                prop.attribute = str(p);
+                kids.add(prop);
+            }
+        }
+        if (!kids.isEmpty()) {
+            a.childArray = kids.toArray(new MondrianDef.AttributeElement[0]);
+        }
+        return a;
+    }
+
+    private static MondrianDef.Hierarchies buildHierarchies(List<?> list) {
+        MondrianDef.Hierarchies wrapper = new MondrianDef.Hierarchies();
+        List<MondrianDef.Hierarchy> hiers = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                hiers.add(buildHierarchy((Map<?, ?>) item));
+            }
+        }
+        wrapper.array = hiers.toArray(new MondrianDef.Hierarchy[0]);
+        return wrapper;
+    }
+
+    private static MondrianDef.Hierarchy buildHierarchy(Map<?, ?> m) {
+        MondrianDef.Hierarchy h = new MondrianDef.Hierarchy();
+        h.name = str(m.get("name"));
+        h.allMemberName = str(m.get("all_member_name"));
+        h.defaultMember = str(m.get("default_member"));
+        Object hasAll = m.get("has_all");
+        if (hasAll != null) {
+            h.hasAll = boolToBoolean(hasAll);
+        }
+        Object levels = m.get("levels");
+        if (levels instanceof List && !((List<?>) levels).isEmpty()) {
+            List<MondrianDef.HierarchyElement> levelKids = new ArrayList<>();
+            for (Object lvl : (List<?>) levels) {
+                levelKids.add(buildLevel(lvl));
+            }
+            h.childArray =
+                levelKids.toArray(new MondrianDef.HierarchyElement[0]);
+        }
+        return h;
+    }
+
+    private static MondrianDef.Level buildLevel(Object o) {
+        MondrianDef.Level level = new MondrianDef.Level();
+        if (o instanceof Map) {
+            Map<?, ?> m = (Map<?, ?>) o;
+            level.name = str(m.get("name"));
+            level.attribute = str(m.get("attribute"));
+        } else {
+            level.attribute = str(o);
+        }
+        return level;
+    }
+
+    private static Boolean boolToBoolean(Object o) {
+        if (o instanceof Boolean) {
+            return (Boolean) o;
+        }
+        return Boolean.valueOf(String.valueOf(o));
     }
 
     private static MondrianDef.PhysicalSchema buildPhysicalSchema(

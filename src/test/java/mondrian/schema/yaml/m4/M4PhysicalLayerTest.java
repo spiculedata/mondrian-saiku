@@ -222,4 +222,48 @@ public class M4PhysicalLayerTest {
             || yaml.contains("schema: S"));
         assertFalse(yaml, yaml.contains("physical_schema:"));
     }
+
+    // ---- emit (YAML -> M4 XML): shared dimensions ----
+
+    private static final String DIM_YAML =
+        "schema:\n"
+        + "  name: FoodMart\n"
+        + "  metamodel_version: \"4.0\"\n"
+        + "shared_dimensions:\n"
+        + "  Store:\n"
+        + "    table: store\n"
+        + "    key: Store Id\n"
+        + "    attributes:\n"
+        + "      - {name: Store Country, has_hierarchy: false, key: [store_country]}\n"
+        + "      - {name: Store Id, key_column: store_id, has_hierarchy: false}\n"
+        + "      - name: Store Name\n"
+        + "        key_column: store_name\n"
+        + "        has_hierarchy: false\n"
+        + "        properties: [Store Type]\n"
+        + "      - {name: Store Type, key_column: store_type}\n"
+        + "    hierarchies:\n"
+        + "      - name: Stores\n"
+        + "        all_member_name: All Stores\n"
+        + "        levels: [Store Country, Store Name]\n";
+
+    @Test
+    public void emitsSharedDimensionWithAttributesAndHierarchies() {
+        String xml = M4YamlToXml.toXml(DIM_YAML);
+        assertTrue(xml, xml.contains("<Dimension"));
+        assertTrue(xml, xml.contains("name=\"Store\""));
+        assertTrue(xml, xml.contains("table=\"store\""));
+        assertTrue(xml, xml.contains("key=\"Store Id\""));
+        assertTrue(xml, xml.contains("<Attributes"));
+        assertTrue(xml, xml.contains("<Attribute name=\"Store Country\""));
+        assertTrue(xml, xml.contains("hasHierarchy=\"false\""));
+        assertTrue(xml, xml.contains("<Key"));
+        assertTrue(xml, xml.contains("name=\"store_country\""));
+        assertTrue(xml, xml.contains("keyColumn=\"store_name\""));
+        assertTrue(xml, xml.contains("<Property"));
+        assertTrue(xml, xml.contains("attribute=\"Store Type\""));
+        assertTrue(xml, xml.contains("<Hierarchies"));
+        assertTrue(xml, xml.contains("<Hierarchy name=\"Stores\""));
+        assertTrue(xml, xml.contains("allMemberName=\"All Stores\""));
+        assertTrue(xml, xml.contains("<Level attribute=\"Store Country\""));
+    }
 }
