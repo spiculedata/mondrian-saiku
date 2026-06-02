@@ -114,10 +114,18 @@ public final class M4XmlToYaml {
         if (t.childArray != null) {
             for (Object child : t.childArray) {
                 if (child instanceof MondrianDef.Key) {
-                    out.put("key",
-                        columnNames(((MondrianDef.Key) child).array));
+                    List<String> keyCols =
+                        columnNames(((MondrianDef.Key) child).array);
+                    if (!keyCols.isEmpty()) {
+                        out.put("key", keyCols);
+                    }
+                } else if (child instanceof MondrianDef.ColumnDefs) {
+                    List<Object> ccs =
+                        calculatedColumns((MondrianDef.ColumnDefs) child);
+                    if (!ccs.isEmpty()) {
+                        out.put("calculated_columns", ccs);
+                    }
                 }
-                // ColumnDefs (calculated_columns) handled in Task 6
             }
         }
         return out;
@@ -131,6 +139,43 @@ public final class M4XmlToYaml {
             out.put("foreign_key", columnNames(l.foreignKey.array));
         } else if (l.foreignKeyColumn != null) {
             out.put("foreign_key_column", l.foreignKeyColumn);
+        }
+        return out;
+    }
+
+    private static List<Object> calculatedColumns(
+        MondrianDef.ColumnDefs defs)
+    {
+        List<Object> out = new ArrayList<>();
+        if (defs.array != null) {
+            for (Object d : defs.array) {
+                if (d instanceof MondrianDef.CalculatedColumnDef) {
+                    out.add(calculatedColumn(
+                        (MondrianDef.CalculatedColumnDef) d));
+                }
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> calculatedColumn(
+        MondrianDef.CalculatedColumnDef d)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", d.name);
+        if (d.type != null) {
+            out.put("type", d.type);
+        }
+        if (d.expression instanceof MondrianDef.ExpressionView) {
+            MondrianDef.ExpressionView view =
+                (MondrianDef.ExpressionView) d.expression;
+            if (view.expressions != null) {
+                Map<String, Object> expr = new LinkedHashMap<>();
+                for (MondrianDef.SQL sql : view.expressions) {
+                    expr.put(sql.dialect, sql.getCData());
+                }
+                out.put("expression", expr);
+            }
         }
         return out;
     }

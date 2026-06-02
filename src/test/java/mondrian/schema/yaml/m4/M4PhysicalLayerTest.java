@@ -153,5 +153,27 @@ public class M4PhysicalLayerTest {
         assertTrue(yaml, yaml.contains("store_id"));
         assertTrue(yaml, yaml.contains("links:"));
         assertTrue(yaml, yaml.contains("product_class_id"));
+        assertTrue(yaml, yaml.contains("key_column: \"product_id\"")
+            || yaml.contains("key_column: product_id"));
+    }
+
+    @Test
+    public void ingestsCalculatedColumns() {
+        String xml =
+            "<Schema name='FoodMart' metamodelVersion='4.0'>"
+            + "<PhysicalSchema><Table name='customer'>"
+            + "<Key><Column name='customer_id'/></Key>"
+            + "<ColumnDefs><CalculatedColumnDef name='full_name' type='String'>"
+            + "<ExpressionView>"
+            + "<SQL dialect='generic'>x</SQL>"
+            + "<SQL dialect='oracle'>y</SQL>"
+            + "</ExpressionView></CalculatedColumnDef></ColumnDefs>"
+            + "</Table></PhysicalSchema></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("calculated_columns:"));
+        assertTrue(yaml, yaml.contains("full_name"));
+        assertTrue(yaml, yaml.contains("expression:"));
+        assertTrue(yaml, yaml.contains("generic"));
+        assertTrue(yaml, yaml.contains("oracle"));
     }
 }
