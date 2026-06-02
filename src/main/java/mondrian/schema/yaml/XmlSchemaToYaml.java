@@ -77,6 +77,9 @@ public final class XmlSchemaToYaml {
                 "expected root element <Schema>, got: "
                     + (schema == null ? "(none)" : schema.getTagName()));
         }
+        if (mondrian.schema.yaml.m4.M4Detection.isM4Xml(schema)) {
+            return mondrian.schema.yaml.m4.M4XmlToYaml.toYaml(xmlText);
+        }
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("schema", schema.getAttribute("name"));
         Map<String, String> ann = collectAnnotations(schema);

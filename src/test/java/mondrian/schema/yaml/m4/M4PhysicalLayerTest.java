@@ -180,4 +180,31 @@ public class M4PhysicalLayerTest {
         assertTrue(yaml, yaml.contains("GEN_BODY"));
         assertTrue(yaml, yaml.contains("ORA_BODY"));
     }
+
+    // ---- dispatch through public API ----
+
+    @Test
+    public void publicToYamlDispatchesToM4ForM4Xml() {
+        String yaml = mondrian.schema.yaml.XmlSchemaToYaml.toYaml(PHYS_XML);
+        assertTrue(yaml, yaml.contains("physical_schema:"));
+    }
+
+    @Test
+    public void publicToXmlDispatchesToM4ForM4Yaml() {
+        String xml =
+            mondrian.schema.yaml.YamlSchemaConverter.toXml(PHYS_YAML);
+        assertTrue(xml, xml.contains("<PhysicalSchema"));
+        assertTrue(xml, xml.contains("metamodelVersion=\"4.0\""));
+    }
+
+    @Test
+    public void publicToYamlStillHandlesM3Scalar() {
+        String m3 = "<Schema name='S'><Dimension name='D'>"
+            + "<Hierarchy hasAll='true'><Table name='t'/>"
+            + "<Level name='L' column='c'/></Hierarchy></Dimension></Schema>";
+        String yaml = mondrian.schema.yaml.XmlSchemaToYaml.toYaml(m3);
+        assertTrue(yaml, yaml.contains("schema: \"S\"")
+            || yaml.contains("schema: S"));
+        assertFalse(yaml, yaml.contains("physical_schema:"));
+    }
 }

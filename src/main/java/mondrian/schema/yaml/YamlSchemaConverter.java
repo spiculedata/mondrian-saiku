@@ -193,6 +193,9 @@ public final class YamlSchemaConverter {
     public static String toXml(String yamlText) {
         try {
             Map<?, ?> root = YAML.readValue(yamlText, Map.class);
+            if (mondrian.schema.yaml.m4.M4Detection.isM4Yaml(root)) {
+                return mondrian.schema.yaml.m4.M4YamlToXml.toXml(yamlText);
+            }
             return emitFromRoot(root);
         } catch (Exception e) {
             throw new IllegalArgumentException(
