@@ -60,4 +60,34 @@ public class M4PhysicalLayerTest {
         root.put("other_key", "value");
         assertFalse(M4Detection.isM4Yaml(root));
     }
+
+    // ---- emit (YAML -> M4 XML) ----
+
+    private static final String PHYS_YAML =
+        "schema:\n"
+        + "  name: FoodMart\n"
+        + "  metamodel_version: \"4.0\"\n"
+        + "physical_schema:\n"
+        + "  tables:\n"
+        + "    - name: salary\n"
+        + "    - name: salary\n"
+        + "      alias: salary2\n"
+        + "    - name: store\n"
+        + "      key: [store_id]\n"
+        + "    - name: product\n"
+        + "      key_column: product_id\n";
+
+    @Test
+    public void emitsSchemaHeaderAndPhysicalTables() {
+        String xml = M4YamlToXml.toXml(PHYS_YAML);
+        assertTrue(xml, xml.contains("<Schema"));
+        assertTrue(xml, xml.contains("name=\"FoodMart\""));
+        assertTrue(xml, xml.contains("metamodelVersion=\"4.0\""));
+        assertTrue(xml, xml.contains("<PhysicalSchema"));
+        assertTrue(xml, xml.contains("<Table name=\"salary\""));
+        assertTrue(xml, xml.contains("alias=\"salary2\""));
+        assertTrue(xml, xml.contains("<Key"));
+        assertTrue(xml, xml.contains("name=\"store_id\""));
+        assertTrue(xml, xml.contains("keyColumn=\"product_id\""));
+    }
 }
