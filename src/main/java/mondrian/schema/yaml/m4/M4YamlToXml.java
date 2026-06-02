@@ -63,8 +63,10 @@ public final class M4YamlToXml {
         if (phys instanceof Map) {
             children.add(buildPhysicalSchema((Map<?, ?>) phys));
         }
-        schema.childArray =
-            children.toArray(new MondrianDef.SchemaElement[0]);
+        if (!children.isEmpty()) {
+            schema.childArray =
+                children.toArray(new MondrianDef.SchemaElement[0]);
+        }
         return schema;
     }
 
@@ -82,8 +84,10 @@ public final class M4YamlToXml {
                 }
             }
         }
-        ps.childArray =
-            kids.toArray(new MondrianDef.PhysicalSchemaElement[0]);
+        if (!kids.isEmpty()) {
+            ps.childArray =
+                kids.toArray(new MondrianDef.PhysicalSchemaElement[0]);
+        }
         return ps;
     }
 
@@ -99,8 +103,10 @@ public final class M4YamlToXml {
         if (key instanceof List && !((List<?>) key).isEmpty()) {
             kids.add(buildKey((List<?>) key));
         }
-        table.childArray =
-            kids.toArray(new MondrianDef.TableElement[0]);
+        if (!kids.isEmpty()) {
+            table.childArray =
+                kids.toArray(new MondrianDef.TableElement[0]);
+        }
         return table;
     }
 
