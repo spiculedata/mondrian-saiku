@@ -165,15 +165,19 @@ public class M4PhysicalLayerTest {
             + "<Key><Column name='customer_id'/></Key>"
             + "<ColumnDefs><CalculatedColumnDef name='full_name' type='String'>"
             + "<ExpressionView>"
-            + "<SQL dialect='generic'>x</SQL>"
-            + "<SQL dialect='oracle'>y</SQL>"
+            + "<SQL dialect='generic'>GEN_BODY</SQL>"
+            + "<SQL dialect='oracle'>ORA_BODY</SQL>"
             + "</ExpressionView></CalculatedColumnDef></ColumnDefs>"
             + "</Table></PhysicalSchema></Schema>";
         String yaml = M4XmlToYaml.toYaml(xml);
         assertTrue(yaml, yaml.contains("calculated_columns:"));
         assertTrue(yaml, yaml.contains("full_name"));
+        assertTrue(yaml, yaml.contains("type: String")
+            || yaml.contains("type: \"String\""));
         assertTrue(yaml, yaml.contains("expression:"));
         assertTrue(yaml, yaml.contains("generic"));
         assertTrue(yaml, yaml.contains("oracle"));
+        assertTrue(yaml, yaml.contains("GEN_BODY"));
+        assertTrue(yaml, yaml.contains("ORA_BODY"));
     }
 }

@@ -16,7 +16,9 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import mondrian.olap.MondrianDef;
 
 import org.eigenbase.xom.DOMWrapper;
+import org.eigenbase.xom.NodeDef;
 import org.eigenbase.xom.Parser;
+import org.eigenbase.xom.TextDef;
 import org.eigenbase.xom.XOMUtil;
 
 import java.util.ArrayList;
@@ -30,8 +32,8 @@ import java.util.Map;
  * the equivalent YAML map (Jackson). Inverse of {@link M4YamlToXml}.
  *
  * <p>Phase 1 covers the schema header + {@code physical_schema}
- * (tables, keys, links). Calculated columns arrive in a later task;
- * later phases add dimensions, measure groups, roles.
+ * (tables, keys, links, calculated columns). Later phases add
+ * dimensions, measure groups, roles.
  */
 public final class M4XmlToYaml {
 
@@ -148,7 +150,7 @@ public final class M4XmlToYaml {
     {
         List<Object> out = new ArrayList<>();
         if (defs.array != null) {
-            for (Object d : defs.array) {
+            for (MondrianDef.RealOrCalcColumnDef d : defs.array) {
                 if (d instanceof MondrianDef.CalculatedColumnDef) {
                     out.add(calculatedColumn(
                         (MondrianDef.CalculatedColumnDef) d));
@@ -172,12 +174,35 @@ public final class M4XmlToYaml {
             if (view.expressions != null) {
                 Map<String, Object> expr = new LinkedHashMap<>();
                 for (MondrianDef.SQL sql : view.expressions) {
-                    expr.put(sql.dialect, sql.getCData());
+                    expr.put(sql.dialect, sqlText(sql));
                 }
                 out.put("expression", expr);
             }
         }
         return out;
+    }
+
+    /**
+     * Read the text body of a {@code <SQL>} element. {@code SQL.getCData()}
+     * in the generated model is a broken stub (emits "x" per child); the
+     * canonical approach (mirrors {@code RolapSchemaLoader.getText}) walks
+     * the child nodes and concatenates the {@link TextDef} text.
+     *
+     * <p>Limitation: inline element markup inside a SQL body (e.g.
+     * {@code <Column name='fname'/>} references used by real FoodMart
+     * expressions) is NOT captured here — only text nodes. Full
+     * inline-markup fidelity is deferred to the capstone phase.
+     */
+    private static String sqlText(MondrianDef.SQL sql) {
+        StringBuilder buf = new StringBuilder();
+        if (sql.children != null) {
+            for (NodeDef child : sql.children) {
+                if (child instanceof TextDef) {
+                    buf.append(((TextDef) child).s);
+                }
+            }
+        }
+        return buf.toString();
     }
 
     private static List<String> columnNames(MondrianDef.Column[] cols) {
