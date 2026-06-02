@@ -84,11 +84,38 @@ public final class M4YamlToXml {
                 }
             }
         }
+        Object links = phys.get("links");
+        if (links instanceof List) {
+            for (Object l : (List<?>) links) {
+                if (l instanceof Map) {
+                    kids.add(buildLink((Map<?, ?>) l));
+                }
+            }
+        }
         if (!kids.isEmpty()) {
             ps.childArray =
                 kids.toArray(new MondrianDef.PhysicalSchemaElement[0]);
         }
         return ps;
+    }
+
+    private static MondrianDef.Link buildLink(Map<?, ?> l) {
+        MondrianDef.Link link = new MondrianDef.Link();
+        link.source = str(l.get("source"));
+        link.target = str(l.get("target"));
+        Object fk = l.get("foreign_key");
+        if (fk instanceof List && !((List<?>) fk).isEmpty()) {
+            MondrianDef.ForeignKey foreignKey = new MondrianDef.ForeignKey();
+            List<MondrianDef.Column> cols = new ArrayList<>();
+            for (Object c : (List<?>) fk) {
+                cols.add(new MondrianDef.Column(null, str(c)));
+            }
+            foreignKey.array = cols.toArray(new MondrianDef.Column[0]);
+            link.foreignKey = foreignKey;
+        } else if (l.get("foreign_key_column") != null) {
+            link.foreignKeyColumn = str(l.get("foreign_key_column"));
+        }
+        return link;
     }
 
     private static MondrianDef.Table buildTable(Map<?, ?> t) {

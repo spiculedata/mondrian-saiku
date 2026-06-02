@@ -90,4 +90,18 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("name=\"store_id\""));
         assertTrue(xml, xml.contains("keyColumn=\"product_id\""));
     }
+
+    @Test
+    public void emitsPhysicalLinksWithForeignKey() {
+        String yaml = PHYS_YAML
+            + "  links:\n"
+            + "    - {source: product_class, target: product,"
+            + " foreign_key: [product_class_id]}\n";
+        String xml = M4YamlToXml.toXml(yaml);
+        assertTrue(xml, xml.contains("<Link"));
+        assertTrue(xml, xml.contains("source=\"product_class\""));
+        assertTrue(xml, xml.contains("target=\"product\""));
+        assertTrue(xml, xml.contains("<ForeignKey"));
+        assertTrue(xml, xml.contains("name=\"product_class_id\""));
+    }
 }
