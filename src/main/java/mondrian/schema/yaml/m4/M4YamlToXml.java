@@ -14,6 +14,9 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import mondrian.olap.MondrianDef;
 
+import org.eigenbase.xom.NodeDef;
+import org.eigenbase.xom.TextDef;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -130,11 +133,51 @@ public final class M4YamlToXml {
         if (key instanceof List && !((List<?>) key).isEmpty()) {
             kids.add(buildKey((List<?>) key));
         }
+        Object calcCols = t.get("calculated_columns");
+        if (calcCols instanceof List && !((List<?>) calcCols).isEmpty()) {
+            kids.add(buildColumnDefs((List<?>) calcCols));
+        }
         if (!kids.isEmpty()) {
             table.childArray =
                 kids.toArray(new MondrianDef.TableElement[0]);
         }
         return table;
+    }
+
+    private static MondrianDef.ColumnDefs buildColumnDefs(List<?> defs) {
+        MondrianDef.ColumnDefs columnDefs = new MondrianDef.ColumnDefs();
+        List<MondrianDef.RealOrCalcColumnDef> list = new ArrayList<>();
+        for (Object d : defs) {
+            if (d instanceof Map) {
+                list.add(buildCalculatedColumnDef((Map<?, ?>) d));
+            }
+        }
+        columnDefs.array =
+            list.toArray(new MondrianDef.RealOrCalcColumnDef[0]);
+        return columnDefs;
+    }
+
+    private static MondrianDef.CalculatedColumnDef buildCalculatedColumnDef(
+        Map<?, ?> d)
+    {
+        MondrianDef.CalculatedColumnDef ccd =
+            new MondrianDef.CalculatedColumnDef();
+        ccd.name = str(d.get("name"));
+        ccd.type = str(d.get("type"));
+        Object expr = d.get("expression");
+        if (expr instanceof Map) {
+            MondrianDef.ExpressionView view = new MondrianDef.ExpressionView();
+            List<MondrianDef.SQL> sqls = new ArrayList<>();
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) expr).entrySet()) {
+                MondrianDef.SQL sql = new MondrianDef.SQL();
+                sql.dialect = str(e.getKey());
+                sql.children = new NodeDef[] { new TextDef(str(e.getValue())) };
+                sqls.add(sql);
+            }
+            view.expressions = sqls.toArray(new MondrianDef.SQL[0]);
+            ccd.expression = view;
+        }
+        return ccd;
     }
 
     private static MondrianDef.Key buildKey(List<?> columnNames) {

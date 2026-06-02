@@ -104,4 +104,24 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("<ForeignKey"));
         assertTrue(xml, xml.contains("name=\"product_class_id\""));
     }
+
+    @Test
+    public void emitsCalculatedColumnWithSqlDialects() {
+        String yaml = PHYS_YAML
+            + "    - name: customer\n"
+            + "      key: [customer_id]\n"
+            + "      calculated_columns:\n"
+            + "        - name: full_name\n"
+            + "          type: String\n"
+            + "          expression:\n"
+            + "            generic: \"{fullname}\"\n"
+            + "            oracle: \"a || b\"\n";
+        String xml = M4YamlToXml.toXml(yaml);
+        assertTrue(xml, xml.contains("<ColumnDefs"));
+        assertTrue(xml, xml.contains("<CalculatedColumnDef"));
+        assertTrue(xml, xml.contains("name=\"full_name\""));
+        assertTrue(xml, xml.contains("<ExpressionView"));
+        assertTrue(xml, xml.contains("dialect=\"oracle\""));
+        assertTrue(xml, xml.contains("dialect=\"generic\""));
+    }
 }
