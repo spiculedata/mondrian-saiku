@@ -144,6 +144,10 @@ public final class M4YamlToXml {
         if (key instanceof List && !((List<?>) key).isEmpty()) {
             kids.add(buildKey((List<?>) key));
         }
+        Object nameColumns = m.get("name_columns");
+        if (nameColumns instanceof List && !((List<?>) nameColumns).isEmpty()) {
+            kids.add(buildName((List<?>) nameColumns));
+        }
         Object props = m.get("properties");
         if (props instanceof List) {
             for (Object p : (List<?>) props) {
@@ -331,6 +335,16 @@ public final class M4YamlToXml {
         }
         key.array = cols.toArray(new MondrianDef.Column[0]);
         return key;
+    }
+
+    private static MondrianDef.Name buildName(List<?> columnNames) {
+        MondrianDef.Name name = new MondrianDef.Name();
+        List<MondrianDef.Column> cols = new ArrayList<>();
+        for (Object c : columnNames) {
+            cols.add(new MondrianDef.Column(null, str(c)));
+        }
+        name.array = cols.toArray(new MondrianDef.Column[0]);
+        return name;
     }
 
     private static String str(Object o) {

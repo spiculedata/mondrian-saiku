@@ -321,4 +321,37 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("allMemberName=\"All Stores\""));
         assertTrue(xml, xml.contains("<Level attribute=\"Store Country\""));
     }
+
+    @Test
+    public void attributeMultiColNameAndCaptionsRoundTrip() {
+        String xml =
+            "<Schema name='FoodMart' metamodelVersion='4.0'>"
+            + "<Dimension name='Customer' table='customer' key='Customer Id'>"
+            + "<Attributes>"
+            + "<Attribute name='Customer Id' keyColumn='customer_id' hasHierarchy='false'/>"
+            + "<Attribute name='Name' captionColumn='fullname'"
+            + " hierarchyAllMemberName='All Customers'"
+            + " hierarchyDefaultMember='[Customer].[Name].[x]'>"
+            + "<Key><Column name='cust_id'/></Key>"
+            + "<Name><Column name='lname'/><Column name='fname'/></Name>"
+            + "</Attribute>"
+            + "</Attributes>"
+            + "<Hierarchies><Hierarchy name='Customers'>"
+            + "<Level attribute='Name'/></Hierarchy></Hierarchies>"
+            + "</Dimension></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        // attribute name preserved, NOT overwritten by the multi-col Name
+        assertTrue(yaml, yaml.contains("name: \"Name\"")
+            || yaml.contains("name: Name"));
+        assertTrue(yaml, yaml.contains("name_columns"));
+        assertTrue(yaml, yaml.contains("lname"));
+        assertTrue(yaml, yaml.contains("fname"));
+        assertTrue(yaml, yaml.contains("caption_column"));
+        assertTrue(yaml, yaml.contains("hierarchy_all_member_caption")
+            || yaml.contains("hierarchy_all_member_name")); // (all_member_name present)
+        assertTrue(yaml, yaml.contains("hierarchy_default_member"));
+        // full round-trip stability
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
 }

@@ -290,7 +290,7 @@ public final class M4XmlToYaml {
                 if (nameCols.size() == 1) {
                     out.put("name_column", nameCols.get(0));
                 } else {
-                    out.put("name", nameCols);
+                    out.put("name_columns", nameCols);
                 }
             }
         }
@@ -305,8 +305,17 @@ public final class M4XmlToYaml {
         if (a.datatype != null && !"String".equals(a.datatype)) {
             out.put("datatype", a.datatype);
         }
+        if (a.captionColumn != null) {
+            out.put("caption_column", a.captionColumn);
+        }
         if (a.hierarchyAllMemberName != null) {
             out.put("hierarchy_all_member_name", a.hierarchyAllMemberName);
+        }
+        if (a.hierarchyAllMemberCaption != null) {
+            out.put("hierarchy_all_member_caption", a.hierarchyAllMemberCaption);
+        }
+        if (a.hierarchyDefaultMember != null) {
+            out.put("hierarchy_default_member", a.hierarchyDefaultMember);
         }
         // Only emit hierarchy_has_all when explicitly FALSE (true is the default)
         if (Boolean.FALSE.equals(a.hierarchyHasAll)) {
