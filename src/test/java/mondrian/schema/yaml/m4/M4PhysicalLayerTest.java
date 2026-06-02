@@ -127,4 +127,31 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("{fullname}"));
         assertTrue(xml, xml.contains("a || b"));
     }
+
+    // ---- ingest (M4 XML -> YAML) ----
+
+    private static final String PHYS_XML =
+        "<Schema name='FoodMart' metamodelVersion='4.0'>"
+        + "  <PhysicalSchema>"
+        + "    <Table name='salary'/>"
+        + "    <Table name='store'><Key><Column name='store_id'/></Key></Table>"
+        + "    <Table name='product' keyColumn='product_id'/>"
+        + "    <Link source='product_class' target='product'>"
+        + "      <ForeignKey><Column name='product_class_id'/></ForeignKey>"
+        + "    </Link>"
+        + "  </PhysicalSchema>"
+        + "</Schema>";
+
+    @Test
+    public void ingestsPhysicalSchemaToYaml() {
+        String yaml = M4XmlToYaml.toYaml(PHYS_XML);
+        assertTrue(yaml, yaml.contains("metamodel_version: \"4.0\"")
+            || yaml.contains("metamodel_version: '4.0'"));
+        assertTrue(yaml, yaml.contains("physical_schema:"));
+        assertTrue(yaml, yaml.contains("name: \"salary\"")
+            || yaml.contains("name: salary"));
+        assertTrue(yaml, yaml.contains("store_id"));
+        assertTrue(yaml, yaml.contains("links:"));
+        assertTrue(yaml, yaml.contains("product_class_id"));
+    }
 }
