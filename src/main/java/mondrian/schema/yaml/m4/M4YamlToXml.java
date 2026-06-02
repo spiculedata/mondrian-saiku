@@ -169,9 +169,15 @@ public final class M4YamlToXml {
             MondrianDef.ExpressionView view = new MondrianDef.ExpressionView();
             List<MondrianDef.SQL> sqls = new ArrayList<>();
             for (Map.Entry<?, ?> e : ((Map<?, ?>) expr).entrySet()) {
+                String dialect = str(e.getKey());
+                if (dialect == null) {
+                    continue;
+                }
+                String body = str(e.getValue());
                 MondrianDef.SQL sql = new MondrianDef.SQL();
-                sql.dialect = str(e.getKey());
-                sql.children = new NodeDef[] { new TextDef(str(e.getValue())) };
+                sql.dialect = dialect;
+                sql.children =
+                    new NodeDef[]{ new TextDef(body == null ? "" : body) };
                 sqls.add(sql);
             }
             view.expressions = sqls.toArray(new MondrianDef.SQL[0]);

@@ -123,5 +123,8 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("<ExpressionView"));
         assertTrue(xml, xml.contains("dialect=\"oracle\""));
         assertTrue(xml, xml.contains("dialect=\"generic\""));
+        assertTrue(xml, xml.contains("name=\"customer\""));
+        assertTrue(xml, xml.contains("{fullname}"));
+        assertTrue(xml, xml.contains("a || b"));
     }
 }
