@@ -201,6 +201,18 @@ public class M4PhysicalLayerTest {
     }
 
     @Test
+    public void ingestsTableSchemaAttribute() {
+        String xml =
+            "<Schema name='FoodMart' metamodelVersion='4.0'>"
+            + "<PhysicalSchema>"
+            + "<Table name='store' schema='dbo'/>"
+            + "</PhysicalSchema></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("schema: \"dbo\"")
+            || yaml.contains("schema: dbo"));
+    }
+
+    @Test
     public void publicToYamlStillHandlesM3Scalar() {
         String m3 = "<Schema name='S'><Dimension name='D'>"
             + "<Hierarchy hasAll='true'><Table name='t'/>"

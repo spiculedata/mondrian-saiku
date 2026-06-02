@@ -110,6 +110,9 @@ public final class M4XmlToYaml {
         if (t.alias != null) {
             out.put("alias", t.alias);
         }
+        if (t.schema != null) {
+            out.put("schema", t.schema);
+        }
         if (t.keyColumn != null) {
             out.put("key_column", t.keyColumn);
         }
