@@ -30,10 +30,15 @@ public final class M4Detection {
      * inside cubes); M3 uses a scalar {@code schema: "Name"} top key.
      */
     public static boolean isM4Yaml(Map<?, ?> root) {
+        if (root == null) {
+            throw new IllegalArgumentException("root map must not be null");
+        }
         Object schema = root.get("schema");
         if (schema instanceof Map) {
             Object v = ((Map<?, ?>) schema).get("metamodel_version");
-            if (v != null && String.valueOf(v).startsWith("4")) {
+            if (v != null
+                && "4".equals(String.valueOf(v).split("\\.")[0]))
+            {
                 return true;
             }
         }
@@ -46,6 +51,9 @@ public final class M4Detection {
      * grandchild. Mirrors {@code RolapSchemaLoader.hasMondrian4Elements}.
      */
     public static boolean isM4Xml(Element schema) {
+        if (schema == null) {
+            throw new IllegalArgumentException("schema element must not be null");
+        }
         NodeList children = schema.getChildNodes();
         for (int i = 0; i < children.getLength(); i++) {
             Node child = children.item(i);
