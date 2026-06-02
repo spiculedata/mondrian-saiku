@@ -17,6 +17,7 @@ import org.junit.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -221,6 +222,60 @@ public class M4PhysicalLayerTest {
         assertTrue(yaml, yaml.contains("schema: \"S\"")
             || yaml.contains("schema: S"));
         assertFalse(yaml, yaml.contains("physical_schema:"));
+    }
+
+    // ---- ingest (M4 XML -> YAML): shared dimensions ----
+
+    private static final String DIM_XML =
+        "<Schema name='FoodMart' metamodelVersion='4.0'>"
+        + "<Dimension name='Store' table='store' key='Store Id'>"
+        + "<Attributes>"
+        + "<Attribute name='Store Country' hasHierarchy='false'>"
+        + "<Key><Column name='store_country'/></Key></Attribute>"
+        + "<Attribute name='Store City' hasHierarchy='false'>"
+        + "<Key><Column name='store_state'/><Column name='store_city'/></Key>"
+        + "<Name><Column name='store_city'/></Name></Attribute>"
+        + "<Attribute name='Store Id' keyColumn='store_id' hasHierarchy='false'/>"
+        + "<Attribute name='Store Name' keyColumn='store_name' hasHierarchy='false'>"
+        + "<Property attribute='Store Type'/></Attribute>"
+        + "<Attribute name='Store Type' keyColumn='store_type'/>"
+        + "</Attributes>"
+        + "<Hierarchies>"
+        + "<Hierarchy name='Stores' allMemberName='All Stores'>"
+        + "<Level attribute='Store Country'/><Level attribute='Store Name'/>"
+        + "</Hierarchy></Hierarchies>"
+        + "</Dimension></Schema>";
+
+    @Test
+    public void ingestsSharedDimension() {
+        String yaml = M4XmlToYaml.toYaml(DIM_XML);
+        assertTrue(yaml, yaml.contains("shared_dimensions:"));
+        assertTrue(yaml, yaml.contains("Store:"));
+        assertTrue(yaml, yaml.contains("table: \"store\"")
+            || yaml.contains("table: store"));
+        assertTrue(yaml, yaml.contains("key: \"Store Id\"")
+            || yaml.contains("key: Store Id"));
+        assertTrue(yaml, yaml.contains("attributes:"));
+        assertTrue(yaml, yaml.contains("Store Country"));
+        assertTrue(yaml, yaml.contains("store_country"));        // from <Key>
+        assertTrue(yaml, yaml.contains("key_column"));           // from keyColumn attr
+        assertTrue(yaml, yaml.contains("name_column"));          // from <Name> single col
+        assertTrue(yaml, yaml.contains("has_hierarchy: false"));
+        assertTrue(yaml, yaml.contains("properties:"));
+        assertTrue(yaml, yaml.contains("Store Type"));
+        assertTrue(yaml, yaml.contains("hierarchies:"));
+        assertTrue(yaml, yaml.contains("all_member_name: \"All Stores\"")
+            || yaml.contains("all_member_name: All Stores"));
+        assertTrue(yaml, yaml.contains("levels:"));
+    }
+
+    @Test
+    public void sharedDimensionRoundTripsThroughEmit() {
+        String yaml = M4XmlToYaml.toYaml(DIM_XML);
+        String xml = M4YamlToXml.toXml(yaml);
+        // Re-ingest the emitted XML; the second YAML must equal the first.
+        String yaml2 = M4XmlToYaml.toYaml(xml);
+        assertEquals(yaml, yaml2);
     }
 
     // ---- emit (YAML -> M4 XML): shared dimensions ----

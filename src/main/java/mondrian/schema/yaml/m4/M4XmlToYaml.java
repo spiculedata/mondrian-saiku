@@ -65,11 +65,26 @@ public final class M4XmlToYaml {
         root.put("schema", header);
 
         if (schema.childArray != null) {
+            Map<String, Object> sharedDims = null;
             for (MondrianDef.SchemaElement el : schema.childArray) {
                 if (el instanceof MondrianDef.PhysicalSchema) {
                     root.put("physical_schema",
                         physicalSchema((MondrianDef.PhysicalSchema) el));
+                } else if (el instanceof MondrianDef.Dimension) {
+                    MondrianDef.Dimension dim = (MondrianDef.Dimension) el;
+                    // Skip dimension usages (source != null) — though top-level
+                    // schema dims are always definitions, not usages.
+                    if (dim.source != null) {
+                        continue;
+                    }
+                    if (sharedDims == null) {
+                        sharedDims = new LinkedHashMap<>();
+                    }
+                    sharedDims.put(dim.name, dimension(dim));
                 }
+            }
+            if (sharedDims != null && !sharedDims.isEmpty()) {
+                root.put("shared_dimensions", sharedDims);
             }
         }
         try {
@@ -206,6 +221,181 @@ public final class M4XmlToYaml {
             }
         }
         return buf.toString();
+    }
+
+    // ---- shared dimension helpers ----
+
+    private static Map<String, Object> dimension(MondrianDef.Dimension d) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (d.table != null) {
+            out.put("table", d.table);
+        }
+        if (d.key != null) {
+            out.put("key", d.key);
+        }
+        // Skip "OTHER" — it is the XOM default and not meaningful
+        if (d.type != null && !"OTHER".equals(d.type)) {
+            out.put("type", d.type);
+        }
+        if (d.childArray != null) {
+            for (MondrianDef.DimensionElement de : d.childArray) {
+                if (de instanceof MondrianDef.Attributes) {
+                    List<Object> attrList = new ArrayList<>();
+                    for (MondrianDef.Attribute a
+                            : ((MondrianDef.Attributes) de).array) {
+                        attrList.add(attribute(a));
+                    }
+                    if (!attrList.isEmpty()) {
+                        out.put("attributes", attrList);
+                    }
+                } else if (de instanceof MondrianDef.Hierarchies) {
+                    List<Object> hierList = new ArrayList<>();
+                    for (MondrianDef.Hierarchy h
+                            : ((MondrianDef.Hierarchies) de).array) {
+                        hierList.add(hierarchy(h));
+                    }
+                    if (!hierList.isEmpty()) {
+                        out.put("hierarchies", hierList);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> attribute(MondrianDef.Attribute a) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", a.name);
+        if (a.table != null) {
+            out.put("table", a.table);
+        }
+        // Key resolution: prefer keyColumn attribute; fall back to <Key> child
+        if (a.keyColumn != null) {
+            out.put("key_column", a.keyColumn);
+        } else {
+            MondrianDef.Key keyChild = findKeyChild(a.childArray);
+            if (keyChild != null && keyChild.array != null
+                    && keyChild.array.length > 0) {
+                out.put("key", columnNames(keyChild.array));
+            }
+        }
+        // Name resolution: prefer nameColumn attribute; fall back to <Name> child
+        if (a.nameColumn != null) {
+            out.put("name_column", a.nameColumn);
+        } else {
+            MondrianDef.Name nameChild = findNameChild(a.childArray);
+            if (nameChild != null && nameChild.array != null
+                    && nameChild.array.length > 0) {
+                List<String> nameCols = columnNames(nameChild.array);
+                if (nameCols.size() == 1) {
+                    out.put("name_column", nameCols.get(0));
+                } else {
+                    out.put("name", nameCols);
+                }
+            }
+        }
+        if (a.orderByColumn != null) {
+            out.put("order_by_column", a.orderByColumn);
+        }
+        // Skip XOM default "Regular" for levelType
+        if (a.levelType != null && !"Regular".equals(a.levelType)) {
+            out.put("level_type", a.levelType);
+        }
+        // Skip XOM default "String" for datatype
+        if (a.datatype != null && !"String".equals(a.datatype)) {
+            out.put("datatype", a.datatype);
+        }
+        if (a.hierarchyAllMemberName != null) {
+            out.put("hierarchy_all_member_name", a.hierarchyAllMemberName);
+        }
+        // Only emit hierarchy_has_all when explicitly FALSE (true is the default)
+        if (Boolean.FALSE.equals(a.hierarchyHasAll)) {
+            out.put("hierarchy_has_all", false);
+        }
+        // Only emit has_hierarchy when explicitly FALSE (true is the default)
+        if (Boolean.FALSE.equals(a.hasHierarchy)) {
+            out.put("has_hierarchy", false);
+        }
+        // Property children → properties list of attribute refs
+        List<String> props = new ArrayList<>();
+        if (a.childArray != null) {
+            for (MondrianDef.AttributeElement ae : a.childArray) {
+                if (ae instanceof MondrianDef.Property) {
+                    props.add(((MondrianDef.Property) ae).attribute);
+                }
+            }
+        }
+        if (!props.isEmpty()) {
+            out.put("properties", props);
+        }
+        return out;
+    }
+
+    private static MondrianDef.Key findKeyChild(
+        MondrianDef.AttributeElement[] kids)
+    {
+        if (kids == null) {
+            return null;
+        }
+        for (MondrianDef.AttributeElement ae : kids) {
+            if (ae instanceof MondrianDef.Key) {
+                return (MondrianDef.Key) ae;
+            }
+        }
+        return null;
+    }
+
+    private static MondrianDef.Name findNameChild(
+        MondrianDef.AttributeElement[] kids)
+    {
+        if (kids == null) {
+            return null;
+        }
+        for (MondrianDef.AttributeElement ae : kids) {
+            if (ae instanceof MondrianDef.Name) {
+                return (MondrianDef.Name) ae;
+            }
+        }
+        return null;
+    }
+
+    private static Map<String, Object> hierarchy(MondrianDef.Hierarchy h) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", h.name);
+        if (h.allMemberName != null) {
+            out.put("all_member_name", h.allMemberName);
+        }
+        if (h.defaultMember != null) {
+            out.put("default_member", h.defaultMember);
+        }
+        if (h.hasAll != null) {
+            out.put("has_all", h.hasAll);
+        }
+        // Collect levels
+        List<Object> levels = new ArrayList<>();
+        if (h.childArray != null) {
+            for (MondrianDef.HierarchyElement he : h.childArray) {
+                if (he instanceof MondrianDef.Level) {
+                    levels.add(level((MondrianDef.Level) he));
+                }
+            }
+        }
+        if (!levels.isEmpty()) {
+            out.put("levels", levels);
+        }
+        return out;
+    }
+
+    private static Object level(MondrianDef.Level l) {
+        // If level has a name that differs from its attribute ref, emit a map;
+        // otherwise emit just the attribute string.
+        if (l.name != null && !l.name.equals(l.attribute)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", l.name);
+            m.put("attribute", l.attribute);
+            return m;
+        }
+        return l.attribute;
     }
 
     private static List<String> columnNames(MondrianDef.Column[] cols) {
