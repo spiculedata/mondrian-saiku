@@ -763,4 +763,28 @@ public class M4PhysicalLayerTest {
         assertTrue(emitted, emitted.contains("approxRowCount=\"86837\""));
         assertTrue(emitted, emitted.contains("ignoreUnrelatedDimensions=\"true\""));
     }
+
+    @Test
+    public void dimensionGrantRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='Sales' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups></Cube>"
+            + "<Role name='R'><SchemaGrant access='none'>"
+            + "<CubeGrant cube='Sales' access='custom'>"
+            + "<DimensionGrant dimension='[Store]' access='none'/>"
+            + "<HierarchyGrant hierarchy='[Store].[Stores]' access='all'/>"
+            + "</CubeGrant></SchemaGrant></Role></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("dimensions:"));
+        assertTrue(yaml, yaml.contains("[Store]"));
+        assertTrue(yaml, yaml.contains("hierarchies:"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<DimensionGrant dimension=\"[Store]\"")
+            || (emitted.contains("<DimensionGrant") && emitted.contains("dimension=\"[Store]\"")));
+    }
 }

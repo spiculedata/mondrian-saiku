@@ -537,12 +537,30 @@ public final class M4XmlToYaml {
         if (cg.access != null) {
             out.put("access", cg.access);
         }
+        if (cg.dimensionGrants != null && cg.dimensionGrants.length > 0) {
+            List<Object> dims = new ArrayList<>();
+            for (MondrianDef.DimensionGrant dg : cg.dimensionGrants) {
+                dims.add(dimensionGrant(dg));
+            }
+            out.put("dimensions", dims);
+        }
         if (cg.hierarchyGrants != null && cg.hierarchyGrants.length > 0) {
             List<Object> hiers = new ArrayList<>();
             for (MondrianDef.HierarchyGrant hg : cg.hierarchyGrants) {
                 hiers.add(hierarchyGrant(hg));
             }
             out.put("hierarchies", hiers);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> dimensionGrant(MondrianDef.DimensionGrant dg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (dg.dimension != null) {
+            out.put("dimension", dg.dimension);
+        }
+        if (dg.access != null) {
+            out.put("access", dg.access);
         }
         return out;
     }

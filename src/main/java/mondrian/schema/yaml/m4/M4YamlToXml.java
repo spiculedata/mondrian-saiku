@@ -168,6 +168,16 @@ public final class M4YamlToXml {
         MondrianDef.CubeGrant grant = new MondrianDef.CubeGrant();
         grant.cube = str(cg.get("cube"));
         grant.access = str(cg.get("access"));
+        Object dims = cg.get("dimensions");
+        if (dims instanceof List && !((List<?>) dims).isEmpty()) {
+            List<MondrianDef.DimensionGrant> list = new ArrayList<>();
+            for (Object d : (List<?>) dims) {
+                if (d instanceof Map) {
+                    list.add(buildDimensionGrant((Map<?, ?>) d));
+                }
+            }
+            grant.dimensionGrants = list.toArray(new MondrianDef.DimensionGrant[0]);
+        }
         Object hiers = cg.get("hierarchies");
         if (hiers instanceof List && !((List<?>) hiers).isEmpty()) {
             List<MondrianDef.HierarchyGrant> list = new ArrayList<>();
@@ -178,6 +188,13 @@ public final class M4YamlToXml {
             }
             grant.hierarchyGrants = list.toArray(new MondrianDef.HierarchyGrant[0]);
         }
+        return grant;
+    }
+
+    private static MondrianDef.DimensionGrant buildDimensionGrant(Map<?, ?> dg) {
+        MondrianDef.DimensionGrant grant = new MondrianDef.DimensionGrant();
+        grant.dimension = str(dg.get("dimension"));
+        grant.access = str(dg.get("access"));
         return grant;
     }
 
