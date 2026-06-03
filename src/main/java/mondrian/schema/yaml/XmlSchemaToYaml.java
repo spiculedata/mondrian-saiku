@@ -22,6 +22,9 @@ import org.xml.sax.InputSource;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import mondrian.schema.yaml.m4.M4Detection;
+import mondrian.schema.yaml.m4.M4XmlToYaml;
+
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -76,6 +79,9 @@ public final class XmlSchemaToYaml {
             throw new IllegalArgumentException(
                 "expected root element <Schema>, got: "
                     + (schema == null ? "(none)" : schema.getTagName()));
+        }
+        if (M4Detection.isM4Xml(schema)) {
+            return M4XmlToYaml.toYaml(xmlText);
         }
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("schema", schema.getAttribute("name"));
