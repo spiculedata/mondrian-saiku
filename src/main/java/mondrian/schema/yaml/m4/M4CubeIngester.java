@@ -89,7 +89,6 @@ final class M4CubeIngester {
     }
 
     private static Map<String, Object> calculatedMember(MondrianDef.CalculatedMember cm) {
-        // TODO: deferred fields not yet captured: caption, description, visible, CellFormatter
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", cm.name);
         if (cm.dimension != null) {
@@ -100,6 +99,15 @@ final class M4CubeIngester {
         }
         if (cm.parent != null) {
             out.put("parent", cm.parent);
+        }
+        if (cm.caption != null) {
+            out.put("caption", cm.caption);
+        }
+        if (cm.description != null) {
+            out.put("description", cm.description);
+        }
+        if (cm.visible != null) {
+            out.put("visible", cm.visible);
         }
         // Prefer formula attribute; fall back to <Formula> child cdata
         String formula = cm.formula;
@@ -117,17 +125,45 @@ final class M4CubeIngester {
         if (cm.formatString != null) {
             out.put("format_string", cm.formatString);
         }
-        // Collect CalculatedMemberProperty children
+        // Scan children for CellFormatter and CalculatedMemberProperty
         if (cm.childArray != null) {
+            MondrianDef.CellFormatter cellFmt = null;
             List<Object> props = new ArrayList<>();
             for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
-                if (child instanceof MondrianDef.CalculatedMemberProperty) {
+                if (child instanceof MondrianDef.CellFormatter) {
+                    cellFmt = (MondrianDef.CellFormatter) child;
+                } else if (child instanceof MondrianDef.CalculatedMemberProperty) {
                     props.add(calcMemberProperty((MondrianDef.CalculatedMemberProperty) child));
                 }
+            }
+            if (cellFmt != null) {
+                out.put("cell_formatter", cellFormatter(cellFmt));
             }
             if (!props.isEmpty()) {
                 out.put("properties", props);
             }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> cellFormatter(MondrianDef.CellFormatter cf) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (cf.className != null) {
+            out.put("class_name", cf.className);
+        }
+        if (cf.script != null) {
+            out.put("script", script(cf.script));
+        }
+        return out;
+    }
+
+    private static Map<String, Object> script(MondrianDef.Script s) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (s.language != null) {
+            out.put("language", s.language);
+        }
+        if (s.cdata != null) {
+            out.put("body", s.cdata);
         }
         return out;
     }

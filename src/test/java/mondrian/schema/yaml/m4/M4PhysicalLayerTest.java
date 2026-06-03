@@ -787,4 +787,38 @@ public class M4PhysicalLayerTest {
         assertTrue(emitted, emitted.contains("<DimensionGrant dimension=\"[Store]\"")
             || (emitted.contains("<DimensionGrant") && emitted.contains("dimension=\"[Store]\"")));
     }
+
+    @Test
+    public void calcMemberCaptionDescriptionVisibleAndCellFormatterRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "<CalculatedMembers>"
+            + "<CalculatedMember name='Profit' dimension='Measures' caption='Prof'"
+            + " description='profit measure' visible='false'>"
+            + "<Formula>1+1</Formula>"
+            + "<CellFormatter className='com.example.Fmt'>"
+            + "<Script language='JavaScript'>return value;</Script>"
+            + "</CellFormatter>"
+            + "</CalculatedMember>"
+            + "</CalculatedMembers>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("caption"));
+        assertTrue(yaml, yaml.contains("Prof"));
+        assertTrue(yaml, yaml.contains("description"));
+        assertTrue(yaml, yaml.contains("visible"));
+        assertTrue(yaml, yaml.contains("cell_formatter"));
+        assertTrue(yaml, yaml.contains("com.example.Fmt"));
+        assertTrue(yaml, yaml.contains("language"));
+        assertTrue(yaml, yaml.contains("return value;"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<CellFormatter className=\"com.example.Fmt\""));
+        assertTrue(emitted, emitted.contains("<Script language=\"JavaScript\""));
+    }
 }

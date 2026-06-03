@@ -83,19 +83,48 @@ final class M4CubeBuilder {
         cm.dimension = M4YamlToXml.str(m.get("dimension"));
         cm.hierarchy = M4YamlToXml.str(m.get("hierarchy"));
         cm.parent = M4YamlToXml.str(m.get("parent"));
+        cm.caption = M4YamlToXml.str(m.get("caption"));
+        cm.description = M4YamlToXml.str(m.get("description"));
+        Object visibleObj = m.get("visible");
+        if (visibleObj != null) {
+            cm.visible = boolToBoolean(visibleObj);
+        }
         cm.formula = M4YamlToXml.str(m.get("formula"));
         cm.formatString = M4YamlToXml.str(m.get("format_string"));
+        List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+        Object cfObj = m.get("cell_formatter");
+        if (cfObj instanceof Map) {
+            kids.add(buildCellFormatter((Map<?, ?>) cfObj));
+        }
         Object propsObj = m.get("properties");
-        if (propsObj instanceof List && !((List<?>) propsObj).isEmpty()) {
-            List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+        if (propsObj instanceof List) {
             for (Object p : (List<?>) propsObj) {
                 if (p instanceof Map) {
                     kids.add(buildCalcMemberProperty((Map<?, ?>) p));
                 }
             }
+        }
+        if (!kids.isEmpty()) {
             cm.childArray = kids.toArray(new MondrianDef.CalculatedMemberElement[0]);
         }
         return cm;
+    }
+
+    private static MondrianDef.CellFormatter buildCellFormatter(Map<?, ?> m) {
+        MondrianDef.CellFormatter cf = new MondrianDef.CellFormatter();
+        cf.className = M4YamlToXml.str(m.get("class_name"));
+        Object scriptObj = m.get("script");
+        if (scriptObj instanceof Map) {
+            cf.script = buildScript((Map<?, ?>) scriptObj);
+        }
+        return cf;
+    }
+
+    private static MondrianDef.Script buildScript(Map<?, ?> m) {
+        MondrianDef.Script s = new MondrianDef.Script();
+        s.language = M4YamlToXml.str(m.get("language"));
+        s.cdata = M4YamlToXml.str(m.get("body"));
+        return s;
     }
 
     private static MondrianDef.CalculatedMemberProperty buildCalcMemberProperty(Map<?, ?> m) {
