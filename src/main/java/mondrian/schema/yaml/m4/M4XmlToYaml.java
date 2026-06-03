@@ -67,8 +67,16 @@ public final class M4XmlToYaml {
         if (schema.childArray != null) {
             Map<String, Object> sharedDims = null;
             Map<String, Object> cubes = null;
+            List<Object> roles = null;
             for (MondrianDef.SchemaElement el : schema.childArray) {
-                if (el instanceof MondrianDef.PhysicalSchema) {
+                if (el instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        annotations((MondrianDef.Annotations) el);
+                    if (ann != null && !ann.isEmpty()) {
+                        // Place annotations first, right after schema header
+                        root.put("annotations", ann);
+                    }
+                } else if (el instanceof MondrianDef.PhysicalSchema) {
                     root.put("physical_schema",
                         physicalSchema((MondrianDef.PhysicalSchema) el));
                 } else if (el instanceof MondrianDef.Dimension) {
@@ -88,6 +96,11 @@ public final class M4XmlToYaml {
                     }
                     MondrianDef.Cube c = (MondrianDef.Cube) el;
                     cubes.put(c.name, M4CubeIngester.cube(c));
+                } else if (el instanceof MondrianDef.Role) {
+                    if (roles == null) {
+                        roles = new ArrayList<>();
+                    }
+                    roles.add(role((MondrianDef.Role) el));
                 }
             }
             if (sharedDims != null && !sharedDims.isEmpty()) {
@@ -95,6 +108,9 @@ public final class M4XmlToYaml {
             }
             if (cubes != null && !cubes.isEmpty()) {
                 root.put("cubes", cubes);
+            }
+            if (roles != null && !roles.isEmpty()) {
+                root.put("roles", roles);
             }
         }
         try {
@@ -425,5 +441,113 @@ public final class M4XmlToYaml {
             }
         }
         return names;
+    }
+
+    // ---- shared annotations helper (used by schema and cube ingest) ----
+
+    /**
+     * Converts a {@link MondrianDef.Annotations} to an ordered name→text map.
+     * Package-private so {@link M4CubeIngester} can reuse it.
+     * Returns {@code null} if the element or its array is null/empty.
+     */
+    static Map<String, Object> annotations(MondrianDef.Annotations ann) {
+        if (ann == null || ann.array == null || ann.array.length == 0) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (MondrianDef.Annotation a : ann.array) {
+            out.put(a.name, a.cdata == null ? "" : a.cdata);
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    // ---- role ingest helpers ----
+
+    private static Map<String, Object> role(MondrianDef.Role r) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", r.name);
+        if (r.className != null) {
+            out.put("class_name", r.className);
+        }
+        if (r.childArray != null) {
+            for (MondrianDef.RoleElement re : r.childArray) {
+                if (re instanceof MondrianDef.SchemaGrant) {
+                    out.put("schema_grant", schemaGrant((MondrianDef.SchemaGrant) re));
+                    break; // only one schema grant per role
+                }
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> schemaGrant(MondrianDef.SchemaGrant sg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (sg.access != null) {
+            out.put("access", sg.access);
+        }
+        if (sg.cubeGrants != null && sg.cubeGrants.length > 0) {
+            List<Object> cubes = new ArrayList<>();
+            for (MondrianDef.CubeGrant cg : sg.cubeGrants) {
+                cubes.add(cubeGrant(cg));
+            }
+            out.put("cubes", cubes);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> cubeGrant(MondrianDef.CubeGrant cg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (cg.cube != null) {
+            out.put("cube", cg.cube);
+        }
+        if (cg.access != null) {
+            out.put("access", cg.access);
+        }
+        if (cg.hierarchyGrants != null && cg.hierarchyGrants.length > 0) {
+            List<Object> hiers = new ArrayList<>();
+            for (MondrianDef.HierarchyGrant hg : cg.hierarchyGrants) {
+                hiers.add(hierarchyGrant(hg));
+            }
+            out.put("hierarchies", hiers);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> hierarchyGrant(MondrianDef.HierarchyGrant hg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (hg.hierarchy != null) {
+            out.put("hierarchy", hg.hierarchy);
+        }
+        if (hg.access != null) {
+            out.put("access", hg.access);
+        }
+        if (hg.topLevel != null) {
+            out.put("top_level", hg.topLevel);
+        }
+        if (hg.bottomLevel != null) {
+            out.put("bottom_level", hg.bottomLevel);
+        }
+        if (hg.rollupPolicy != null) {
+            out.put("rollup_policy", hg.rollupPolicy);
+        }
+        if (hg.memberGrants != null && hg.memberGrants.length > 0) {
+            List<Object> members = new ArrayList<>();
+            for (MondrianDef.MemberGrant mg : hg.memberGrants) {
+                members.add(memberGrant(mg));
+            }
+            out.put("members", members);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> memberGrant(MondrianDef.MemberGrant mg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (mg.member != null) {
+            out.put("member", mg.member);
+        }
+        if (mg.access != null) {
+            out.put("access", mg.access);
+        }
+        return out;
     }
 }

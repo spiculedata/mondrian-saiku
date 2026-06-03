@@ -38,12 +38,15 @@ final class M4CubeIngester {
             out.put("default_measure", c.defaultMeasure);
         }
         if (c.childArray != null) {
+            Map<String, Object> annMap = null;
             List<Object> dimList = null;
             List<Object> mgList = null;
             List<Object> cmList = null;
             List<Object> nsList = null;
             for (MondrianDef.CubeElement ce : c.childArray) {
-                if (ce instanceof MondrianDef.Dimensions) {
+                if (ce instanceof MondrianDef.Annotations) {
+                    annMap = M4XmlToYaml.annotations((MondrianDef.Annotations) ce);
+                } else if (ce instanceof MondrianDef.Dimensions) {
                     dimList = cubeDimensions((MondrianDef.Dimensions) ce);
                 } else if (ce instanceof MondrianDef.MeasureGroups) {
                     mgList = measureGroups((MondrianDef.MeasureGroups) ce);
@@ -52,6 +55,10 @@ final class M4CubeIngester {
                 } else if (ce instanceof MondrianDef.NamedSets) {
                     nsList = namedSets((MondrianDef.NamedSets) ce);
                 }
+            }
+            // Annotations placed first (after default_measure, before dimensions)
+            if (annMap != null && !annMap.isEmpty()) {
+                out.put("annotations", annMap);
             }
             if (dimList != null && !dimList.isEmpty()) {
                 out.put("dimensions", dimList);
@@ -82,6 +89,7 @@ final class M4CubeIngester {
     }
 
     private static Map<String, Object> calculatedMember(MondrianDef.CalculatedMember cm) {
+        // TODO: deferred fields not yet captured: caption, description, visible, CellFormatter
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", cm.name);
         if (cm.dimension != null) {

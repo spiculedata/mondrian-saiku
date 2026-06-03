@@ -525,4 +525,82 @@ public class M4PhysicalLayerTest {
         String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
         assertEquals(yaml, yaml2);
     }
+
+    // ---- roles + annotations ----
+
+    private static final String ROLE_ANN_XML =
+        "<Schema name='FoodMart' metamodelVersion='4.0'>"
+        + "<Annotations><Annotation name='caption.de_DE'>Verkaufen</Annotation></Annotations>"
+        + "<Role name='California manager'>"
+        + "<SchemaGrant access='none'>"
+        + "<CubeGrant cube='Sales' access='all'>"
+        + "<HierarchyGrant hierarchy='[Store].[Stores]' access='custom'"
+        + " topLevel='[Store].[Stores].[Store Country]'>"
+        + "<MemberGrant member='[Store].[Stores].[USA].[CA]' access='all'/>"
+        + "</HierarchyGrant>"
+        + "</CubeGrant>"
+        + "</SchemaGrant>"
+        + "</Role>"
+        + "</Schema>";
+
+    @Test
+    public void ingestsRolesAndAnnotations() {
+        String yaml = M4XmlToYaml.toYaml(ROLE_ANN_XML);
+        assertTrue(yaml, yaml.contains("annotations:"));
+        assertTrue(yaml, yaml.contains("caption.de_DE"));
+        assertTrue(yaml, yaml.contains("Verkaufen"));
+        assertTrue(yaml, yaml.contains("roles:"));
+        assertTrue(yaml, yaml.contains("California manager"));
+        assertTrue(yaml, yaml.contains("Sales"));
+        assertTrue(yaml, yaml.contains("[Store].[Stores].[USA].[CA]"));
+    }
+
+    @Test
+    public void rolesAndAnnotationsRoundTrip() {
+        String yaml = M4XmlToYaml.toYaml(ROLE_ANN_XML);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    @Test
+    public void cubeAnnotationsRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='Sales' defaultMeasure='Unit Sales'>"
+            + "<Annotations><Annotation name='caption.fr_FR'>Ventes</Annotation></Annotations>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='Unit Sales' column='u' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("annotations:"));
+        assertTrue(yaml, yaml.contains("caption.fr_FR"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    @Test
+    public void calcMemberExpressionPropertyAndHierarchyParentRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "<CalculatedMembers>"
+            + "<CalculatedMember name='CM' hierarchy='[Measures]' parent='[Measures]'>"
+            + "<Formula>1+1</Formula>"
+            + "<CalculatedMemberProperty name='X' expression='[a].[b]'/>"
+            + "</CalculatedMember></CalculatedMembers>"
+            + "<NamedSets><NamedSet name='NS'><Formula>{[A]}</Formula></NamedSet></NamedSets>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("hierarchy:"));
+        assertTrue(yaml, yaml.contains("parent:"));
+        assertTrue(yaml, yaml.contains("expression"));
+        assertTrue(yaml, yaml.contains("1+1"));   // Formula child cdata read
+        assertTrue(yaml, yaml.contains("{[A]}"));  // NamedSet Formula child cdata
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
 }

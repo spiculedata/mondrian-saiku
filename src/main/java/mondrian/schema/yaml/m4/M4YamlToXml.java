@@ -20,6 +20,7 @@ import org.eigenbase.xom.TextDef;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
 /**
  * #34 M4: YAML -> Mondrian-4 XML. Parses the YAML into a map, builds a
@@ -62,6 +63,11 @@ public final class M4YamlToXml {
             schema.name = str(schemaNode);
         }
         List<MondrianDef.SchemaElement> children = new ArrayList<>();
+        // Annotations go first (schema-level)
+        Object annObj = root.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            children.add(buildAnnotations((Map<?, ?>) annObj));
+        }
         Object phys = root.get("physical_schema");
         if (phys instanceof Map) {
             children.add(buildPhysicalSchema((Map<?, ?>) phys));
@@ -83,11 +89,115 @@ public final class M4YamlToXml {
                 }
             }
         }
+        Object roles = root.get("roles");
+        if (roles instanceof List) {
+            for (Object r : (List<?>) roles) {
+                if (r instanceof Map) {
+                    children.add(buildRole((Map<?, ?>) r));
+                }
+            }
+        }
         if (!children.isEmpty()) {
             schema.childArray =
                 children.toArray(new MondrianDef.SchemaElement[0]);
         }
         return schema;
+    }
+
+    // ---- shared annotations helper (used by schema and cube) ----
+
+    /**
+     * Builds a {@link MondrianDef.Annotations} from a name→text map.
+     * Package-private so {@link M4CubeBuilder} can reuse it.
+     */
+    static MondrianDef.Annotations buildAnnotations(Map<?, ?> annMap) {
+        MondrianDef.Annotations ann = new MondrianDef.Annotations();
+        List<MondrianDef.Annotation> list = new ArrayList<>();
+        for (Entry<?, ?> e : annMap.entrySet()) {
+            MondrianDef.Annotation a = new MondrianDef.Annotation();
+            a.name = str(e.getKey());
+            a.cdata = str(e.getValue());
+            list.add(a);
+        }
+        ann.array = list.toArray(new MondrianDef.Annotation[0]);
+        return ann;
+    }
+
+    // ---- role builders ----
+
+    private static MondrianDef.Role buildRole(Map<?, ?> r) {
+        MondrianDef.Role role = new MondrianDef.Role();
+        role.name = str(r.get("name"));
+        role.className = str(r.get("class_name"));
+        List<MondrianDef.RoleElement> kids = new ArrayList<>();
+        Object sg = r.get("schema_grant");
+        if (sg instanceof Map) {
+            kids.add(buildSchemaGrant((Map<?, ?>) sg));
+        }
+        if (!kids.isEmpty()) {
+            role.childArray = kids.toArray(new MondrianDef.RoleElement[0]);
+        }
+        return role;
+    }
+
+    private static MondrianDef.SchemaGrant buildSchemaGrant(Map<?, ?> sg) {
+        MondrianDef.SchemaGrant grant = new MondrianDef.SchemaGrant();
+        grant.access = str(sg.get("access"));
+        Object cubes = sg.get("cubes");
+        if (cubes instanceof List && !((List<?>) cubes).isEmpty()) {
+            List<MondrianDef.CubeGrant> list = new ArrayList<>();
+            for (Object c : (List<?>) cubes) {
+                if (c instanceof Map) {
+                    list.add(buildCubeGrant((Map<?, ?>) c));
+                }
+            }
+            grant.cubeGrants = list.toArray(new MondrianDef.CubeGrant[0]);
+        }
+        return grant;
+    }
+
+    private static MondrianDef.CubeGrant buildCubeGrant(Map<?, ?> cg) {
+        MondrianDef.CubeGrant grant = new MondrianDef.CubeGrant();
+        grant.cube = str(cg.get("cube"));
+        grant.access = str(cg.get("access"));
+        Object hiers = cg.get("hierarchies");
+        if (hiers instanceof List && !((List<?>) hiers).isEmpty()) {
+            List<MondrianDef.HierarchyGrant> list = new ArrayList<>();
+            for (Object h : (List<?>) hiers) {
+                if (h instanceof Map) {
+                    list.add(buildHierarchyGrant((Map<?, ?>) h));
+                }
+            }
+            grant.hierarchyGrants = list.toArray(new MondrianDef.HierarchyGrant[0]);
+        }
+        return grant;
+    }
+
+    private static MondrianDef.HierarchyGrant buildHierarchyGrant(Map<?, ?> hg) {
+        MondrianDef.HierarchyGrant grant = new MondrianDef.HierarchyGrant();
+        grant.hierarchy = str(hg.get("hierarchy"));
+        grant.access = str(hg.get("access"));
+        grant.topLevel = str(hg.get("top_level"));
+        grant.bottomLevel = str(hg.get("bottom_level"));
+        grant.rollupPolicy = str(hg.get("rollup_policy"));
+        Object members = hg.get("members");
+        if (members instanceof List && !((List<?>) members).isEmpty()) {
+            List<MondrianDef.MemberGrant> list = new ArrayList<>();
+            for (Object m : (List<?>) members) {
+                if (m instanceof Map) {
+                    list.add(buildMemberGrant((Map<?, ?>) m));
+                }
+            }
+            grant.memberGrants = list.toArray(new MondrianDef.MemberGrant[0]);
+        }
+        return grant;
+    }
+
+    private static MondrianDef.MemberGrant buildMemberGrant(Map<?, ?> mg) {
+        MondrianDef.MemberGrant grant = new MondrianDef.MemberGrant();
+        grant.member = str(mg.get("member"));
+        grant.access = str(mg.get("access"));
+        return grant;
     }
 
     // ---- Shared dimension builder ----

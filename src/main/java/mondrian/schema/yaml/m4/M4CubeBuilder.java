@@ -36,6 +36,11 @@ final class M4CubeBuilder {
         cube.name = name;
         cube.defaultMeasure = M4YamlToXml.str(body.get("default_measure"));
         List<MondrianDef.CubeElement> cubeKids = new ArrayList<>();
+        // Annotations go first (cube-level)
+        Object annObj = body.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            cubeKids.add(M4YamlToXml.buildAnnotations((Map<?, ?>) annObj));
+        }
         Object dims = body.get("dimensions");
         if (dims instanceof List && !((List<?>) dims).isEmpty()) {
             cubeKids.add(buildCubeDimensions((List<?>) dims));
