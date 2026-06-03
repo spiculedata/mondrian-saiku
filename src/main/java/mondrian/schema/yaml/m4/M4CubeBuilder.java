@@ -92,6 +92,11 @@ final class M4CubeBuilder {
         cm.formula = M4YamlToXml.str(m.get("formula"));
         cm.formatString = M4YamlToXml.str(m.get("format_string"));
         List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(M4YamlToXml.buildAnnotations((Map<?, ?>) annObj));
+        }
         Object cfObj = m.get("cell_formatter");
         if (cfObj instanceof Map) {
             kids.add(buildCellFormatter((Map<?, ?>) cfObj));
@@ -252,14 +257,21 @@ final class M4CubeBuilder {
         measure.aggregator = M4YamlToXml.str(m.get("aggregator"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
+        List<MondrianDef.MeasureElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(M4YamlToXml.buildAnnotations((Map<?, ?>) annObj));
+        }
         Object props = m.get("properties");
         if (props instanceof List && !((List<?>) props).isEmpty()) {
-            List<MondrianDef.MeasureElement> kids = new ArrayList<>();
             for (Object p : (List<?>) props) {
                 if (p instanceof Map) {
                     kids.add(buildCalcMemberProperty((Map<?, ?>) p));
                 }
             }
+        }
+        if (!kids.isEmpty()) {
             measure.childArray =
                 kids.toArray(new MondrianDef.MeasureElement[0]);
         }

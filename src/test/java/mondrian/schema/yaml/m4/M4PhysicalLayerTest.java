@@ -789,6 +789,47 @@ public class M4PhysicalLayerTest {
     }
 
     @Test
+    public void subCubeAnnotationsRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Dimension name='Store' table='store' key='K'>"
+            + "<Annotations><Annotation name='AppliesTo'>store</Annotation></Annotations>"
+            + "<Attributes>"
+            + "<Attribute name='K' keyColumn='store_id' hasHierarchy='false'>"
+            + "<Annotations><Annotation name='hidden'>true</Annotation></Annotations>"
+            + "</Attribute>"
+            + "<Attribute name='Country' keyColumn='country' hasHierarchy='false'/>"
+            + "</Attributes>"
+            + "<Hierarchies>"
+            + "<Hierarchy name='Stores'>"
+            + "<Annotations><Annotation name='default'>true</Annotation></Annotations>"
+            + "<Level attribute='Country'>"
+            + "<Annotations><Annotation name='note'>ctry</Annotation></Annotations>"
+            + "</Level>"
+            + "</Hierarchy></Hierarchies>"
+            + "</Dimension>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'>"
+            + "<Annotations><Annotation name='unit'>each</Annotation></Annotations>"
+            + "</Measure></Measures></MeasureGroup></MeasureGroups>"
+            + "</Cube>"
+            + "<Role name='R'>"
+            + "<Annotations><Annotation name='team'>bi</Annotation></Annotations>"
+            + "<SchemaGrant access='all'/></Role>"
+            + "</Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("AppliesTo"));   // dimension
+        assertTrue(yaml, yaml.contains("hidden"));        // attribute
+        assertTrue(yaml, yaml.contains("default"));       // hierarchy
+        assertTrue(yaml, yaml.contains("note"));          // level
+        assertTrue(yaml, yaml.contains("unit"));          // measure
+        assertTrue(yaml, yaml.contains("team"));          // role
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    @Test
     public void calcMemberCaptionDescriptionVisibleAndCellFormatterRoundTrip() {
         String xml =
             "<Schema name='S' metamodelVersion='4.0'>"

@@ -91,6 +91,18 @@ final class M4CubeIngester {
     private static Map<String, Object> calculatedMember(MondrianDef.CalculatedMember cm) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", cm.name);
+        // Annotations second (after name, before dimension)
+        if (cm.childArray != null) {
+            for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
+                if (child instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        M4XmlToYaml.annotations((MondrianDef.Annotations) child);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
+        }
         if (cm.dimension != null) {
             out.put("dimension", cm.dimension);
         }
@@ -310,6 +322,18 @@ final class M4CubeIngester {
         } else if (mor instanceof MondrianDef.Measure) {
             MondrianDef.Measure m = (MondrianDef.Measure) mor;
             out.put("name", m.name);
+            // Annotations second (after name, before column)
+            if (m.childArray != null) {
+                for (MondrianDef.MeasureElement me : m.childArray) {
+                    if (me instanceof MondrianDef.Annotations) {
+                        Map<String, Object> ann =
+                            M4XmlToYaml.annotations((MondrianDef.Annotations) me);
+                        if (ann != null && !ann.isEmpty()) {
+                            out.put("annotations", ann);
+                        }
+                    }
+                }
+            }
             if (m.column != null) {
                 out.put("column", m.column);
             }

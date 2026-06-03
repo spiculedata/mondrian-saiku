@@ -270,6 +270,18 @@ public final class M4XmlToYaml {
 
     static Map<String, Object> dimension(MondrianDef.Dimension d) {
         Map<String, Object> out = new LinkedHashMap<>();
+        // Annotations first (before table/key)
+        if (d.childArray != null) {
+            for (MondrianDef.DimensionElement de : d.childArray) {
+                if (de instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        annotations((MondrianDef.Annotations) de);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
+        }
         if (d.table != null) {
             out.put("table", d.table);
         }
@@ -309,6 +321,18 @@ public final class M4XmlToYaml {
     private static Map<String, Object> attribute(MondrianDef.Attribute a) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", a.name);
+        // Annotations second (after name, before key_column)
+        if (a.childArray != null) {
+            for (MondrianDef.AttributeElement ae : a.childArray) {
+                if (ae instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        annotations((MondrianDef.Annotations) ae);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
+        }
         if (a.table != null) {
             out.put("table", a.table);
         }
@@ -423,6 +447,18 @@ public final class M4XmlToYaml {
         if (h.hasAll != null) {
             out.put("has_all", h.hasAll);
         }
+        // Annotations before levels
+        if (h.childArray != null) {
+            for (MondrianDef.HierarchyElement he : h.childArray) {
+                if (he instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        annotations((MondrianDef.Annotations) he);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
+        }
         // Collect levels
         List<Object> levels = new ArrayList<>();
         if (h.childArray != null) {
@@ -439,12 +475,28 @@ public final class M4XmlToYaml {
     }
 
     private static Object level(MondrianDef.Level l) {
-        // If level has a name that differs from its attribute ref, emit a map;
-        // otherwise emit just the attribute string.
-        if (l.name != null && !l.name.equals(l.attribute)) {
+        // Check for annotations in childArray
+        Map<String, Object> ann = null;
+        if (l.childArray != null) {
+            for (MondrianDef.LevelElement le : l.childArray) {
+                if (le instanceof MondrianDef.Annotations) {
+                    ann = annotations((MondrianDef.Annotations) le);
+                    break;
+                }
+            }
+        }
+        // If level has a name that differs from its attribute ref, or has
+        // annotations, emit a map; otherwise emit just the attribute string.
+        if ((l.name != null && !l.name.equals(l.attribute))
+                || (ann != null && !ann.isEmpty())) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", l.name);
+            if (l.name != null && !l.name.equals(l.attribute)) {
+                m.put("name", l.name);
+            }
             m.put("attribute", l.attribute);
+            if (ann != null && !ann.isEmpty()) {
+                m.put("annotations", ann);
+            }
             return m;
         }
         return l.attribute;
@@ -502,6 +554,18 @@ public final class M4XmlToYaml {
         out.put("name", r.name);
         if (r.className != null) {
             out.put("class_name", r.className);
+        }
+        // Annotations before schema_grant
+        if (r.childArray != null) {
+            for (MondrianDef.RoleElement re : r.childArray) {
+                if (re instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        annotations((MondrianDef.Annotations) re);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
         }
         if (r.childArray != null) {
             for (MondrianDef.RoleElement re : r.childArray) {
