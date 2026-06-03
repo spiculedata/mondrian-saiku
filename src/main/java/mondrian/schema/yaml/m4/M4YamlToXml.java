@@ -380,7 +380,7 @@ public final class M4YamlToXml {
         return level;
     }
 
-    private static Boolean boolToBoolean(Object o) {
+    static Boolean boolToBoolean(Object o) {
         if (o instanceof Boolean) {
             return (Boolean) o;
         }

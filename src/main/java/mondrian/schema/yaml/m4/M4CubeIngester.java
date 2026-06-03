@@ -171,7 +171,10 @@ final class M4CubeIngester {
 
     private static Map<String, Object> script(MondrianDef.Script s) {
         Map<String, Object> out = new LinkedHashMap<>();
-        if (s.language != null) {
+        // Suppress XOM's default "JavaScript" — it is set even when the XML
+        // omitted the attribute, so emitting it would cause yaml != yaml2 for
+        // round-trips that start with a <Script> that has no language attribute.
+        if (s.language != null && !"JavaScript".equals(s.language)) {
             out.put("language", s.language);
         }
         if (s.cdata != null) {

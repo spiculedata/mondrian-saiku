@@ -831,6 +831,10 @@ public class M4PhysicalLayerTest {
 
     @Test
     public void calcMemberCaptionDescriptionVisibleAndCellFormatterRoundTrip() {
+        // Uses language='Groovy' (a non-default) so the explicit language
+        // attribute is preserved through the round-trip.  'JavaScript' is the
+        // XOM default and is suppressed by the ingest; that edge is covered by
+        // cellFormatterScriptWithoutLanguageRoundTrips().
         String xml =
             "<Schema name='S' metamodelVersion='4.0'>"
             + "<Cube name='C' defaultMeasure='M'>"
@@ -842,7 +846,7 @@ public class M4PhysicalLayerTest {
             + " description='profit measure' visible='false'>"
             + "<Formula>1+1</Formula>"
             + "<CellFormatter className='com.example.Fmt'>"
-            + "<Script language='JavaScript'>return value;</Script>"
+            + "<Script language='Groovy'>return value;</Script>"
             + "</CellFormatter>"
             + "</CalculatedMember>"
             + "</CalculatedMembers>"
@@ -855,11 +859,31 @@ public class M4PhysicalLayerTest {
         assertTrue(yaml, yaml.contains("cell_formatter"));
         assertTrue(yaml, yaml.contains("com.example.Fmt"));
         assertTrue(yaml, yaml.contains("language"));
+        assertTrue(yaml, yaml.contains("Groovy"));
         assertTrue(yaml, yaml.contains("return value;"));
         String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
         assertEquals(yaml, yaml2);
         String emitted = M4YamlToXml.toXml(yaml);
         assertTrue(emitted, emitted.contains("<CellFormatter className=\"com.example.Fmt\""));
-        assertTrue(emitted, emitted.contains("<Script language=\"JavaScript\""));
+        assertTrue(emitted, emitted.contains("<Script language=\"Groovy\""));
+    }
+
+    @Test
+    public void cellFormatterScriptWithoutLanguageRoundTrips() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "<CalculatedMembers>"
+            + "<CalculatedMember name='P' dimension='Measures'>"
+            + "<Formula>1</Formula>"
+            + "<CellFormatter className='com.example.Fmt'><Script>return v;</Script></CellFormatter>"
+            + "</CalculatedMember></CalculatedMembers>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
     }
 }

@@ -87,7 +87,7 @@ final class M4CubeBuilder {
         cm.description = M4YamlToXml.str(m.get("description"));
         Object visibleObj = m.get("visible");
         if (visibleObj != null) {
-            cm.visible = boolToBoolean(visibleObj);
+            cm.visible = M4YamlToXml.boolToBoolean(visibleObj);
         }
         cm.formula = M4YamlToXml.str(m.get("formula"));
         cm.formatString = M4YamlToXml.str(m.get("format_string"));
@@ -213,7 +213,7 @@ final class M4CubeBuilder {
         }
         Object ignoreUnrelated = m.get("ignore_unrelated_dimensions");
         if (ignoreUnrelated != null) {
-            mg.ignoreUnrelatedDimensions = boolToBoolean(ignoreUnrelated);
+            mg.ignoreUnrelatedDimensions = M4YamlToXml.boolToBoolean(ignoreUnrelated);
         }
         List<MondrianDef.MeasureGroupElement> kids = new ArrayList<>();
         Object measures = m.get("measures");
@@ -276,13 +276,6 @@ final class M4CubeBuilder {
                 kids.toArray(new MondrianDef.MeasureElement[0]);
         }
         return measure;
-    }
-
-    private static Boolean boolToBoolean(Object o) {
-        if (o instanceof Boolean) {
-            return (Boolean) o;
-        }
-        return Boolean.valueOf(String.valueOf(o));
     }
 
     private static MondrianDef.DimensionLinks buildDimensionLinks(List<?> list) {
