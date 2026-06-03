@@ -237,6 +237,13 @@ public final class M4XmlToYaml {
      * mixed-content node array. The {@code col:} prefix and curly-brace
      * delimiters are chosen to be unambiguous in SQL; plain SQL text
      * cannot contain literal {@code {col:} } in practice.
+     *
+     * <p><b>Known limitations:</b> the token scheme assumes that (1) plain
+     * SQL text does not contain the literal sequence {@code {col:} } and
+     * (2) column and table identifiers do not contain a literal {@code .}
+     * character (the decoder splits on the first dot to separate table from
+     * column name). FoodMart satisfies both constraints; arbitrary dialects
+     * or quoted identifiers containing dots may not.
      */
     static String sqlText(MondrianDef.SQL sql) {
         StringBuilder buf = new StringBuilder();
@@ -449,6 +456,12 @@ public final class M4XmlToYaml {
      * an explicit {@code table} qualifier, or just {@code "colname"} otherwise.
      *
      * <p>This encoding is round-trip-safe with {@link M4YamlToXml#parseColumnRef}.
+     *
+     * <p><b>Known limitation:</b> the {@code table.colname} representation
+     * splits on the first {@code .} character, so table or column names that
+     * themselves contain a literal {@code .} (e.g. quoted identifiers) will
+     * not round-trip correctly. FoodMart identifiers are all plain alphanumeric
+     * names and are not affected.
      */
     static List<String> columnNames(MondrianDef.Column[] cols) {
         List<String> names = new ArrayList<>();
