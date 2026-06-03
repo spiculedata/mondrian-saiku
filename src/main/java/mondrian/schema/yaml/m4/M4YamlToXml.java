@@ -48,6 +48,14 @@ public final class M4YamlToXml {
             throw new IllegalArgumentException(
                 "failed to parse YAML: " + e.getMessage(), e);
         }
+        return fromRoot(root);
+    }
+
+    /**
+     * Build M4 XML from an already-parsed YAML root map (used by the
+     * CLI path after $ref resolution).
+     */
+    public static String fromRoot(Map<?, ?> root) {
         MondrianDef.Schema schema = buildSchema(root);
         return schema.toXML();
     }

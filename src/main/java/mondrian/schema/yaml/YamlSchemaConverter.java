@@ -115,6 +115,9 @@ public final class YamlSchemaConverter {
                         + (resolved == null
                             ? "null" : resolved.getClass().getSimpleName()));
             }
+            if (M4Detection.isM4Yaml((Map<?, ?>) resolved)) {
+                return M4YamlToXml.fromRoot((Map<?, ?>) resolved);
+            }
             return emitFromRoot((Map<?, ?>) resolved);
         } catch (IOException e) {
             throw new IllegalArgumentException(
