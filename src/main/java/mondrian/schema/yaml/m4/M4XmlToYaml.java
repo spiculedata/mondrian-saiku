@@ -66,6 +66,7 @@ public final class M4XmlToYaml {
 
         if (schema.childArray != null) {
             Map<String, Object> sharedDims = null;
+            Map<String, Object> cubes = null;
             for (MondrianDef.SchemaElement el : schema.childArray) {
                 if (el instanceof MondrianDef.PhysicalSchema) {
                     root.put("physical_schema",
@@ -81,10 +82,19 @@ public final class M4XmlToYaml {
                         sharedDims = new LinkedHashMap<>();
                     }
                     sharedDims.put(dim.name, dimension(dim));
+                } else if (el instanceof MondrianDef.Cube) {
+                    if (cubes == null) {
+                        cubes = new LinkedHashMap<>();
+                    }
+                    MondrianDef.Cube c = (MondrianDef.Cube) el;
+                    cubes.put(c.name, cube(c));
                 }
             }
             if (sharedDims != null && !sharedDims.isEmpty()) {
                 root.put("shared_dimensions", sharedDims);
+            }
+            if (cubes != null && !cubes.isEmpty()) {
+                root.put("cubes", cubes);
             }
         }
         try {
@@ -221,6 +231,172 @@ public final class M4XmlToYaml {
             }
         }
         return buf.toString();
+    }
+
+    // ---- cube helpers ----
+
+    private static Map<String, Object> cube(MondrianDef.Cube c) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (c.defaultMeasure != null) {
+            out.put("default_measure", c.defaultMeasure);
+        }
+        if (c.childArray != null) {
+            List<Object> dimList = null;
+            List<Object> mgList = null;
+            for (MondrianDef.CubeElement ce : c.childArray) {
+                if (ce instanceof MondrianDef.Dimensions) {
+                    dimList = cubeDimensions((MondrianDef.Dimensions) ce);
+                } else if (ce instanceof MondrianDef.MeasureGroups) {
+                    mgList = measureGroups((MondrianDef.MeasureGroups) ce);
+                }
+            }
+            if (dimList != null && !dimList.isEmpty()) {
+                out.put("dimensions", dimList);
+            }
+            if (mgList != null && !mgList.isEmpty()) {
+                out.put("measure_groups", mgList);
+            }
+        }
+        return out;
+    }
+
+    private static List<Object> cubeDimensions(MondrianDef.Dimensions wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.Dimension d : wrapper.array) {
+                out.add(cubeDimension(d));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> cubeDimension(MondrianDef.Dimension d) {
+        if (d.source != null) {
+            // Dimension usage — reference to a shared dimension
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("source", d.source);
+            return out;
+        }
+        // Local dimension definition — name goes first, then dimension body
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", d.name);
+        out.putAll(dimension(d));
+        return out;
+    }
+
+    private static List<Object> measureGroups(MondrianDef.MeasureGroups wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.MeasureGroup mg : wrapper.array) {
+                out.add(measureGroup(mg));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> measureGroup(MondrianDef.MeasureGroup mg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (mg.name != null) {
+            out.put("name", mg.name);
+        }
+        if (mg.table != null) {
+            out.put("table", mg.table);
+        }
+        // Only emit type when non-default (default is "fact")
+        if (mg.type != null && !"fact".equals(mg.type)) {
+            out.put("type", mg.type);
+        }
+        if (mg.childArray != null) {
+            List<Object> measureList = null;
+            List<Object> linkList = null;
+            for (MondrianDef.MeasureGroupElement mge : mg.childArray) {
+                if (mge instanceof MondrianDef.Measures) {
+                    measureList = measures((MondrianDef.Measures) mge);
+                } else if (mge instanceof MondrianDef.DimensionLinks) {
+                    linkList = dimensionLinks((MondrianDef.DimensionLinks) mge);
+                }
+            }
+            if (measureList != null && !measureList.isEmpty()) {
+                out.put("measures", measureList);
+            }
+            if (linkList != null && !linkList.isEmpty()) {
+                out.put("dimension_links", linkList);
+            }
+        }
+        return out;
+    }
+
+    private static List<Object> measures(MondrianDef.Measures wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.MeasureOrRef mor : wrapper.array) {
+                out.add(measure(mor));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> measure(MondrianDef.MeasureOrRef mor) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (mor instanceof MondrianDef.MeasureRef) {
+            MondrianDef.MeasureRef ref = (MondrianDef.MeasureRef) mor;
+            out.put("ref", ref.name);
+            out.put("agg_column", ref.aggColumn);
+        } else if (mor instanceof MondrianDef.Measure) {
+            MondrianDef.Measure m = (MondrianDef.Measure) mor;
+            out.put("name", m.name);
+            if (m.column != null) {
+                out.put("column", m.column);
+            }
+            if (m.table != null) {
+                out.put("table", m.table);
+            }
+            if (m.aggregator != null) {
+                out.put("aggregator", m.aggregator);
+            }
+            if (m.formatString != null) {
+                out.put("format_string", m.formatString);
+            }
+            if (m.datatype != null) {
+                out.put("datatype", m.datatype);
+            }
+        }
+        return out;
+    }
+
+    private static List<Object> dimensionLinks(MondrianDef.DimensionLinks wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.DimensionLink dl : wrapper.array) {
+                out.add(dimensionLink(dl));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> dimensionLink(MondrianDef.DimensionLink dl) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (dl instanceof MondrianDef.ForeignKeyLink) {
+            MondrianDef.ForeignKeyLink fkl = (MondrianDef.ForeignKeyLink) dl;
+            out.put("type", "foreign_key");
+            out.put("dimension", fkl.dimension);
+            if (fkl.foreignKeyColumn != null) {
+                out.put("foreign_key_column", fkl.foreignKeyColumn);
+            }
+            if (fkl.attribute != null) {
+                out.put("attribute", fkl.attribute);
+            }
+        } else if (dl instanceof MondrianDef.CopyLink) {
+            out.put("type", "copy");
+            out.put("dimension", dl.dimension);
+        } else if (dl instanceof MondrianDef.NoLink) {
+            out.put("type", "no_link");
+            out.put("dimension", dl.dimension);
+        } else if (dl instanceof MondrianDef.FactLink) {
+            out.put("type", "fact");
+            out.put("dimension", dl.dimension);
+        }
+        return out;
     }
 
     // ---- shared dimension helpers ----

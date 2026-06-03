@@ -363,6 +363,7 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("table=\"sales_fact_1997\""));
         assertTrue(xml, xml.contains("<Measure name=\"Unit Sales\""));
         assertTrue(xml, xml.contains("aggregator=\"sum\""));
+        assertTrue(xml, xml.contains("formatString=\"Standard\""));
         assertTrue(xml, xml.contains("<DimensionLinks"));
         // ForeignKeyLink emits foreignKeyColumn before dimension (XOM attr order)
         assertTrue(xml, xml.contains("<ForeignKeyLink"));
@@ -370,6 +371,77 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("dimension=\"Store\""));
         assertTrue(xml, xml.contains("<CopyLink dimension=\"Time\""));
         assertTrue(xml, xml.contains("<NoLink dimension=\"Promotion\""));
+    }
+
+    @Test
+    public void emitsFactLink() {
+        String yaml =
+            "schema: {name: S, metamodel_version: \"4.0\"}\n"
+            + "cubes:\n  C:\n    measure_groups:\n"
+            + "      - {table: f, measures: [{name: M, column: c, aggregator: sum}],"
+            + " dimension_links: [{type: fact, dimension: D}]}\n";
+        String xml = M4YamlToXml.toXml(yaml);
+        assertTrue(xml, xml.contains("<FactLink dimension=\"D\""));
+    }
+
+    // ---- ingest (M4 XML -> YAML): cubes ----
+
+    private static final String CUBE_XML =
+        "<Schema name='FoodMart' metamodelVersion='4.0'>"
+        + "<Cube name='Sales' defaultMeasure='Unit Sales'>"
+        + "<Dimensions>"
+        + "<Dimension source='Store'/>"
+        + "<Dimension name='Promotion' table='promotion' key='Promotion Id'>"
+        + "<Attributes>"
+        + "<Attribute name='Promotion Id' keyColumn='promotion_id' hasHierarchy='false'/>"
+        + "</Attributes>"
+        + "<Hierarchies><Hierarchy name='Promotions'>"
+        + "<Level attribute='Promotion Id'/></Hierarchy></Hierarchies>"
+        + "</Dimension>"
+        + "</Dimensions>"
+        + "<MeasureGroups>"
+        + "<MeasureGroup name='Sales' table='sales_fact_1997'>"
+        + "<Measures>"
+        + "<Measure name='Unit Sales' column='unit_sales' aggregator='sum' formatString='Standard'/>"
+        + "</Measures>"
+        + "<DimensionLinks>"
+        + "<ForeignKeyLink dimension='Store' foreignKeyColumn='store_id'/>"
+        + "<NoLink dimension='Promotion'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup>"
+        + "<MeasureGroup table='agg_c' type='aggregate'>"
+        + "<Measures><MeasureRef name='Unit Sales' aggColumn='unit_sales_sum'/></Measures>"
+        + "<DimensionLinks><ForeignKeyLink dimension='Store' foreignKeyColumn='store_id'/></DimensionLinks>"
+        + "</MeasureGroup>"
+        + "</MeasureGroups>"
+        + "</Cube></Schema>";
+
+    @Test
+    public void ingestsCube() {
+        String yaml = M4XmlToYaml.toYaml(CUBE_XML);
+        assertTrue(yaml, yaml.contains("cubes:"));
+        assertTrue(yaml, yaml.contains("Sales:"));
+        assertTrue(yaml, yaml.contains("default_measure: \"Unit Sales\"")
+            || yaml.contains("default_measure: Unit Sales"));
+        assertTrue(yaml, yaml.contains("dimensions:"));
+        assertTrue(yaml, yaml.contains("source: \"Store\"")
+            || yaml.contains("source: Store"));
+        assertTrue(yaml, yaml.contains("measure_groups:"));
+        assertTrue(yaml, yaml.contains("aggregator: \"sum\"")
+            || yaml.contains("aggregator: sum"));
+        assertTrue(yaml, yaml.contains("ref:"));
+        assertTrue(yaml, yaml.contains("agg_column"));
+        assertTrue(yaml, yaml.contains("type: \"aggregate\"")
+            || yaml.contains("type: aggregate"));
+        assertTrue(yaml, yaml.contains("foreign_key"));
+        assertTrue(yaml, yaml.contains("no_link"));
+    }
+
+    @Test
+    public void cubeRoundTripsThroughEmit() {
+        String yaml = M4XmlToYaml.toYaml(CUBE_XML);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
     }
 
     @Test
