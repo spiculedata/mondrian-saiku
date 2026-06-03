@@ -79,7 +79,7 @@ public final class M4YamlToXml {
         if (cubes instanceof Map) {
             for (Map.Entry<?, ?> e : ((Map<?, ?>) cubes).entrySet()) {
                 if (e.getValue() instanceof Map) {
-                    children.add(buildCube(str(e.getKey()), (Map<?, ?>) e.getValue()));
+                    children.add(M4CubeBuilder.build(str(e.getKey()), (Map<?, ?>) e.getValue()));
                 }
             }
         }
@@ -90,170 +90,9 @@ public final class M4YamlToXml {
         return schema;
     }
 
-    // ---- Cube builder helpers ----
-
-    private static MondrianDef.Cube buildCube(String name, Map<?, ?> body) {
-        MondrianDef.Cube cube = new MondrianDef.Cube();
-        cube.name = name;
-        cube.defaultMeasure = str(body.get("default_measure"));
-        List<MondrianDef.CubeElement> cubeKids = new ArrayList<>();
-        Object dims = body.get("dimensions");
-        if (dims instanceof List && !((List<?>) dims).isEmpty()) {
-            cubeKids.add(buildCubeDimensions((List<?>) dims));
-        }
-        Object mgs = body.get("measure_groups");
-        if (mgs instanceof List && !((List<?>) mgs).isEmpty()) {
-            cubeKids.add(buildMeasureGroups((List<?>) mgs));
-        }
-        if (!cubeKids.isEmpty()) {
-            cube.childArray = cubeKids.toArray(new MondrianDef.CubeElement[0]);
-        }
-        return cube;
-    }
-
-    private static MondrianDef.Dimensions buildCubeDimensions(List<?> list) {
-        MondrianDef.Dimensions wrapper = new MondrianDef.Dimensions();
-        List<MondrianDef.Dimension> dims = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map) {
-                dims.add(buildCubeDimension((Map<?, ?>) item));
-            }
-        }
-        wrapper.array = dims.toArray(new MondrianDef.Dimension[0]);
-        return wrapper;
-    }
-
-    private static MondrianDef.Dimension buildCubeDimension(Map<?, ?> m) {
-        Object source = m.get("source");
-        if (source != null) {
-            // Usage reference to a shared dimension
-            MondrianDef.Dimension d = new MondrianDef.Dimension();
-            d.source = str(source);
-            return d;
-        }
-        // Local dimension definition — reuse shared buildDimension helper
-        return buildDimension(str(m.get("name")), m);
-    }
-
-    private static MondrianDef.MeasureGroups buildMeasureGroups(List<?> list) {
-        MondrianDef.MeasureGroups wrapper = new MondrianDef.MeasureGroups();
-        List<MondrianDef.MeasureGroup> mgs = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map) {
-                mgs.add(buildMeasureGroup((Map<?, ?>) item));
-            }
-        }
-        wrapper.array = mgs.toArray(new MondrianDef.MeasureGroup[0]);
-        return wrapper;
-    }
-
-    private static MondrianDef.MeasureGroup buildMeasureGroup(Map<?, ?> m) {
-        MondrianDef.MeasureGroup mg = new MondrianDef.MeasureGroup();
-        mg.name = str(m.get("name"));
-        mg.table = str(m.get("table"));
-        String type = str(m.get("type"));
-        if (type != null) {
-            mg.type = type;
-        }
-        List<MondrianDef.MeasureGroupElement> kids = new ArrayList<>();
-        Object measures = m.get("measures");
-        if (measures instanceof List && !((List<?>) measures).isEmpty()) {
-            kids.add(buildMeasures((List<?>) measures));
-        }
-        Object dimLinks = m.get("dimension_links");
-        if (dimLinks instanceof List && !((List<?>) dimLinks).isEmpty()) {
-            kids.add(buildDimensionLinks((List<?>) dimLinks));
-        }
-        if (!kids.isEmpty()) {
-            mg.childArray = kids.toArray(new MondrianDef.MeasureGroupElement[0]);
-        }
-        return mg;
-    }
-
-    private static MondrianDef.Measures buildMeasures(List<?> list) {
-        MondrianDef.Measures wrapper = new MondrianDef.Measures();
-        List<MondrianDef.MeasureOrRef> items = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map) {
-                items.add(buildMeasure((Map<?, ?>) item));
-            }
-        }
-        wrapper.array = items.toArray(new MondrianDef.MeasureOrRef[0]);
-        return wrapper;
-    }
-
-    private static MondrianDef.MeasureOrRef buildMeasure(Map<?, ?> m) {
-        Object ref = m.get("ref");
-        if (ref != null) {
-            MondrianDef.MeasureRef mr = new MondrianDef.MeasureRef();
-            mr.name = str(ref);
-            mr.aggColumn = str(m.get("agg_column"));
-            return mr;
-        }
-        MondrianDef.Measure measure = new MondrianDef.Measure();
-        measure.name = str(m.get("name"));
-        measure.column = str(m.get("column"));
-        measure.table = str(m.get("table"));
-        measure.aggregator = str(m.get("aggregator"));
-        measure.formatString = str(m.get("format_string"));
-        measure.datatype = str(m.get("datatype"));
-        return measure;
-    }
-
-    private static MondrianDef.DimensionLinks buildDimensionLinks(List<?> list) {
-        MondrianDef.DimensionLinks wrapper = new MondrianDef.DimensionLinks();
-        List<MondrianDef.DimensionLink> links = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map) {
-                links.add(buildDimensionLink((Map<?, ?>) item));
-            }
-        }
-        wrapper.array = links.toArray(new MondrianDef.DimensionLink[0]);
-        return wrapper;
-    }
-
-    private static MondrianDef.DimensionLink buildDimensionLink(Map<?, ?> m) {
-        String type = str(m.get("type"));
-        String dimension = str(m.get("dimension"));
-        if ("foreign_key".equals(type)) {
-            MondrianDef.ForeignKeyLink link = new MondrianDef.ForeignKeyLink();
-            link.dimension = dimension;
-            link.foreignKeyColumn = str(m.get("foreign_key_column"));
-            link.attribute = str(m.get("attribute"));
-            return link;
-        } else if ("copy".equals(type)) {
-            MondrianDef.CopyLink link = new MondrianDef.CopyLink();
-            link.dimension = dimension;
-            // Note: CopyLink has no 'attribute' field; YAML attribute is ignored.
-            // column_refs list → columnRefs array if provided
-            Object colRefs = m.get("column_refs");
-            if (colRefs instanceof List && !((List<?>) colRefs).isEmpty()) {
-                List<MondrianDef.Column> cols = new ArrayList<>();
-                for (Object c : (List<?>) colRefs) {
-                    cols.add(new MondrianDef.Column(null, str(c)));
-                }
-                link.columnRefs = cols.toArray(new MondrianDef.Column[0]);
-            }
-            return link;
-        } else if ("no_link".equals(type)) {
-            MondrianDef.NoLink link = new MondrianDef.NoLink();
-            link.dimension = dimension;
-            return link;
-        } else if ("fact".equals(type)) {
-            MondrianDef.FactLink link = new MondrianDef.FactLink();
-            link.dimension = dimension;
-            return link;
-        } else {
-            // Unknown type: fall back to NoLink to avoid NPE
-            MondrianDef.NoLink link = new MondrianDef.NoLink();
-            link.dimension = dimension;
-            return link;
-        }
-    }
-
     // ---- Shared dimension builder ----
 
-    private static MondrianDef.Dimension buildDimension(
+    static MondrianDef.Dimension buildDimension(
         String name, Map<?, ?> dim)
     {
         MondrianDef.Dimension d = new MondrianDef.Dimension();
@@ -518,7 +357,7 @@ public final class M4YamlToXml {
         return name;
     }
 
-    private static String str(Object o) {
+    static String str(Object o) {
         return o == null ? null : String.valueOf(o);
     }
 }
