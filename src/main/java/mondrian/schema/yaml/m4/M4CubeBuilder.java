@@ -261,11 +261,16 @@ final class M4CubeBuilder {
             MondrianDef.FactLink link = new MondrianDef.FactLink();
             link.dimension = dimension;
             return link;
-        } else {
-            // Unknown type: fall back to NoLink to avoid NPE
-            MondrianDef.NoLink link = new MondrianDef.NoLink();
+        } else if ("reference".equals(type)) {
+            MondrianDef.ReferenceLink link = new MondrianDef.ReferenceLink();
             link.dimension = dimension;
+            link.viaDimension = M4YamlToXml.str(m.get("via_dimension"));
+            link.viaAttribute = M4YamlToXml.str(m.get("via_attribute"));
             return link;
+        } else {
+            throw new IllegalArgumentException(
+                "unknown dimension_link type: " + type
+                    + " (dimension=" + dimension + ")");
         }
     }
 }

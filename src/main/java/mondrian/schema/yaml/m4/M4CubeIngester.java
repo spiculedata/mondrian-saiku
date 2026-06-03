@@ -317,6 +317,16 @@ final class M4CubeIngester {
         } else if (dl instanceof MondrianDef.FactLink) {
             out.put("type", "fact");
             out.put("dimension", dl.dimension);
+        } else if (dl instanceof MondrianDef.ReferenceLink) {
+            MondrianDef.ReferenceLink rl = (MondrianDef.ReferenceLink) dl;
+            out.put("type", "reference");
+            out.put("dimension", rl.dimension);
+            if (rl.viaDimension != null) {
+                out.put("via_dimension", rl.viaDimension);
+            }
+            if (rl.viaAttribute != null) {
+                out.put("via_attribute", rl.viaAttribute);
+            }
         }
         return out;
     }

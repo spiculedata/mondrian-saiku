@@ -580,6 +580,36 @@ public class M4PhysicalLayerTest {
     }
 
     @Test
+    public void referenceLinkRoundTrips() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='HR' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='HR' table='salary'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "<DimensionLinks>"
+            + "<ForeignKeyLink dimension='Employee' foreignKeyColumn='employee_id'/>"
+            + "<ReferenceLink dimension='Store' viaDimension='Employee'"
+            + " viaAttribute='Store Id'/>"
+            + "</DimensionLinks>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("type: \"reference\"")
+            || yaml.contains("type: reference"));
+        assertTrue(yaml, yaml.contains("via_dimension"));
+        assertTrue(yaml, yaml.contains("via_attribute"));
+        assertTrue(yaml, yaml.contains("Store Id"));
+        // round-trip: re-ingest emitted XML, must be stable + no bare NoLink
+        String emittedXml = M4YamlToXml.toXml(yaml);
+        assertTrue(emittedXml, emittedXml.contains("<ReferenceLink"));
+        assertTrue("must not degrade to a dimensionless NoLink",
+            !emittedXml.contains("<NoLink>")
+            && !emittedXml.contains("<NoLink/>"));
+        String yaml2 = M4XmlToYaml.toYaml(emittedXml);
+        assertEquals(yaml, yaml2);
+    }
+
+    @Test
     public void calcMemberExpressionPropertyAndHierarchyParentRoundTrip() {
         String xml =
             "<Schema name='S' metamodelVersion='4.0'>"
