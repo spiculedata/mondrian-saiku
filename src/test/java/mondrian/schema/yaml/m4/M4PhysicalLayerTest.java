@@ -322,6 +322,56 @@ public class M4PhysicalLayerTest {
         assertTrue(xml, xml.contains("<Level attribute=\"Store Country\""));
     }
 
+    // ---- emit (YAML -> M4 XML): cubes ----
+
+    private static final String CUBE_YAML =
+        "schema:\n"
+        + "  name: FoodMart\n"
+        + "  metamodel_version: \"4.0\"\n"
+        + "cubes:\n"
+        + "  Sales:\n"
+        + "    default_measure: Unit Sales\n"
+        + "    dimensions:\n"
+        + "      - {source: Store}\n"
+        + "      - name: Promotion\n"
+        + "        table: promotion\n"
+        + "        key: Promotion Id\n"
+        + "        attributes:\n"
+        + "          - {name: Promotion Id, key_column: promotion_id, has_hierarchy: false}\n"
+        + "        hierarchies:\n"
+        + "          - {name: Promotions, levels: [Promotion Id]}\n"
+        + "    measure_groups:\n"
+        + "      - name: Sales\n"
+        + "        table: sales_fact_1997\n"
+        + "        measures:\n"
+        + "          - {name: Unit Sales, column: unit_sales, aggregator: sum, format_string: Standard}\n"
+        + "        dimension_links:\n"
+        + "          - {type: foreign_key, dimension: Store, foreign_key_column: store_id}\n"
+        + "          - {type: copy, dimension: Time, attribute: Month}\n"
+        + "          - {type: no_link, dimension: Promotion}\n";
+
+    @Test
+    public void emitsCubeWithMeasureGroupsAndLinks() {
+        String xml = M4YamlToXml.toXml(CUBE_YAML);
+        assertTrue(xml, xml.contains("<Cube name=\"Sales\""));
+        assertTrue(xml, xml.contains("defaultMeasure=\"Unit Sales\""));
+        assertTrue(xml, xml.contains("<Dimensions"));
+        assertTrue(xml, xml.contains("<Dimension source=\"Store\""));
+        assertTrue(xml, xml.contains("<Dimension name=\"Promotion\""));
+        assertTrue(xml, xml.contains("<MeasureGroups"));
+        assertTrue(xml, xml.contains("<MeasureGroup name=\"Sales\""));
+        assertTrue(xml, xml.contains("table=\"sales_fact_1997\""));
+        assertTrue(xml, xml.contains("<Measure name=\"Unit Sales\""));
+        assertTrue(xml, xml.contains("aggregator=\"sum\""));
+        assertTrue(xml, xml.contains("<DimensionLinks"));
+        // ForeignKeyLink emits foreignKeyColumn before dimension (XOM attr order)
+        assertTrue(xml, xml.contains("<ForeignKeyLink"));
+        assertTrue(xml, xml.contains("foreignKeyColumn=\"store_id\""));
+        assertTrue(xml, xml.contains("dimension=\"Store\""));
+        assertTrue(xml, xml.contains("<CopyLink dimension=\"Time\""));
+        assertTrue(xml, xml.contains("<NoLink dimension=\"Promotion\""));
+    }
+
     @Test
     public void attributeMultiColNameAndCaptionsRoundTrip() {
         String xml =
