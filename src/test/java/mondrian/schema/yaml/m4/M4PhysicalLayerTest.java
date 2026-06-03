@@ -411,7 +411,11 @@ public class M4PhysicalLayerTest {
         + "</MeasureGroup>"
         + "<MeasureGroup table='agg_c' type='aggregate'>"
         + "<Measures><MeasureRef name='Unit Sales' aggColumn='unit_sales_sum'/></Measures>"
-        + "<DimensionLinks><ForeignKeyLink dimension='Store' foreignKeyColumn='store_id'/></DimensionLinks>"
+        + "<DimensionLinks>"
+        + "<ForeignKeyLink dimension='Store' foreignKeyColumn='store_id'/>"
+        + "<CopyLink dimension='Time'/>"
+        + "<FactLink dimension='Promotion'/>"
+        + "</DimensionLinks>"
         + "</MeasureGroup>"
         + "</MeasureGroups>"
         + "</Cube></Schema>";
@@ -429,6 +433,7 @@ public class M4PhysicalLayerTest {
         assertTrue(yaml, yaml.contains("measure_groups:"));
         assertTrue(yaml, yaml.contains("aggregator: \"sum\"")
             || yaml.contains("aggregator: sum"));
+        assertTrue(yaml, yaml.contains("format_string"));
         assertTrue(yaml, yaml.contains("ref:"));
         assertTrue(yaml, yaml.contains("agg_column"));
         assertTrue(yaml, yaml.contains("type: \"aggregate\"")
