@@ -212,7 +212,6 @@ final class M4CubeIngester {
     }
 
     private static Map<String, Object> measureGroup(MondrianDef.MeasureGroup mg) {
-        // TODO Phase 4+: approxRowCount, ignoreUnrelatedDimensions, Cube/MeasureGroup annotations not yet captured
         Map<String, Object> out = new LinkedHashMap<>();
         if (mg.name != null) {
             out.put("name", mg.name);
@@ -223,6 +222,14 @@ final class M4CubeIngester {
         // Only emit type when non-default (default is "fact")
         if (mg.type != null && !"fact".equals(mg.type)) {
             out.put("type", mg.type);
+        }
+        if (mg.approxRowCount != null) {
+            out.put("approx_row_count", mg.approxRowCount);
+        }
+        // Only emit when true (default is false — keeps round-trip clean)
+        if (mg.ignoreUnrelatedDimensions != null
+                && Boolean.TRUE.equals(mg.ignoreUnrelatedDimensions)) {
+            out.put("ignore_unrelated_dimensions", true);
         }
         if (mg.childArray != null) {
             List<Object> measureList = null;
@@ -328,8 +335,24 @@ final class M4CubeIngester {
                 out.put("attribute", fkl.attribute);
             }
         } else if (dl instanceof MondrianDef.CopyLink) {
+            MondrianDef.CopyLink cl = (MondrianDef.CopyLink) dl;
             out.put("type", "copy");
-            out.put("dimension", dl.dimension);
+            out.put("dimension", cl.dimension);
+            if (cl.columnRefs != null && cl.columnRefs.length > 0) {
+                List<Object> colRefList = new ArrayList<>();
+                for (MondrianDef.Column col : cl.columnRefs) {
+                    Map<String, Object> colMap = new LinkedHashMap<>();
+                    if (col.table != null) {
+                        colMap.put("table", col.table);
+                    }
+                    colMap.put("name", col.name);
+                    if (col.aggColumn != null) {
+                        colMap.put("agg_column", col.aggColumn);
+                    }
+                    colRefList.add(colMap);
+                }
+                out.put("column_refs", colRefList);
+            }
         } else if (dl instanceof MondrianDef.NoLink) {
             out.put("type", "no_link");
             out.put("dimension", dl.dimension);

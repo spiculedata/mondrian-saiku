@@ -173,6 +173,14 @@ final class M4CubeBuilder {
         if (type != null) {
             mg.type = type;
         }
+        String approxRowCount = M4YamlToXml.str(m.get("approx_row_count"));
+        if (approxRowCount != null) {
+            mg.approxRowCount = approxRowCount;
+        }
+        Object ignoreUnrelated = m.get("ignore_unrelated_dimensions");
+        if (ignoreUnrelated != null) {
+            mg.ignoreUnrelatedDimensions = boolToBoolean(ignoreUnrelated);
+        }
         List<MondrianDef.MeasureGroupElement> kids = new ArrayList<>();
         Object measures = m.get("measures");
         if (measures instanceof List && !((List<?>) measures).isEmpty()) {
@@ -229,6 +237,13 @@ final class M4CubeBuilder {
         return measure;
     }
 
+    private static Boolean boolToBoolean(Object o) {
+        if (o instanceof Boolean) {
+            return (Boolean) o;
+        }
+        return Boolean.valueOf(String.valueOf(o));
+    }
+
     private static MondrianDef.DimensionLinks buildDimensionLinks(List<?> list) {
         MondrianDef.DimensionLinks wrapper = new MondrianDef.DimensionLinks();
         List<MondrianDef.DimensionLink> links = new ArrayList<>();
@@ -270,7 +285,14 @@ final class M4CubeBuilder {
             if (colRefs instanceof List && !((List<?>) colRefs).isEmpty()) {
                 List<MondrianDef.Column> cols = new ArrayList<>();
                 for (Object c : (List<?>) colRefs) {
-                    cols.add(new MondrianDef.Column(null, M4YamlToXml.str(c)));
+                    if (c instanceof Map) {
+                        Map<?, ?> colMap = (Map<?, ?>) c;
+                        String colTable = M4YamlToXml.str(colMap.get("table"));
+                        String colName = M4YamlToXml.str(colMap.get("name"));
+                        MondrianDef.Column col = new MondrianDef.Column(colTable, colName);
+                        col.aggColumn = M4YamlToXml.str(colMap.get("agg_column"));
+                        cols.add(col);
+                    }
                 }
                 link.columnRefs = cols.toArray(new MondrianDef.Column[0]);
             }

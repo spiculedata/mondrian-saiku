@@ -727,4 +727,40 @@ public class M4PhysicalLayerTest {
         String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
         assertEquals(yaml, yaml2);
     }
+
+    @Test
+    public void copyLinkColumnRefsRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups>"
+            + "<MeasureGroup table='agg_c' type='aggregate' approxRowCount='86837'"
+            + " ignoreUnrelatedDimensions='true'>"
+            + "<Measures><MeasureRef name='M' aggColumn='m_sum'/></Measures>"
+            + "<DimensionLinks>"
+            + "<CopyLink dimension='Time'>"
+            + "<Column aggColumn='time_year' table='time_by_day' name='the_year'/>"
+            + "<Column aggColumn='time_month' table='time_by_day' name='month_of_year'/>"
+            + "</CopyLink>"
+            + "</DimensionLinks>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("approx_row_count"));
+        assertTrue(yaml, yaml.contains("86837"));
+        assertTrue(yaml, yaml.contains("ignore_unrelated_dimensions"));
+        assertTrue(yaml, yaml.contains("column_refs"));
+        assertTrue(yaml, yaml.contains("time_by_day"));
+        assertTrue(yaml, yaml.contains("the_year"));
+        assertTrue(yaml, yaml.contains("agg_column"));
+        // round-trip stable
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        // emitted XML really has the CopyLink columns + measure-group attrs
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<CopyLink dimension=\"Time\""));
+        assertTrue(emitted, emitted.contains("aggColumn=\"time_year\""));
+        assertTrue(emitted, emitted.contains("approxRowCount=\"86837\""));
+        assertTrue(emitted, emitted.contains("ignoreUnrelatedDimensions=\"true\""));
+    }
 }
