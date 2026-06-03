@@ -445,8 +445,7 @@ public final class M4YamlToXml {
                 String body = str(e.getValue());
                 MondrianDef.SQL sql = new MondrianDef.SQL();
                 sql.dialect = dialect;
-                sql.children =
-                    new NodeDef[]{ new TextDef(body == null ? "" : body) };
+                sql.children = parseSqlMixedContent(body == null ? "" : body);
                 sqls.add(sql);
             }
             view.expressions = sqls.toArray(new MondrianDef.SQL[0]);
@@ -455,11 +454,55 @@ public final class M4YamlToXml {
         return ccd;
     }
 
+    /**
+     * Parse a SQL body string that may contain {@code {col:table.name}} or
+     * {@code {col:name}} tokens (as emitted by {@link M4XmlToYaml#sqlText})
+     * and rebuild the mixed-content {@link NodeDef} array suitable for
+     * {@link MondrianDef.SQL#children}.
+     *
+     * <p>Each {@code {col:...}} token becomes a {@link MondrianDef.Column}
+     * node; surrounding text becomes {@link TextDef} nodes. Empty text
+     * segments are included to preserve whitespace.
+     */
+    static NodeDef[] parseSqlMixedContent(String body) {
+        List<NodeDef> nodes = new ArrayList<>();
+        int pos = 0;
+        while (pos < body.length()) {
+            int start = body.indexOf("{col:", pos);
+            if (start < 0) {
+                // rest is plain text
+                nodes.add(new TextDef(body.substring(pos)));
+                break;
+            }
+            if (start > pos) {
+                nodes.add(new TextDef(body.substring(pos, start)));
+            }
+            int end = body.indexOf('}', start + 5);
+            if (end < 0) {
+                // malformed token — treat remainder as text
+                nodes.add(new TextDef(body.substring(start)));
+                break;
+            }
+            String ref = body.substring(start + 5, end); // content after "col:"
+            MondrianDef.Column col = new MondrianDef.Column();
+            int dot = ref.indexOf('.');
+            if (dot >= 0) {
+                col.table = ref.substring(0, dot);
+                col.name = ref.substring(dot + 1);
+            } else {
+                col.name = ref;
+            }
+            nodes.add(col);
+            pos = end + 1;
+        }
+        return nodes.toArray(new NodeDef[0]);
+    }
+
     private static MondrianDef.Key buildKey(List<?> columnNames) {
         MondrianDef.Key key = new MondrianDef.Key();
         List<MondrianDef.Column> cols = new ArrayList<>();
         for (Object c : columnNames) {
-            cols.add(new MondrianDef.Column(null, str(c)));
+            cols.add(parseColumnRef(str(c)));
         }
         key.array = cols.toArray(new MondrianDef.Column[0]);
         return key;
@@ -469,10 +512,31 @@ public final class M4YamlToXml {
         MondrianDef.Name name = new MondrianDef.Name();
         List<MondrianDef.Column> cols = new ArrayList<>();
         for (Object c : columnNames) {
-            cols.add(new MondrianDef.Column(null, str(c)));
+            cols.add(parseColumnRef(str(c)));
         }
         name.array = cols.toArray(new MondrianDef.Column[0]);
         return name;
+    }
+
+    /**
+     * Parse a column reference string produced by
+     * {@link M4XmlToYaml#columnNames}. The string is either
+     * {@code "table.colname"} (dot-qualified) or just {@code "colname"}.
+     * Returns a {@link MondrianDef.Column} with {@code table} set when
+     * present, otherwise null.
+     */
+    static MondrianDef.Column parseColumnRef(String ref) {
+        MondrianDef.Column col = new MondrianDef.Column();
+        if (ref != null) {
+            int dot = ref.indexOf('.');
+            if (dot >= 0) {
+                col.table = ref.substring(0, dot);
+                col.name = ref.substring(dot + 1);
+            } else {
+                col.name = ref;
+            }
+        }
+        return col;
     }
 
     static String str(Object o) {

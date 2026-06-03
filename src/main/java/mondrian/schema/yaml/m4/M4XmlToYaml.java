@@ -227,23 +227,33 @@ public final class M4XmlToYaml {
     }
 
     /**
-     * Read the text body of a {@code <SQL>} element. {@code SQL.getCData()}
-     * in the generated model is a broken stub (emits "x" per child); the
-     * canonical approach (mirrors {@code RolapSchemaLoader.getText}) walks
-     * the child nodes and concatenates the {@link TextDef} text.
+     * Read the mixed-content body of a {@code <SQL>} element, encoding
+     * any inline {@code <Column>} references as the token
+     * {@code {col:table.name}} (or {@code {col:name}} when no table is
+     * given). Text nodes are appended verbatim.
      *
-     * <p>Limitation: inline element markup inside a SQL body (e.g.
-     * {@code <Column name='fname'/>} references used by real FoodMart
-     * expressions) is NOT captured here — only text nodes. Full
-     * inline-markup fidelity is deferred to the capstone phase.
+     * <p>This encoding is round-trip-safe: {@code M4YamlToXml} parses
+     * the same tokens and rebuilds the original {@code Column} + text
+     * mixed-content node array. The {@code col:} prefix and curly-brace
+     * delimiters are chosen to be unambiguous in SQL; plain SQL text
+     * cannot contain literal {@code {col:} } in practice.
      */
-    private static String sqlText(MondrianDef.SQL sql) {
+    static String sqlText(MondrianDef.SQL sql) {
         StringBuilder buf = new StringBuilder();
         if (sql.children != null) {
             for (NodeDef child : sql.children) {
                 if (child instanceof TextDef) {
                     buf.append(((TextDef) child).s);
+                } else if (child instanceof MondrianDef.Column) {
+                    MondrianDef.Column col = (MondrianDef.Column) child;
+                    buf.append("{col:");
+                    if (col.table != null && !col.table.isEmpty()) {
+                        buf.append(col.table).append('.');
+                    }
+                    buf.append(col.name == null ? "" : col.name);
+                    buf.append('}');
                 }
+                // other node types (rare) are silently skipped
             }
         }
         return buf.toString();
@@ -433,11 +443,22 @@ public final class M4XmlToYaml {
         return l.attribute;
     }
 
+    /**
+     * Serialize an array of {@link MondrianDef.Column} references to a list
+     * of strings. Each string is {@code "table.colname"} when the column has
+     * an explicit {@code table} qualifier, or just {@code "colname"} otherwise.
+     *
+     * <p>This encoding is round-trip-safe with {@link M4YamlToXml#parseColumnRef}.
+     */
     static List<String> columnNames(MondrianDef.Column[] cols) {
         List<String> names = new ArrayList<>();
         if (cols != null) {
             for (MondrianDef.Column c : cols) {
-                names.add(c.name);
+                if (c.table != null && !c.table.isEmpty()) {
+                    names.add(c.table + "." + c.name);
+                } else {
+                    names.add(c.name);
+                }
             }
         }
         return names;

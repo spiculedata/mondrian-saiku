@@ -16,7 +16,6 @@ import mondrian.schema.yaml.XmlSchemaToYaml;
 import mondrian.schema.yaml.YamlSchemaConverter;
 import mondrian.test.TestContext;
 
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -39,7 +38,6 @@ import static org.junit.Assert.assertTrue;
  * measure groups and cannot resolve {@code [Sales]}. The Phase 3 task
  * that adds cubes + measure groups removes the {@code @Ignore}.
  */
-@Ignore("M4 dimensions/measure-groups land in Phase 2-3; remove @Ignore then")
 public class M4PhysicalRoundtripTest {
 
     private static final String MDX =

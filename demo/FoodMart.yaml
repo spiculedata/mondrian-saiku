@@ -1,0 +1,1092 @@
+schema:
+  name: "FoodMart"
+  metamodel_version: "4.0"
+physical_schema:
+  tables:
+  - name: "salary"
+  - name: "salary"
+    alias: "salary2"
+  - name: "department"
+    key:
+    - "department_id"
+  - name: "employee"
+    key:
+    - "employee_id"
+  - name: "employee_closure"
+    key:
+    - "employee_id"
+  - name: "position"
+    key:
+    - "position_id"
+  - name: "promotion"
+    key:
+    - "promotion_id"
+  - name: "store"
+    key:
+    - "store_id"
+  - name: "product"
+    key_column: "product_id"
+  - name: "product_class"
+    key_column: "product_class_id"
+  - name: "time_by_day"
+    key:
+    - "time_id"
+  - name: "customer"
+    key:
+    - "customer_id"
+    calculated_columns:
+    - name: "full_name"
+      type: "String"
+      expression:
+        oracle: "\n                            {col:fname}  || ' ' || {col:lname}\n\
+          \                        "
+        access: "\n                            {col:fname}  + ' ' + {col:lname}\n\
+          \                        "
+        postgres: "\n                            {col:fname}  || ' ' || {col:lname}\n\
+          \                        "
+        mysql: "\n                            CONCAT({col:fname}, ' ', {col:lname})\n\
+          \                        "
+        mssql: "\n                            {col:fname} + ' ' + {col:lname}\n  \
+          \                      "
+        derby: "\n                            {col:fullname}\n                   \
+          \     "
+        db2: "\n                            CONCAT(CONCAT({col:fname}, ' '), {col:lname})\n\
+          \                        "
+        luciddb: "\n                            {col:fname}  || ' ' || {col:lname}\n\
+          \                        "
+        generic: "\n                            {col:fullname}\n                 \
+          \       "
+  - name: "sales_fact_1997"
+    calculated_columns:
+    - name: "promotion_sales"
+      expression:
+        access: "\n                            Iif({col:sales_fact_1997.promotion_id}\
+          \ = 0, 0,\n                            {col:sales_fact_1997.store_sales})\n\
+          \                        "
+        generic: "\n                        case when {col:sales_fact_1997.promotion_id}\
+          \ = 0 then 0\n                        else {col:sales_fact_1997.store_sales}\
+          \ end\n                    "
+  - name: "inventory_fact_1997"
+    calculated_columns:
+    - name: "warehouse_profit"
+      expression:
+        generic: "\n                            {col:inventory_fact_1997.warehouse_sales}\n\
+          \                            -\n                            {col:warehouse_cost}\n\
+          \                        "
+  - name: "warehouse"
+    key:
+    - "warehouse_id"
+  - name: "agg_c_special_sales_fact_1997"
+  - name: "agg_pl_01_sales_fact_1997"
+  - name: "agg_l_05_sales_fact_1997"
+  - name: "agg_g_ms_pcat_sales_fact_1997"
+  - name: "agg_c_14_sales_fact_1997"
+  links:
+  - source: "employee"
+    target: "employee_closure"
+    foreign_key:
+    - "employee_id"
+  - source: "position"
+    target: "employee"
+    foreign_key:
+    - "position_id"
+  - source: "store"
+    target: "employee"
+    foreign_key:
+    - "store_id"
+  - source: "product_class"
+    target: "product"
+    foreign_key:
+    - "product_class_id"
+shared_dimensions:
+  Store:
+    table: "store"
+    key: "Store Id"
+    attributes:
+    - name: "Store Country"
+      key:
+      - "store_country"
+      has_hierarchy: false
+    - name: "Store State"
+      key_column: "store_state"
+      has_hierarchy: false
+    - name: "Store City"
+      key:
+      - "store_state"
+      - "store_city"
+      name_column: "store_city"
+      has_hierarchy: false
+    - name: "Store Id"
+      key_column: "store_id"
+      has_hierarchy: false
+    - name: "Store Name"
+      key_column: "store_name"
+      has_hierarchy: false
+      properties:
+      - "Store Type"
+      - "Store Manager"
+      - "Store Sqft"
+      - "Grocery Sqft"
+      - "Frozen Sqft"
+      - "Meat Sqft"
+      - "Has coffee bar"
+      - "Street address"
+    - name: "Store Type"
+      key_column: "store_type"
+      hierarchy_all_member_name: "All Store Types"
+    - name: "Store Manager"
+      key_column: "store_manager"
+      has_hierarchy: false
+    - name: "Store Sqft"
+      key_column: "store_sqft"
+      has_hierarchy: false
+    - name: "Grocery Sqft"
+      key_column: "grocery_sqft"
+      has_hierarchy: false
+    - name: "Frozen Sqft"
+      key_column: "frozen_sqft"
+      has_hierarchy: false
+    - name: "Meat Sqft"
+      key_column: "meat_sqft"
+      has_hierarchy: false
+    - name: "Has coffee bar"
+      key_column: "coffee_bar"
+      has_hierarchy: false
+    - name: "Street address"
+      key_column: "store_street_address"
+      has_hierarchy: false
+    hierarchies:
+    - name: "Stores"
+      all_member_name: "All Stores"
+      levels:
+      - "Store Country"
+      - "Store State"
+      - "Store City"
+      - "Store Name"
+    - name: "Store Size in SQFT"
+      levels:
+      - "Store Sqft"
+  Time:
+    table: "time_by_day"
+    key: "Time Id"
+    type: "TIME"
+    attributes:
+    - name: "Year"
+      key_column: "the_year"
+      level_type: "TimeYears"
+      has_hierarchy: false
+    - name: "Quarter"
+      key:
+      - "the_year"
+      - "quarter"
+      name_column: "quarter"
+      level_type: "TimeQuarters"
+      has_hierarchy: false
+    - name: "Month"
+      key:
+      - "the_year"
+      - "month_of_year"
+      name_column: "month_of_year"
+      level_type: "TimeMonths"
+      has_hierarchy: false
+    - name: "Week"
+      key:
+      - "the_year"
+      - "week_of_year"
+      name_column: "week_of_year"
+      level_type: "TimeWeeks"
+      has_hierarchy: false
+    - name: "Day"
+      key:
+      - "time_id"
+      name_column: "day_of_month"
+      level_type: "TimeDays"
+      has_hierarchy: false
+    - name: "Month Name"
+      key:
+      - "the_year"
+      - "month_of_year"
+      name_column: "the_month"
+      has_hierarchy: false
+    - name: "Date"
+      key_column: "the_date"
+      has_hierarchy: false
+    - name: "Time Id"
+      key_column: "time_id"
+      has_hierarchy: false
+    hierarchies:
+    - name: "Time"
+      has_all: false
+      levels:
+      - "Year"
+      - "Quarter"
+      - "Month"
+    - name: "Weekly"
+      has_all: true
+      levels:
+      - "Year"
+      - "Week"
+      - "Day"
+  Product:
+    key: "Product Id"
+    attributes:
+    - name: "Product Family"
+      table: "product_class"
+      key_column: "product_family"
+      has_hierarchy: false
+    - name: "Product Department"
+      table: "product_class"
+      key:
+      - "product_family"
+      - "product_department"
+      name_column: "product_department"
+      has_hierarchy: false
+    - name: "Product Category"
+      table: "product_class"
+      key:
+      - "product_family"
+      - "product_department"
+      - "product_category"
+      name_column: "product_category"
+      has_hierarchy: false
+    - name: "Product Subcategory"
+      table: "product_class"
+      key:
+      - "product_family"
+      - "product_department"
+      - "product_category"
+      - "product_subcategory"
+      name_column: "product_subcategory"
+      has_hierarchy: false
+    - name: "Brand Name"
+      table: "product"
+      key:
+      - "product_class.product_family"
+      - "product_class.product_department"
+      - "product_class.product_category"
+      - "product_class.product_subcategory"
+      - "brand_name"
+      name_column: "brand_name"
+      has_hierarchy: false
+    - name: "Product Name"
+      table: "product"
+      key_column: "product_id"
+      name_column: "product_name"
+      has_hierarchy: false
+    - name: "Product Id"
+      table: "product"
+      key_column: "product_id"
+      has_hierarchy: false
+    hierarchies:
+    - name: "Products"
+      all_member_name: "All Products"
+      levels:
+      - "Product Family"
+      - "Product Department"
+      - "Product Category"
+      - "Product Subcategory"
+      - "Brand Name"
+      - "Product Name"
+  Warehouse:
+    table: "warehouse"
+    key: "Warehouse Id"
+    attributes:
+    - name: "Country"
+      key_column: "warehouse_country"
+      has_hierarchy: false
+    - name: "State Province"
+      key_column: "warehouse_state_province"
+      has_hierarchy: false
+    - name: "City"
+      key:
+      - "warehouse_state_province"
+      - "warehouse_city"
+      name_column: "warehouse_city"
+      has_hierarchy: false
+    - name: "Warehouse Name"
+      key_column: "warehouse_name"
+      has_hierarchy: false
+    - name: "Warehouse Id"
+      key_column: "warehouse_id"
+      has_hierarchy: false
+    hierarchies:
+    - name: "Warehouses"
+      all_member_name: "All Warehouses"
+      levels:
+      - "Country"
+      - "State Province"
+      - "City"
+      - "Warehouse Name"
+cubes:
+  Sales:
+    default_measure: "Unit Sales"
+    annotations:
+      caption.de_DE: "Verkaufen"
+      caption.fr_FR: "Ventes"
+      caption+fr_FR: "Ventes"
+      description.fr_FR: "Cube des ventes"
+      description.de: "Cube Verkaufen"
+      description.de_AT: "Cube den Verkaufen"
+    dimensions:
+    - source: "Store"
+    - source: "Time"
+    - source: "Product"
+    - name: "Promotion"
+      table: "promotion"
+      key: "Promotion Id"
+      attributes:
+      - name: "Promotion Id"
+        key_column: "promotion_id"
+        has_hierarchy: false
+      - name: "Promotion Name"
+        key_column: "promotion_name"
+        has_hierarchy: false
+      - name: "Media Type"
+        key_column: "media_type"
+        hierarchy_all_member_name: "All Media"
+        has_hierarchy: false
+      hierarchies:
+      - name: "Media Type"
+        all_member_name: "All Media"
+        levels:
+        - "Media Type"
+      - name: "Promotions"
+        all_member_name: "All Promotions"
+        levels:
+        - "Promotion Name"
+    - name: "Customer"
+      table: "customer"
+      key: "Name"
+      attributes:
+      - name: "Country"
+        key_column: "country"
+        has_hierarchy: false
+      - name: "State Province"
+        key:
+        - "country"
+        - "state_province"
+        name_column: "state_province"
+        has_hierarchy: false
+      - name: "City"
+        key:
+        - "country"
+        - "state_province"
+        - "city"
+        name_column: "city"
+        has_hierarchy: false
+      - name: "Name"
+        key_column: "customer_id"
+        name_column: "full_name"
+        order_by_column: "full_name"
+        has_hierarchy: false
+      - name: "Gender"
+        key_column: "gender"
+      - name: "Marital Status"
+        key_column: "marital_status"
+      - name: "Education"
+        key_column: "education"
+        has_hierarchy: false
+      - name: "Yearly Income"
+        key_column: "yearly_income"
+        hierarchy_all_member_name: "All Yearly Incomes"
+      hierarchies:
+      - name: "Customers"
+        all_member_name: "All Customers"
+        levels:
+        - "Country"
+        - "State Province"
+        - "City"
+        - "Name"
+      - name: "Education Level"
+        levels:
+        - name: "Education Level"
+          attribute: "Education"
+    measure_groups:
+    - name: "Sales"
+      table: "sales_fact_1997"
+      measures:
+      - name: "Unit Sales"
+        column: "unit_sales"
+        aggregator: "sum"
+        format_string: "Standard"
+      - name: "Store Cost"
+        column: "store_cost"
+        aggregator: "sum"
+        format_string: "#,###.00"
+      - name: "Store Sales"
+        column: "store_sales"
+        aggregator: "sum"
+        format_string: "#,###.00"
+      - name: "Sales Count"
+        column: "product_id"
+        aggregator: "count"
+        format_string: "#,###"
+      - name: "Customer Count"
+        column: "customer_id"
+        aggregator: "distinct-count"
+        format_string: "#,###"
+      - name: "Promotion Sales"
+        column: "promotion_sales"
+        aggregator: "sum"
+        format_string: "#,###.00"
+        datatype: "Numeric"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "time_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Promotion"
+        foreign_key_column: "promotion_id"
+      - type: "foreign_key"
+        dimension: "Customer"
+        foreign_key_column: "customer_id"
+    - table: "agg_c_special_sales_fact_1997"
+      type: "aggregate"
+      measures:
+      - ref: "Fact Count"
+        agg_column: "fact_count"
+      - ref: "Unit Sales"
+        agg_column: "unit_sales_sum"
+      - ref: "Store Cost"
+        agg_column: "store_cost_sum"
+      - ref: "Store Sales"
+        agg_column: "store_sales_sum"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Promotion"
+        foreign_key_column: "promotion_id"
+      - type: "foreign_key"
+        dimension: "Customer"
+        foreign_key_column: "customer_id"
+      - type: "copy"
+        dimension: "Time"
+    - table: "agg_l_05_sales_fact_1997"
+      type: "aggregate"
+      measures:
+      - ref: "Fact Count"
+        agg_column: "fact_count"
+      - ref: "Unit Sales"
+        agg_column: "unit_sales"
+      - ref: "Store Cost"
+        agg_column: "store_cost"
+      - ref: "Store Sales"
+        agg_column: "store_sales"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Promotion"
+        foreign_key_column: "promotion_id"
+      - type: "foreign_key"
+        dimension: "Customer"
+        foreign_key_column: "customer_id"
+      - type: "no_link"
+        dimension: "Time"
+    - table: "agg_c_14_sales_fact_1997"
+      type: "aggregate"
+      measures:
+      - ref: "Fact Count"
+        agg_column: "fact_count"
+      - ref: "Unit Sales"
+        agg_column: "unit_sales"
+      - ref: "Store Cost"
+        agg_column: "store_cost"
+      - ref: "Store Sales"
+        agg_column: "store_sales"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Promotion"
+        foreign_key_column: "promotion_id"
+      - type: "foreign_key"
+        dimension: "Customer"
+        foreign_key_column: "customer_id"
+      - type: "copy"
+        dimension: "Time"
+    - table: "agg_g_ms_pcat_sales_fact_1997"
+      type: "aggregate"
+      measures:
+      - ref: "Fact Count"
+        agg_column: "fact_count"
+      - ref: "Unit Sales"
+        agg_column: "unit_sales"
+      - ref: "Store Cost"
+        agg_column: "store_cost"
+      - ref: "Store Sales"
+        agg_column: "store_sales"
+      - ref: "Customer Count"
+        agg_column: "customer_count"
+      dimension_links:
+      - type: "no_link"
+        dimension: "Store"
+      - type: "copy"
+        dimension: "Product"
+      - type: "no_link"
+        dimension: "Promotion"
+      - type: "copy"
+        dimension: "Customer"
+      - type: "copy"
+        dimension: "Time"
+    calculated_members:
+    - name: "Profit"
+      dimension: "Measures"
+      formula: "[Measures].[Store Sales] - [Measures].[Store Cost]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+    - name: "Profit last Period"
+      dimension: "Measures"
+      formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+    - name: "Profit Growth"
+      dimension: "Measures"
+      formula: "([Measures].[Profit] - [Measures].[Profit last Period]) / [Measures].[Profit\
+        \ last Period]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "0.0%"
+  Sales 2:
+    dimensions:
+    - source: "Time"
+    - source: "Product"
+    - name: "Gender"
+      table: "customer"
+      key: "Id"
+      attributes:
+      - name: "Gender"
+        key_column: "gender"
+      - name: "Id"
+        key_column: "customer_id"
+    measure_groups:
+    - name: "Sales"
+      table: "sales_fact_1997"
+      measures:
+      - name: "Sales Count"
+        column: "product_id"
+        aggregator: "count"
+        format_string: "#,###"
+        properties:
+        - name: "MEMBER_ORDINAL"
+          value: "1"
+      - name: "Unit Sales"
+        column: "unit_sales"
+        aggregator: "sum"
+        format_string: "Standard"
+        properties:
+        - name: "MEMBER_ORDINAL"
+          value: "2"
+      - name: "Store Sales"
+        column: "store_sales"
+        aggregator: "sum"
+        format_string: "#,###.00"
+        properties:
+        - name: "MEMBER_ORDINAL"
+          value: "3"
+      - name: "Store Cost"
+        column: "store_cost"
+        aggregator: "sum"
+        format_string: "#,###.00"
+        properties:
+        - name: "MEMBER_ORDINAL"
+          value: "6"
+      - name: "Customer Count"
+        column: "customer_id"
+        aggregator: "distinct-count"
+        format_string: "#,###"
+        properties:
+        - name: "MEMBER_ORDINAL"
+          value: "7"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "time_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Gender"
+        foreign_key_column: "customer_id"
+    calculated_members:
+    - name: "Profit"
+      dimension: "Measures"
+      formula: "[Measures].[Store Sales] - [Measures].[Store Cost]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+      - name: "MEMBER_ORDINAL"
+        value: "4"
+    - name: "Profit last Period"
+      dimension: "Measures"
+      formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
+      properties:
+      - name: "MEMBER_ORDINAL"
+        value: "5"
+  Warehouse and Sales:
+    default_measure: "Unit Sales"
+    dimensions:
+    - source: "Store"
+    - name: "Promotion"
+      table: "promotion"
+      key: "Promotion Id"
+      attributes:
+      - name: "Promotion Id"
+        key_column: "promotion_id"
+        has_hierarchy: false
+      - name: "Media Type"
+        key_column: "media_type"
+        hierarchy_all_member_name: "All Media"
+      - name: "Promotion Name"
+        key_column: "promotion_name"
+        has_hierarchy: false
+      hierarchies:
+      - name: "Promotions"
+        all_member_name: "All Promotions"
+        levels:
+        - "Promotion Name"
+    - name: "Customer"
+      table: "customer"
+      key: "Name"
+      attributes:
+      - name: "Country"
+        key_column: "country"
+      - name: "State Province"
+        key_column: "state_province"
+      - name: "City"
+        key:
+        - "state_province"
+        - "city"
+        name_column: "city"
+      - name: "Name"
+        key_column: "customer_id"
+        name_column: "full_name"
+        order_by_column: "full_name"
+      - name: "Gender"
+        key_column: "gender"
+      - name: "Marital Status"
+        key_column: "marital_status"
+      - name: "Education"
+        key_column: "education"
+      - name: "Yearly Income"
+        key_column: "yearly_income"
+        hierarchy_all_member_name: "All Yearly Incomes"
+      hierarchies:
+      - name: "Customers"
+        all_member_name: "All Customers"
+        levels:
+        - "Country"
+        - "State Province"
+        - "City"
+        - "Name"
+      - name: "Education Level"
+        levels:
+        - name: "Education Level"
+          attribute: "Education"
+    - source: "Time"
+    - source: "Product"
+    - source: "Warehouse"
+    measure_groups:
+    - name: "Sales"
+      table: "sales_fact_1997"
+      measures:
+      - name: "Unit Sales"
+        column: "unit_sales"
+        aggregator: "sum"
+        format_string: "Standard"
+      - name: "Store Cost"
+        column: "store_cost"
+        aggregator: "sum"
+        format_string: "#,###.00"
+      - name: "Store Sales"
+        column: "store_sales"
+        aggregator: "sum"
+        format_string: "#,###.00"
+      - name: "Sales Count"
+        column: "product_id"
+        aggregator: "count"
+        format_string: "#,###"
+      - name: "Customer Count"
+        column: "customer_id"
+        aggregator: "distinct-count"
+        format_string: "#,###"
+      - name: "Promotion Sales"
+        column: "promotion_sales"
+        aggregator: "sum"
+        format_string: "#,###.00"
+        datatype: "Numeric"
+      - name: "Fact Count"
+        aggregator: "count"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "time_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Promotion"
+        foreign_key_column: "promotion_id"
+      - type: "foreign_key"
+        dimension: "Customer"
+        foreign_key_column: "customer_id"
+      - type: "no_link"
+        dimension: "Warehouse"
+    - name: "Warehouse"
+      table: "inventory_fact_1997"
+      measures:
+      - name: "Store Invoice"
+        column: "store_invoice"
+        aggregator: "sum"
+      - name: "Supply Time"
+        column: "supply_time"
+        aggregator: "sum"
+      - name: "Warehouse Cost"
+        column: "warehouse_cost"
+        aggregator: "sum"
+      - name: "Warehouse Sales"
+        column: "warehouse_sales"
+        aggregator: "sum"
+      - name: "Units Shipped"
+        column: "units_shipped"
+        aggregator: "sum"
+        format_string: "#.0"
+      - name: "Units Ordered"
+        column: "units_ordered"
+        aggregator: "sum"
+        format_string: "#.0"
+      - name: "Warehouse Profit"
+        column: "warehouse_profit"
+        aggregator: "sum"
+        datatype: "Numeric"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "time_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Warehouse"
+        foreign_key:
+        - "warehouse_id"
+      - type: "no_link"
+        dimension: "Promotion"
+      - type: "no_link"
+        dimension: "Customer"
+    calculated_members:
+    - name: "Profit"
+      dimension: "Measures"
+      formula: "[Measures].[Store Sales] - [Measures].[Store Cost]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+    - name: "Profit last Period"
+      dimension: "Measures"
+      formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+    - name: "Profit Growth"
+      dimension: "Measures"
+      formula: "([Measures].[Profit] - [Measures].[Profit last Period]) / [Measures].[Profit\
+        \ last Period]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "0.0%"
+    - name: "Average Warehouse Sale"
+      dimension: "Measures"
+      formula: "[Measures].[Warehouse Sales] / [Measures].[Warehouse Cost]"
+      properties:
+      - name: "FORMAT_STRING"
+        value: "$#,##0.00"
+    - name: "Profit Per Unit Shipped"
+      dimension: "Measures"
+      formula: "[Measures].[Profit] / [Measures].[Units Shipped]"
+  HR:
+    dimensions:
+    - name: "Employee"
+      key: "Employee Id"
+      attributes:
+      - name: "Manager Id"
+        table: "employee"
+        key_column: "supervisor_id"
+      - name: "Employee Id"
+        table: "employee"
+        key_column: "employee_id"
+        name_column: "full_name"
+        order_by_column: "employee_id"
+      - name: "Store Id"
+        table: "employee"
+        key_column: "store_id"
+      - name: "Store Type"
+        table: "store"
+        key_column: "store_type"
+        hierarchy_all_member_name: "All Store Types"
+      - name: "Pay Type"
+        table: "position"
+        key_column: "pay_type"
+        hierarchy_all_member_name: "All Pay Types"
+      - name: "Management Role"
+        table: "position"
+        key_column: "management_role"
+      - name: "Position Title"
+        table: "position"
+        key:
+        - "management_role"
+        - "position_title"
+        name_column: "position_title"
+      - name: "Marital Status"
+        table: "employee"
+        key_column: "marital_status"
+      - name: "Gender"
+        table: "employee"
+        key_column: "gender"
+      - name: "Salary"
+        table: "employee"
+        key_column: "salary"
+      - name: "Education Level"
+        table: "employee"
+        key_column: "education_level"
+      hierarchies:
+      - name: "Employees"
+        all_member_name: "All Employees"
+        levels:
+        - "Employee Id"
+      - name: "Position"
+        all_member_name: "All Position"
+        levels:
+        - "Management Role"
+        - "Position Title"
+    - name: "Department"
+      table: "department"
+      key: "Department Description"
+      attributes:
+      - name: "Department Description"
+        key_column: "department_id"
+      hierarchies:
+      - name: "Department"
+        levels:
+        - "Department Description"
+    - name: "Time"
+      table: "time_by_day"
+      key: "Time Id"
+      type: "TIME"
+      attributes:
+      - name: "Year"
+        key_column: "the_year"
+        level_type: "TimeYears"
+        has_hierarchy: false
+      - name: "Quarter"
+        key:
+        - "the_year"
+        - "quarter"
+        name_column: "quarter"
+        level_type: "TimeQuarters"
+        has_hierarchy: false
+      - name: "Month"
+        key:
+        - "the_year"
+        - "month_of_year"
+        name_column: "the_month"
+        has_hierarchy: false
+      - name: "Date"
+        key_column: "the_date"
+        has_hierarchy: false
+      - name: "Time Id"
+        key_column: "time_id"
+        has_hierarchy: false
+      hierarchies:
+      - name: "Time"
+        has_all: false
+        levels:
+        - "Year"
+        - "Quarter"
+        - "Month"
+    - source: "Store"
+    measure_groups:
+    - name: "HR"
+      table: "salary"
+      measures:
+      - name: "Org Salary"
+        column: "salary_paid"
+        aggregator: "sum"
+        format_string: "Currency"
+      - name: "Count"
+        column: "employee_id"
+        aggregator: "count"
+        format_string: "#,#"
+      - name: "Number of Employees"
+        column: "employee_id"
+        aggregator: "distinct-count"
+        format_string: "#,#"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "pay_date"
+        attribute: "Date"
+      - type: "foreign_key"
+        dimension: "Department"
+        foreign_key_column: "department_id"
+      - type: "foreign_key"
+        dimension: "Employee"
+        foreign_key_column: "employee_id"
+      - type: "reference"
+        dimension: "Store"
+        via_dimension: "Employee"
+        via_attribute: "Store Id"
+    calculated_members:
+    - name: "Employee Salary"
+      dimension: "Measures"
+      formula: "([Employees].currentmember.datamember, [Measures].[Org Salary])"
+      format_string: "Currency"
+    - name: "Avg Salary"
+      dimension: "Measures"
+      formula: "[Measures].[Org Salary]/[Measures].[Number of Employees]"
+      format_string: "Currency"
+  Warehouse:
+    dimensions:
+    - source: "Store"
+    - source: "Time"
+    - source: "Product"
+    - source: "Warehouse"
+    measure_groups:
+    - name: "Warehouse"
+      table: "inventory_fact_1997"
+      measures:
+      - name: "Store Invoice"
+        column: "store_invoice"
+        aggregator: "sum"
+      - name: "Supply Time"
+        column: "supply_time"
+        aggregator: "sum"
+      - name: "Warehouse Cost"
+        column: "warehouse_cost"
+        aggregator: "sum"
+      - name: "Warehouse Sales"
+        column: "warehouse_sales"
+        aggregator: "sum"
+      - name: "Units Shipped"
+        column: "units_shipped"
+        aggregator: "sum"
+        format_string: "#.0"
+      - name: "Units Ordered"
+        column: "units_ordered"
+        aggregator: "sum"
+        format_string: "#.0"
+      - name: "Warehouse Profit"
+        column: "warehouse_profit"
+        aggregator: "sum"
+        datatype: "Numeric"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Store"
+        foreign_key_column: "store_id"
+      - type: "foreign_key"
+        dimension: "Time"
+        foreign_key_column: "time_id"
+      - type: "foreign_key"
+        dimension: "Product"
+        foreign_key_column: "product_id"
+      - type: "foreign_key"
+        dimension: "Warehouse"
+        foreign_key:
+        - "warehouse_id"
+    named_sets:
+    - name: "Top Sellers"
+      formula: "TopCount([Warehouse].[Warehouse Name].MEMBERS, 5, [Measures].[Warehouse\
+        \ Sales])"
+  Store:
+    dimensions:
+    - name: "Store Type"
+      key: "Store Type"
+      attributes:
+      - name: "Store Type"
+        table: "store"
+        key_column: "store_type"
+    - source: "Store"
+    - name: "Has coffee bar"
+      attributes:
+      - name: "Has coffee bar"
+        table: "store"
+        key_column: "coffee_bar"
+        datatype: "Boolean"
+    measure_groups:
+    - name: "Store"
+      table: "store"
+      measures:
+      - name: "Store Sqft"
+        column: "store_sqft"
+        aggregator: "sum"
+        format_string: "#,###"
+      - name: "Grocery Sqft"
+        column: "grocery_sqft"
+        aggregator: "sum"
+        format_string: "#,###"
+      dimension_links:
+      - type: "fact"
+        dimension: "Store"
+      - type: "fact"
+        dimension: "Store Type"
+      - type: "fact"
+        dimension: "Has coffee bar"
+roles:
+- name: "California manager"
+  schema_grant:
+    access: "none"
+    cubes:
+    - cube: "Sales"
+      access: "all"
+      hierarchies:
+      - hierarchy: "[Store].[Stores]"
+        access: "custom"
+        top_level: "[Store].[Stores].[Store Country]"
+        members:
+        - member: "[Store].[Stores].[USA].[CA]"
+          access: "all"
+        - member: "[Store].[Stores].[USA].[CA].[Los Angeles]"
+          access: "none"
+      - hierarchy: "[Customer].[Customers]"
+        access: "custom"
+        top_level: "[Customer].[Customers].[State Province]"
+        bottom_level: "[Customer].[Customers].[City]"
+        members:
+        - member: "[Customer].[Customers].[USA].[CA]"
+          access: "all"
+        - member: "[Customer].[Customers].[USA].[CA].[Los Angeles]"
+          access: "none"
+      - hierarchy: "[Gender]"
+        access: "none"
+- name: "No HR Cube"
+  schema_grant:
+    access: "all"
+    cubes:
+    - cube: "HR"
+      access: "none"

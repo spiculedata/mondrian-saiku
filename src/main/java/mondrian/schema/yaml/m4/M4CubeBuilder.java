@@ -215,6 +215,17 @@ final class M4CubeBuilder {
         measure.aggregator = M4YamlToXml.str(m.get("aggregator"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
+        Object props = m.get("properties");
+        if (props instanceof List && !((List<?>) props).isEmpty()) {
+            List<MondrianDef.MeasureElement> kids = new ArrayList<>();
+            for (Object p : (List<?>) props) {
+                if (p instanceof Map) {
+                    kids.add(buildCalcMemberProperty((Map<?, ?>) p));
+                }
+            }
+            measure.childArray =
+                kids.toArray(new MondrianDef.MeasureElement[0]);
+        }
         return measure;
     }
 
@@ -238,6 +249,17 @@ final class M4CubeBuilder {
             link.dimension = dimension;
             link.foreignKeyColumn = M4YamlToXml.str(m.get("foreign_key_column"));
             link.attribute = M4YamlToXml.str(m.get("attribute"));
+            // Compound foreign key expressed as a list of column refs
+            Object fkCols = m.get("foreign_key");
+            if (fkCols instanceof List && !((List<?>) fkCols).isEmpty()) {
+                MondrianDef.ForeignKey fk = new MondrianDef.ForeignKey();
+                List<MondrianDef.Column> cols = new ArrayList<>();
+                for (Object c : (List<?>) fkCols) {
+                    cols.add(M4YamlToXml.parseColumnRef(M4YamlToXml.str(c)));
+                }
+                fk.array = cols.toArray(new MondrianDef.Column[0]);
+                link.foreignKey = fk;
+            }
             return link;
         } else if ("copy".equals(type)) {
             MondrianDef.CopyLink link = new MondrianDef.CopyLink();

@@ -282,6 +282,20 @@ final class M4CubeIngester {
             if (m.datatype != null) {
                 out.put("datatype", m.datatype);
             }
+            // Capture CalculatedMemberProperty children (e.g. MEMBER_ORDINAL).
+            // Dropping these causes ordinal collisions with calculated members.
+            if (m.childArray != null) {
+                List<Map<String, Object>> props = new ArrayList<>();
+                for (MondrianDef.MeasureElement me : m.childArray) {
+                    if (me instanceof MondrianDef.CalculatedMemberProperty) {
+                        props.add(calcMemberProperty(
+                            (MondrianDef.CalculatedMemberProperty) me));
+                    }
+                }
+                if (!props.isEmpty()) {
+                    out.put("properties", props);
+                }
+            }
         }
         return out;
     }
@@ -302,8 +316,13 @@ final class M4CubeIngester {
             MondrianDef.ForeignKeyLink fkl = (MondrianDef.ForeignKeyLink) dl;
             out.put("type", "foreign_key");
             out.put("dimension", fkl.dimension);
-            if (fkl.foreignKeyColumn != null) {
+            if (fkl.foreignKeyColumn != null && !fkl.foreignKeyColumn.isEmpty()) {
                 out.put("foreign_key_column", fkl.foreignKeyColumn);
+            } else if (fkl.foreignKey != null
+                    && fkl.foreignKey.array != null
+                    && fkl.foreignKey.array.length > 0) {
+                // Compound or explicit <ForeignKey><Column .../></ForeignKey>
+                out.put("foreign_key", M4XmlToYaml.columnNames(fkl.foreignKey.array));
             }
             if (fkl.attribute != null) {
                 out.put("attribute", fkl.attribute);
