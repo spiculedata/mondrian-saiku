@@ -99,7 +99,17 @@ schema:
 
 ## annotations
 
-Maps to `<Annotations><Annotation name="..." cdata/></Annotations>`. Present at both schema level (top-level key) and cube level (key inside a cube body).
+Maps to `<Annotations><Annotation name="..." cdata/></Annotations>`. Supported at the following levels:
+
+- **schema** — top-level `annotations:` key
+- **cube** — `annotations:` key inside a cube body
+- **dimension** — `annotations:` key inside a shared or inline dimension body
+- **hierarchy** — `annotations:` key inside a hierarchy body
+- **level** — `annotations:` map form of a level entry (see [levels inside a hierarchy](#levels-inside-a-hierarchy))
+- **attribute** — `annotations:` key inside an attribute body (map form)
+- **measure** — `annotations:` key inside a measure definition
+- **calculated_member** — `annotations:` key inside a calculated member body
+- **role** — `annotations:` key inside a role body
 
 The value is a YAML map of `name: text` pairs. Annotation names are arbitrary strings; Mondrian uses dot-qualified names (e.g. `caption.de_DE`) as a convention for locale-specific metadata.
 
@@ -108,6 +118,37 @@ annotations:
   caption.de_DE: "Verkaufen"
   caption.fr_FR: "Ventes"
   description.fr_FR: "Cube des ventes"
+```
+
+**Annotated dimension example:**
+
+```yaml
+shared_dimensions:
+  Store:
+    table: "store"
+    key: "Store Id"
+    annotations:
+      caption.de_DE: "Geschäft"
+    attributes:
+      - name: "Store Country"
+        key_column: "store_country"
+        has_hierarchy: false
+        annotations:
+          description: "ISO country code of the store"
+```
+
+**Annotated level example** (map form required when adding annotations to a level):
+
+```yaml
+hierarchies:
+  - name: "Stores"
+    levels:
+      - name: "Store Country"
+        annotations:
+          caption.fr_FR: "Pays"
+      - "Store State"
+      - "Store City"
+      - "Store Name"
 ```
 
 ---
@@ -471,6 +512,8 @@ A list of measure group definitions. Each maps to a `<MeasureGroup>` element.
 | `name` | no | `name=` | Measure group name; optional for the primary group |
 | `table` | yes | `table=` | Fact or aggregate table name |
 | `type` | no | `type=` | `"aggregate"` for aggregate measure groups; omit for the default `"fact"` type |
+| `approx_row_count` | no | `approxRowCount=` | Hint to the engine for the approximate row count of the fact table (string, e.g. `"86837"`) |
+| `ignore_unrelated_dimensions` | no | `ignoreUnrelatedDimensions=` | `true` tells Mondrian to treat unrelated dimensions as `[All]` rather than returning null (boolean) |
 | `measures` | no | `<Measures>` | List of measure or measure-ref definitions |
 | `dimension_links` | no | `<DimensionLinks>` | List of links from this measure group to its dimensions |
 
@@ -585,10 +628,31 @@ dimension_links:
 |---|---|---|
 | `type` | yes | `"copy"` |
 | `dimension` | yes | Dimension name |
+| `column_refs` | no | List of `{table, name, agg_column}` maps mapping dimension columns to their aggregate-table counterparts |
+
+Each entry in `column_refs` has:
+
+| Key | Required | Notes |
+|---|---|---|
+| `table` | no | Source dimension table name (omit if unambiguous) |
+| `name` | yes | Dimension column name |
+| `agg_column` | no | Corresponding column name in the aggregate table (omit if the same as `name`) |
+
+> **Note:** The `attribute` XML attribute on `<CopyLink>` is a no-op in Mondrian and is intentionally not round-tripped by the converter.
 
 ```yaml
 - type: "copy"
   dimension: "Time"
+  column_refs:
+    - table: "time_by_day"
+      name: "the_year"
+      agg_column: "time_year"
+    - table: "time_by_day"
+      name: "quarter"
+      agg_column: "quarter"
+    - table: "time_by_day"
+      name: "month_of_year"
+      agg_column: "month_of_year"
 ```
 
 **`no_link`** — this measure group does not link to this dimension (Mondrian ignores queries that slice by this dimension for this measure group). Maps to `<NoLink>`.
@@ -692,9 +756,29 @@ A list of calculated member definitions. Each maps to `<CalculatedMember>`.
 | `parent` | no | `parent=` | Parent member MDX unique name |
 | `formula` | no | `formula=` | MDX formula (inline) |
 | `format_string` | no | `formatString=` | MDX format string |
+| `caption` | no | `caption=` | Display caption (overrides `name` in client tools) |
+| `description` | no | `description=` | Human-readable description |
+| `visible` | no | `visible=` | `false` hides the member from client tools (boolean; default `true`, omitted when true) |
+| `cell_formatter` | no | `<CellFormatter>` | Custom cell formatter (see below) |
 | `properties` | no | `<CalculatedMemberProperty>` | List of `{name, value}` maps or `{name, expression}` maps |
 
 The `properties` list supports both `value` (static string) and `expression` (MDX expression string) on each entry. Common property names: `FORMAT_STRING`, `SOLVE_ORDER`, `MEMBER_ORDINAL`.
+
+#### cell_formatter
+
+Specifies a custom Java or scripted cell formatter. Maps to `<CellFormatter>`.
+
+| Key | Required | Notes |
+|---|---|---|
+| `class_name` | no | Fully qualified Java class name implementing `CellFormatter` |
+| `script` | no | Inline script map (see below) |
+
+The `script` map has:
+
+| Key | Required | Notes |
+|---|---|---|
+| `language` | no | Script language (e.g. `"JavaScript"`) |
+| `body` | yes | Script body text |
 
 ```yaml
 calculated_members:
@@ -716,6 +800,18 @@ calculated_members:
     dimension: "Measures"
     formula: "([Employees].currentmember.datamember, [Measures].[Org Salary])"
     format_string: "Currency"
+
+  # With caption, description, visible, and a scripted cell formatter
+  - name: "Internal Profit"
+    dimension: "Measures"
+    formula: "[Measures].[Store Sales] - [Measures].[Store Cost]"
+    caption: "Profit"
+    description: "Net store profit after cost."
+    visible: false
+    cell_formatter:
+      script:
+        language: "JavaScript"
+        body: "return '$' + value;"
 ```
 
 ### named_sets
@@ -758,7 +854,15 @@ A list of role definitions. Each maps to a `<Role>` element. Roles are emitted l
 |---|---|---|---|
 | `cube` | yes | `cube=` | Cube name |
 | `access` | yes | `access=` | `"all"`, `"none"`, or `"custom"` |
+| `dimensions` | no | `<DimensionGrant>` children | List of per-dimension grants (see below) |
 | `hierarchies` | no | `<HierarchyGrant>` children | List of per-hierarchy grants |
+
+### dimension grant
+
+| Key | Required | XML | Notes |
+|---|---|---|---|
+| `dimension` | yes | `dimension=` | Dimension name |
+| `access` | yes | `access=` | `"all"`, `"none"`, or `"custom"` |
 
 ### hierarchy grant
 
@@ -788,6 +892,9 @@ roles:
       cubes:
         - cube: "Sales"
           access: "all"
+          dimensions:
+            - dimension: "Gender"
+              access: "none"
           hierarchies:
             - hierarchy: "[Store].[Stores]"
               access: "custom"
@@ -805,8 +912,6 @@ roles:
               members:
                 - member: "[Customer].[Customers].[USA].[CA]"
                   access: "all"
-            - hierarchy: "[Gender]"
-              access: "none"
 
   - name: "No HR Cube"
     schema_grant:
@@ -850,23 +955,15 @@ expression:
 
 The following items are not yet fully captured by the M4 YAML converter. They are derived from code comments and TODOs in the converter source.
 
-1. **`CopyLink` does not support `attribute`**: The `CopyLink` Mondrian-4 XML element has an `attribute` field. The YAML `column_refs` key on a `copy` dimension link is parsed but the ingester (XML → YAML) does not emit it. Round-tripping a CopyLink with a non-default attribute will lose that field.
+> **Note:** As of version 4.8.1.16, items previously listed as limitations — CopyLink `column_refs`, DimensionGrant in roles, sub-cube annotations, CalculatedMember `caption`/`description`/`visible`/`CellFormatter`, and MeasureGroup `approx_row_count`/`ignore_unrelated_dimensions` — are now fully supported. The `attribute` XML attribute on `<CopyLink>` is a no-op in Mondrian and is intentionally not round-tripped. The remaining open items are tracked in #86/#87.
 
-2. **`DimensionGrant` in roles not supported**: The Mondrian-4 schema supports `<DimensionGrant>` elements inside `<SchemaGrant>`. The role builder reads only `schema_grant.cubes`; dimension-level grants are not parsed or emitted.
+1. **`{col:}` token assumption**: The `{col:table.column}` encoding in calculated-column SQL bodies assumes that (a) plain SQL text does not contain the literal sequence `{col:` and (b) table and column identifiers do not contain a literal `.` character. Quoted identifiers with embedded dots will not round-trip correctly.
 
-3. **Annotations at cube and schema level only**: The converter supports `annotations:` at schema level and at cube level. `MeasureGroup`-level annotations (a TODO noted in `M4CubeIngester`) are not captured.
+2. **`table.column` dot assumption**: The `table.column` encoding in `key` and `name_columns` lists splits on the first `.`. Table or column names that themselves contain a `.` (e.g. quoted identifiers) will not round-trip correctly.
 
-4. **CalculatedMember deferred fields**: The fields `caption`, `description`, `visible`, and `CellFormatter` on `<CalculatedMember>` are noted as deferred in `M4CubeIngester` and are not round-tripped.
+3. **Whitespace in calculated-column SQL**: The YAML serializer may introduce extra leading whitespace or line-break tokens when re-reading a YAML file that was machine-generated. SQL bodies with significant leading whitespace may acquire extra indentation on a second round-trip.
 
-5. **MeasureGroup deferred fields**: `approxRowCount` and `ignoreUnrelatedDimensions` on `<MeasureGroup>` are noted as deferred in `M4CubeIngester` and are not emitted.
-
-6. **`{col:}` token assumption**: The `{col:table.column}` encoding in calculated-column SQL bodies assumes that (a) plain SQL text does not contain the literal sequence `{col:` and (b) table and column identifiers do not contain a literal `.` character. Quoted identifiers with embedded dots will not round-trip correctly.
-
-7. **`table.column` dot assumption**: The `table.column` encoding in `key` and `name_columns` lists splits on the first `.`. Table or column names that themselves contain a `.` (e.g. quoted identifiers) will not round-trip correctly.
-
-8. **Whitespace in calculated-column SQL**: The YAML serializer may introduce extra leading whitespace or line-break tokens when re-reading a YAML file that was machine-generated. SQL bodies with significant leading whitespace may acquire extra indentation on a second round-trip.
-
-9. **`$ref` includes require a file URL**: `$ref` resolution only works when the schema is loaded via a `Catalog=file:///...` connect-string property. Inline loading via `CatalogContent` has no base directory and skips `$ref` resolution.
+4. **`$ref` includes require a file URL**: `$ref` resolution only works when the schema is loaded via a `Catalog=file:///...` connect-string property. Inline loading via `CatalogContent` has no base directory and skips `$ref` resolution.
 
 ---
 

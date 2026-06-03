@@ -83,19 +83,53 @@ final class M4CubeBuilder {
         cm.dimension = M4YamlToXml.str(m.get("dimension"));
         cm.hierarchy = M4YamlToXml.str(m.get("hierarchy"));
         cm.parent = M4YamlToXml.str(m.get("parent"));
+        cm.caption = M4YamlToXml.str(m.get("caption"));
+        cm.description = M4YamlToXml.str(m.get("description"));
+        Object visibleObj = m.get("visible");
+        if (visibleObj != null) {
+            cm.visible = M4YamlToXml.boolToBoolean(visibleObj);
+        }
         cm.formula = M4YamlToXml.str(m.get("formula"));
         cm.formatString = M4YamlToXml.str(m.get("format_string"));
+        List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(M4YamlToXml.buildAnnotations((Map<?, ?>) annObj));
+        }
+        Object cfObj = m.get("cell_formatter");
+        if (cfObj instanceof Map) {
+            kids.add(buildCellFormatter((Map<?, ?>) cfObj));
+        }
         Object propsObj = m.get("properties");
-        if (propsObj instanceof List && !((List<?>) propsObj).isEmpty()) {
-            List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+        if (propsObj instanceof List) {
             for (Object p : (List<?>) propsObj) {
                 if (p instanceof Map) {
                     kids.add(buildCalcMemberProperty((Map<?, ?>) p));
                 }
             }
+        }
+        if (!kids.isEmpty()) {
             cm.childArray = kids.toArray(new MondrianDef.CalculatedMemberElement[0]);
         }
         return cm;
+    }
+
+    private static MondrianDef.CellFormatter buildCellFormatter(Map<?, ?> m) {
+        MondrianDef.CellFormatter cf = new MondrianDef.CellFormatter();
+        cf.className = M4YamlToXml.str(m.get("class_name"));
+        Object scriptObj = m.get("script");
+        if (scriptObj instanceof Map) {
+            cf.script = buildScript((Map<?, ?>) scriptObj);
+        }
+        return cf;
+    }
+
+    private static MondrianDef.Script buildScript(Map<?, ?> m) {
+        MondrianDef.Script s = new MondrianDef.Script();
+        s.language = M4YamlToXml.str(m.get("language"));
+        s.cdata = M4YamlToXml.str(m.get("body"));
+        return s;
     }
 
     private static MondrianDef.CalculatedMemberProperty buildCalcMemberProperty(Map<?, ?> m) {
@@ -173,6 +207,14 @@ final class M4CubeBuilder {
         if (type != null) {
             mg.type = type;
         }
+        String approxRowCount = M4YamlToXml.str(m.get("approx_row_count"));
+        if (approxRowCount != null) {
+            mg.approxRowCount = approxRowCount;
+        }
+        Object ignoreUnrelated = m.get("ignore_unrelated_dimensions");
+        if (ignoreUnrelated != null) {
+            mg.ignoreUnrelatedDimensions = M4YamlToXml.boolToBoolean(ignoreUnrelated);
+        }
         List<MondrianDef.MeasureGroupElement> kids = new ArrayList<>();
         Object measures = m.get("measures");
         if (measures instanceof List && !((List<?>) measures).isEmpty()) {
@@ -215,14 +257,21 @@ final class M4CubeBuilder {
         measure.aggregator = M4YamlToXml.str(m.get("aggregator"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
+        List<MondrianDef.MeasureElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(M4YamlToXml.buildAnnotations((Map<?, ?>) annObj));
+        }
         Object props = m.get("properties");
         if (props instanceof List && !((List<?>) props).isEmpty()) {
-            List<MondrianDef.MeasureElement> kids = new ArrayList<>();
             for (Object p : (List<?>) props) {
                 if (p instanceof Map) {
                     kids.add(buildCalcMemberProperty((Map<?, ?>) p));
                 }
             }
+        }
+        if (!kids.isEmpty()) {
             measure.childArray =
                 kids.toArray(new MondrianDef.MeasureElement[0]);
         }
@@ -270,7 +319,14 @@ final class M4CubeBuilder {
             if (colRefs instanceof List && !((List<?>) colRefs).isEmpty()) {
                 List<MondrianDef.Column> cols = new ArrayList<>();
                 for (Object c : (List<?>) colRefs) {
-                    cols.add(new MondrianDef.Column(null, M4YamlToXml.str(c)));
+                    if (c instanceof Map) {
+                        Map<?, ?> colMap = (Map<?, ?>) c;
+                        String colTable = M4YamlToXml.str(colMap.get("table"));
+                        String colName = M4YamlToXml.str(colMap.get("name"));
+                        MondrianDef.Column col = new MondrianDef.Column(colTable, colName);
+                        col.aggColumn = M4YamlToXml.str(colMap.get("agg_column"));
+                        cols.add(col);
+                    }
                 }
                 link.columnRefs = cols.toArray(new MondrianDef.Column[0]);
             }
