@@ -44,10 +44,82 @@ final class M4CubeBuilder {
         if (mgs instanceof List && !((List<?>) mgs).isEmpty()) {
             cubeKids.add(buildMeasureGroups((List<?>) mgs));
         }
+        Object cms = body.get("calculated_members");
+        if (cms instanceof List && !((List<?>) cms).isEmpty()) {
+            cubeKids.add(buildCalculatedMembers((List<?>) cms));
+        }
+        Object nss = body.get("named_sets");
+        if (nss instanceof List && !((List<?>) nss).isEmpty()) {
+            cubeKids.add(buildNamedSets((List<?>) nss));
+        }
         if (!cubeKids.isEmpty()) {
             cube.childArray = cubeKids.toArray(new MondrianDef.CubeElement[0]);
         }
         return cube;
+    }
+
+    // ---- calculated members ----
+
+    private static MondrianDef.CalculatedMembers buildCalculatedMembers(List<?> list) {
+        MondrianDef.CalculatedMembers wrapper = new MondrianDef.CalculatedMembers();
+        List<MondrianDef.CalculatedMember> cms = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                cms.add(buildCalculatedMember((Map<?, ?>) item));
+            }
+        }
+        wrapper.array = cms.toArray(new MondrianDef.CalculatedMember[0]);
+        return wrapper;
+    }
+
+    private static MondrianDef.CalculatedMember buildCalculatedMember(Map<?, ?> m) {
+        MondrianDef.CalculatedMember cm = new MondrianDef.CalculatedMember();
+        cm.name = M4YamlToXml.str(m.get("name"));
+        cm.dimension = M4YamlToXml.str(m.get("dimension"));
+        cm.hierarchy = M4YamlToXml.str(m.get("hierarchy"));
+        cm.parent = M4YamlToXml.str(m.get("parent"));
+        cm.formula = M4YamlToXml.str(m.get("formula"));
+        cm.formatString = M4YamlToXml.str(m.get("format_string"));
+        Object propsObj = m.get("properties");
+        if (propsObj instanceof List && !((List<?>) propsObj).isEmpty()) {
+            List<MondrianDef.CalculatedMemberElement> kids = new ArrayList<>();
+            for (Object p : (List<?>) propsObj) {
+                if (p instanceof Map) {
+                    kids.add(buildCalcMemberProperty((Map<?, ?>) p));
+                }
+            }
+            cm.childArray = kids.toArray(new MondrianDef.CalculatedMemberElement[0]);
+        }
+        return cm;
+    }
+
+    private static MondrianDef.CalculatedMemberProperty buildCalcMemberProperty(Map<?, ?> m) {
+        MondrianDef.CalculatedMemberProperty prop = new MondrianDef.CalculatedMemberProperty();
+        prop.name = M4YamlToXml.str(m.get("name"));
+        prop.value = M4YamlToXml.str(m.get("value"));
+        prop.expression = M4YamlToXml.str(m.get("expression"));
+        return prop;
+    }
+
+    // ---- named sets ----
+
+    private static MondrianDef.NamedSets buildNamedSets(List<?> list) {
+        MondrianDef.NamedSets wrapper = new MondrianDef.NamedSets();
+        List<MondrianDef.NamedSet> nss = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                nss.add(buildNamedSet((Map<?, ?>) item));
+            }
+        }
+        wrapper.array = nss.toArray(new MondrianDef.NamedSet[0]);
+        return wrapper;
+    }
+
+    private static MondrianDef.NamedSet buildNamedSet(Map<?, ?> m) {
+        MondrianDef.NamedSet ns = new MondrianDef.NamedSet();
+        ns.name = M4YamlToXml.str(m.get("name"));
+        ns.formula = M4YamlToXml.str(m.get("formula"));
+        return ns;
     }
 
     // ---- private cube helpers ----

@@ -40,11 +40,17 @@ final class M4CubeIngester {
         if (c.childArray != null) {
             List<Object> dimList = null;
             List<Object> mgList = null;
+            List<Object> cmList = null;
+            List<Object> nsList = null;
             for (MondrianDef.CubeElement ce : c.childArray) {
                 if (ce instanceof MondrianDef.Dimensions) {
                     dimList = cubeDimensions((MondrianDef.Dimensions) ce);
                 } else if (ce instanceof MondrianDef.MeasureGroups) {
                     mgList = measureGroups((MondrianDef.MeasureGroups) ce);
+                } else if (ce instanceof MondrianDef.CalculatedMembers) {
+                    cmList = calculatedMembers((MondrianDef.CalculatedMembers) ce);
+                } else if (ce instanceof MondrianDef.NamedSets) {
+                    nsList = namedSets((MondrianDef.NamedSets) ce);
                 }
             }
             if (dimList != null && !dimList.isEmpty()) {
@@ -53,6 +59,110 @@ final class M4CubeIngester {
             if (mgList != null && !mgList.isEmpty()) {
                 out.put("measure_groups", mgList);
             }
+            if (cmList != null && !cmList.isEmpty()) {
+                out.put("calculated_members", cmList);
+            }
+            if (nsList != null && !nsList.isEmpty()) {
+                out.put("named_sets", nsList);
+            }
+        }
+        return out;
+    }
+
+    // ---- calculated members ----
+
+    private static List<Object> calculatedMembers(MondrianDef.CalculatedMembers wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.CalculatedMember cm : wrapper.array) {
+                out.add(calculatedMember(cm));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> calculatedMember(MondrianDef.CalculatedMember cm) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", cm.name);
+        if (cm.dimension != null) {
+            out.put("dimension", cm.dimension);
+        }
+        if (cm.hierarchy != null) {
+            out.put("hierarchy", cm.hierarchy);
+        }
+        if (cm.parent != null) {
+            out.put("parent", cm.parent);
+        }
+        // Prefer formula attribute; fall back to <Formula> child cdata
+        String formula = cm.formula;
+        if (formula == null && cm.childArray != null) {
+            for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
+                if (child instanceof MondrianDef.Formula) {
+                    formula = ((MondrianDef.Formula) child).cdata;
+                    break;
+                }
+            }
+        }
+        if (formula != null) {
+            out.put("formula", formula);
+        }
+        if (cm.formatString != null) {
+            out.put("format_string", cm.formatString);
+        }
+        // Collect CalculatedMemberProperty children
+        if (cm.childArray != null) {
+            List<Object> props = new ArrayList<>();
+            for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
+                if (child instanceof MondrianDef.CalculatedMemberProperty) {
+                    props.add(calcMemberProperty((MondrianDef.CalculatedMemberProperty) child));
+                }
+            }
+            if (!props.isEmpty()) {
+                out.put("properties", props);
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> calcMemberProperty(MondrianDef.CalculatedMemberProperty prop) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", prop.name);
+        if (prop.value != null) {
+            out.put("value", prop.value);
+        }
+        if (prop.expression != null) {
+            out.put("expression", prop.expression);
+        }
+        return out;
+    }
+
+    // ---- named sets ----
+
+    private static List<Object> namedSets(MondrianDef.NamedSets wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.NamedSet ns : wrapper.array) {
+                out.add(namedSet(ns));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> namedSet(MondrianDef.NamedSet ns) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", ns.name);
+        // Prefer formula attribute; fall back to <Formula> child cdata
+        String formula = ns.formula;
+        if (formula == null && ns.childArray != null) {
+            for (MondrianDef.CalculatedMemberElement child : ns.childArray) {
+                if (child instanceof MondrianDef.Formula) {
+                    formula = ((MondrianDef.Formula) child).cdata;
+                    break;
+                }
+            }
+        }
+        if (formula != null) {
+            out.put("formula", formula);
         }
         return out;
     }

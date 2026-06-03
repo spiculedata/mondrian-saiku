@@ -449,6 +449,50 @@ public class M4PhysicalLayerTest {
         assertEquals(yaml, yaml2);
     }
 
+    // ---- calc members + named sets ----
+
+    private static final String CALC_XML =
+        "<Schema name='FoodMart' metamodelVersion='4.0'>"
+        + "<Cube name='Sales' defaultMeasure='Unit Sales'>"
+        + "<MeasureGroups><MeasureGroup name='Sales' table='sales_fact_1997'>"
+        + "<Measures><Measure name='Unit Sales' column='unit_sales' aggregator='sum'/></Measures>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "<CalculatedMembers>"
+        + "<CalculatedMember name='Profit' dimension='Measures'"
+        + " formula='[Measures].[Store Sales] - [Measures].[Store Cost]'"
+        + " formatString='$#,##0.00'>"
+        + "<CalculatedMemberProperty name='SOLVE_ORDER' value='100'/>"
+        + "</CalculatedMember>"
+        + "</CalculatedMembers>"
+        + "<NamedSets>"
+        + "<NamedSet name='Top Sellers'"
+        + " formula='TopCount([Product].[Product].Members, 10, [Measures].[Unit Sales])'/>"
+        + "</NamedSets>"
+        + "</Cube></Schema>";
+
+    @Test
+    public void ingestsCalcMembersAndNamedSets() {
+        String yaml = M4XmlToYaml.toYaml(CALC_XML);
+        assertTrue(yaml, yaml.contains("calculated_members:"));
+        assertTrue(yaml, yaml.contains("Profit"));
+        assertTrue(yaml, yaml.contains("dimension: \"Measures\"")
+            || yaml.contains("dimension: Measures"));
+        assertTrue(yaml, yaml.contains("formula:"));
+        assertTrue(yaml, yaml.contains("Store Sales"));
+        assertTrue(yaml, yaml.contains("format_string"));
+        assertTrue(yaml, yaml.contains("properties:"));
+        assertTrue(yaml, yaml.contains("SOLVE_ORDER"));
+        assertTrue(yaml, yaml.contains("named_sets:"));
+        assertTrue(yaml, yaml.contains("Top Sellers"));
+    }
+
+    @Test
+    public void calcMembersAndNamedSetsRoundTrip() {
+        String yaml = M4XmlToYaml.toYaml(CALC_XML);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
     @Test
     public void attributeMultiColNameAndCaptionsRoundTrip() {
         String xml =
