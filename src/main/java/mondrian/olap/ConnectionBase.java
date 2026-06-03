@@ -93,12 +93,35 @@ public abstract class ConnectionBase implements Connection {
                 + query);
         }
 
-        try {
-            return
-                parser.parseInternal(
-                    statement, query, debug, funTable, strictValidation);
-        } catch (Exception e) {
-            throw MondrianResource.instance().FailedToParseQuery.ex(query, e);
+        // #33: mondrian.mdx.parse span. Includes the JavaCC parse +
+        // (because Query's constructor calls resolve() inline) the
+        // validate + compile phases, which emit their own child spans
+        // from Query.resolve(). Zero-overhead when no OTel SDK is wired.
+        final io.opentelemetry.api.trace.Span span =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.mdx.parse")
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.longKey(
+                        "mondrian.mdx.length"),
+                    (long) (query == null ? 0 : query.length()))
+                .startSpan();
+        try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+            try {
+                return
+                    parser.parseInternal(
+                        statement, query, debug, funTable, strictValidation);
+            } catch (Exception e) {
+                throw MondrianResource.instance().FailedToParseQuery.ex(query, e);
+            }
+        } catch (RuntimeException | Error t) {
+            span.recordException(t);
+            span.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            span.end();
         }
     }
 

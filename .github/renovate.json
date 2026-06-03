@@ -1,0 +1,92 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":timezone(Europe/London)"
+  ],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "rangeStrategy": "pin",
+  "labels": ["dependencies"],
+  "commitMessagePrefix": "chore(deps):",
+  "dependencyDashboardTitle": "Renovate dashboard",
+  "dependencyDashboardAutoclose": false,
+  "packageRules": [
+    {
+      "description": "Calcite + its core transitives upgrade as one set — bumping calcite-core alone usually drags incompatible avatica / janino versions; force them to ride together.",
+      "groupName": "Apache Calcite",
+      "matchPackagePatterns": [
+        "^org\\.apache\\.calcite",
+        "^org\\.apache\\.calcite\\.avatica"
+      ]
+    },
+    {
+      "description": "Jackson core + databind + dataformats stay aligned to one minor version — mixed-minor Jackson is a classic NoSuchMethodError trap.",
+      "groupName": "Jackson",
+      "matchPackagePatterns": [
+        "^com\\.fasterxml\\.jackson"
+      ]
+    },
+    {
+      "description": "OpenTelemetry api / sdk / sdk-testing must move as one unit.",
+      "groupName": "OpenTelemetry",
+      "matchPackagePatterns": [
+        "^io\\.opentelemetry"
+      ]
+    },
+    {
+      "description": "Arrow / ADBC clusters — JNI shim, driver-manager, vector, jdbc-adapter all share a release train.",
+      "groupName": "Apache Arrow + ADBC",
+      "matchPackagePatterns": [
+        "^org\\.apache\\.arrow"
+      ]
+    },
+    {
+      "description": "Auto-merge patch bumps after CI is green. Minor / major bumps still require human review since they routinely include API breaks even when the changelog claims they don't.",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Test-only deps (mockito, hsqldb, duckdb_jdbc, junit, surefire) can move ahead of production deps — they only block CI, not deployments. Minor upgrades auto-merge here too.",
+      "matchDepTypes": ["test"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "GitHub Actions: action versions ride a fast cadence; group + auto-merge minor / patch.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "GitHub Actions",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Maven plugins — same deal as GitHub Actions; usually safe to ride patch / minor.",
+      "matchPackagePatterns": [
+        "^org\\.apache\\.maven\\.plugins",
+        "^org\\.codehaus\\.mojo"
+      ],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security", "dependencies"],
+    "schedule": []
+  },
+  "lockFileMaintenance": {
+    "enabled": false
+  }
+}

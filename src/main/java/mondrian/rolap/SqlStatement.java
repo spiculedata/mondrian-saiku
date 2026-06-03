@@ -126,9 +126,75 @@ public class SqlStatement implements DBStatement {
     }
 
     /**
+     * Maps Mondrian's {@link SqlStatementEvent.Purpose} to the
+     * stable {@code mondrian.sql.kind} OTel attribute value (#33).
+     * Defaults to "other" for {@code OTHER} / unknown — dashboards
+     * group by this value.
+     */
+    private static String purposeToKind(SqlStatementEvent.Purpose p) {
+        if (p == null) return "other";
+        switch (p) {
+        case CELL_SEGMENT:   return "segment-load";
+        case TUPLES:         return "member-read";
+        case DRILL_THROUGH:  return "drillthrough";
+        case OTHER:
+        default:             return "other";
+        }
+    }
+
+    /**
      * Executes the current statement, and handles any SQLException.
      */
     public void execute() {
+        // #33 mondrian.sql.execute span + sql.duration histogram +
+        // sql.statements counter. All tagged with mondrian.sql.kind so
+        // dashboards can break down JDBC time by what Mondrian was
+        // trying to do (segment-load / member-read / drillthrough / other).
+        final String kind = purposeToKind(getPurpose());
+        final io.opentelemetry.api.trace.Span span =
+            mondrian.observability.MondrianTracing.tracer()
+                .spanBuilder("mondrian.sql.execute")
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.stringKey(
+                        "mondrian.sql.kind"),
+                    kind)
+                .setAttribute(
+                    io.opentelemetry.api.common.AttributeKey.longKey(
+                        "mondrian.sql.id"),
+                    (long) id)
+                .startSpan();
+        final long sqlStart = System.nanoTime();
+        try (io.opentelemetry.context.Scope ignored = span.makeCurrent()) {
+            executeImpl();
+        } catch (RuntimeException | Error t) {
+            span.recordException(t);
+            span.setStatus(
+                io.opentelemetry.api.trace.StatusCode.ERROR,
+                t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            throw t;
+        } finally {
+            span.end();
+            try {
+                long elapsedMs =
+                    (System.nanoTime() - sqlStart) / 1_000_000L;
+                io.opentelemetry.api.common.Attributes attrs =
+                    io.opentelemetry.api.common.Attributes.of(
+                        io.opentelemetry.api.common.AttributeKey.stringKey(
+                            "mondrian.sql.kind"), kind);
+                mondrian.observability.MondrianMetrics.sqlStatements()
+                    .add(1, attrs);
+                mondrian.observability.MondrianMetrics.sqlDuration()
+                    .record(elapsedMs, attrs);
+            } catch (RuntimeException ignored) {
+                // Metric recording must never break execution.
+            }
+        }
+    }
+
+    /** Body of the original execute() — extracted so the outer span
+     *  wrapper stays small + the existing try/catch/finally is untouched. */
+    private void executeImpl() {
         assert state == State.FRESH : "cannot re-execute";
         state = State.ACTIVE;
         Counters.SQL_STATEMENT_EXECUTE_COUNT.incrementAndGet();

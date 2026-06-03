@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#
+# Wrapper for mondrian.schema.yaml.SchemaCli — the YAML ↔ XML schema
+# converter + lint tool. Saves users from having to remember the
+# `mvn exec:java -Dexec.mainClass=...` incantation.
+#
+# Usage:
+#   ./scripts/mondrian-schema to-yaml <input.xml>  [-o output.yaml]
+#   ./scripts/mondrian-schema to-xml  <input.yaml> [-o output.xml]
+#   ./scripts/mondrian-schema lint    <input.{yaml,xml}>
+#
+# Exit codes match SchemaCli's:
+#   0 — success
+#   1 — bad arguments / missing input file
+#   2 — lint or parse failure (diagnostic on stderr)
+#
+# First run will build the classpath (one-time per fresh checkout).
+# Subsequent runs are fast — the classpath cache lives in
+# target/dependency/classpath.txt and is rebuilt only if pom.xml is
+# newer.
+
+set -euo pipefail
+
+# Walk up from this script's dir to the repo root (pom.xml + scripts/
+# both visible). Lets the script work whether invoked from the repo
+# root, from scripts/, or via an absolute path.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "${REPO_ROOT}"
+
+if [[ ! -f pom.xml ]]; then
+    echo "error: expected pom.xml in ${REPO_ROOT}" >&2
+    exit 1
+fi
+
+# Rebuild classpath cache if pom changed (or first run).
+CP_FILE="target/dependency/classpath.txt"
+if [[ ! -f "${CP_FILE}" ]] || [[ pom.xml -nt "${CP_FILE}" ]]; then
+    echo "[mondrian-schema] (re)building classpath cache..." >&2
+    mvn -B -ntp -q dependency:build-classpath \
+        -Dmdep.outputFile="${CP_FILE}" \
+        -DincludeScope=runtime >&2
+fi
+
+# Compile main classes if missing or if any source is newer than the
+# class output dir.
+NEEDS_COMPILE=0
+if [[ ! -d target/classes ]]; then
+    NEEDS_COMPILE=1
+elif [[ -n "$(find src/main/java -name '*.java' -newer target/classes 2>/dev/null | head -1)" ]]; then
+    NEEDS_COMPILE=1
+fi
+if (( NEEDS_COMPILE )); then
+    echo "[mondrian-schema] compiling main classes..." >&2
+    mvn -B -ntp -q compile >&2
+fi
+
+CP="target/classes:$(cat "${CP_FILE}")"
+exec java -cp "${CP}" mondrian.schema.yaml.SchemaCli "$@"
