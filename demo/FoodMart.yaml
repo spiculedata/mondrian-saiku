@@ -472,6 +472,16 @@ cubes:
         foreign_key_column: "customer_id"
       - type: "copy"
         dimension: "Time"
+        column_refs:
+        - table: "time_by_day"
+          name: "the_year"
+          agg_column: "time_year"
+        - table: "time_by_day"
+          name: "quarter"
+          agg_column: "time_quarter"
+        - table: "time_by_day"
+          name: "month_of_year"
+          agg_column: "time_month"
     - table: "agg_l_05_sales_fact_1997"
       type: "aggregate"
       measures:
@@ -524,6 +534,16 @@ cubes:
         foreign_key_column: "customer_id"
       - type: "copy"
         dimension: "Time"
+        column_refs:
+        - table: "time_by_day"
+          name: "the_year"
+          agg_column: "the_year"
+        - table: "time_by_day"
+          name: "quarter"
+          agg_column: "quarter"
+        - table: "time_by_day"
+          name: "month_of_year"
+          agg_column: "month_of_year"
     - table: "agg_g_ms_pcat_sales_fact_1997"
       type: "aggregate"
       measures:
@@ -542,12 +562,39 @@ cubes:
         dimension: "Store"
       - type: "copy"
         dimension: "Product"
+        column_refs:
+        - table: "product_class"
+          name: "product_family"
+          agg_column: "product_family"
+        - table: "product_class"
+          name: "product_department"
+          agg_column: "product_department"
+        - table: "product_class"
+          name: "product_category"
+          agg_column: "product_category"
       - type: "no_link"
         dimension: "Promotion"
       - type: "copy"
         dimension: "Customer"
+        column_refs:
+        - table: "customer"
+          name: "gender"
+          agg_column: "gender"
+        - table: "customer"
+          name: "marital_status"
+          agg_column: "marital_status"
       - type: "copy"
         dimension: "Time"
+        column_refs:
+        - table: "time_by_day"
+          name: "the_year"
+          agg_column: "the_year"
+        - table: "time_by_day"
+          name: "quarter"
+          agg_column: "quarter"
+        - table: "time_by_day"
+          name: "month_of_year"
+          agg_column: "month_of_year"
     calculated_members:
     - name: "Profit"
       dimension: "Measures"
@@ -557,12 +604,15 @@ cubes:
         value: "$#,##0.00"
     - name: "Profit last Period"
       dimension: "Measures"
+      visible: false
       formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
       properties:
       - name: "FORMAT_STRING"
         value: "$#,##0.00"
     - name: "Profit Growth"
       dimension: "Measures"
+      caption: "Gewinn-Wachstum"
+      visible: true
       formula: "([Measures].[Profit] - [Measures].[Profit last Period]) / [Measures].[Profit\
         \ last Period]"
       properties:
@@ -640,6 +690,7 @@ cubes:
         value: "4"
     - name: "Profit last Period"
       dimension: "Measures"
+      visible: false
       formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
       properties:
       - name: "MEMBER_ORDINAL"
@@ -810,12 +861,15 @@ cubes:
         value: "$#,##0.00"
     - name: "Profit last Period"
       dimension: "Measures"
+      visible: false
       formula: "COALESCEEMPTY((Measures.[Profit], [Time].[Time].PREVMEMBER),    Measures.[Profit])"
       properties:
       - name: "FORMAT_STRING"
         value: "$#,##0.00"
     - name: "Profit Growth"
       dimension: "Measures"
+      caption: "Gewinn-Wachstum"
+      visible: true
       formula: "([Measures].[Profit] - [Measures].[Profit last Period]) / [Measures].[Profit\
         \ last Period]"
       properties:

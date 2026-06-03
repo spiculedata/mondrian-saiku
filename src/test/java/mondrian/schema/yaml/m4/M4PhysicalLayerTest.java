@@ -727,4 +727,163 @@ public class M4PhysicalLayerTest {
         String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
         assertEquals(yaml, yaml2);
     }
+
+    @Test
+    public void copyLinkColumnRefsRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups>"
+            + "<MeasureGroup table='agg_c' type='aggregate' approxRowCount='86837'"
+            + " ignoreUnrelatedDimensions='true'>"
+            + "<Measures><MeasureRef name='M' aggColumn='m_sum'/></Measures>"
+            + "<DimensionLinks>"
+            + "<CopyLink dimension='Time'>"
+            + "<Column aggColumn='time_year' table='time_by_day' name='the_year'/>"
+            + "<Column aggColumn='time_month' table='time_by_day' name='month_of_year'/>"
+            + "</CopyLink>"
+            + "</DimensionLinks>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("approx_row_count"));
+        assertTrue(yaml, yaml.contains("86837"));
+        assertTrue(yaml, yaml.contains("ignore_unrelated_dimensions"));
+        assertTrue(yaml, yaml.contains("column_refs"));
+        assertTrue(yaml, yaml.contains("time_by_day"));
+        assertTrue(yaml, yaml.contains("the_year"));
+        assertTrue(yaml, yaml.contains("agg_column"));
+        // round-trip stable
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        // emitted XML really has the CopyLink columns + measure-group attrs
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<CopyLink dimension=\"Time\""));
+        assertTrue(emitted, emitted.contains("aggColumn=\"time_year\""));
+        assertTrue(emitted, emitted.contains("approxRowCount=\"86837\""));
+        assertTrue(emitted, emitted.contains("ignoreUnrelatedDimensions=\"true\""));
+    }
+
+    @Test
+    public void dimensionGrantRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='Sales' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups></Cube>"
+            + "<Role name='R'><SchemaGrant access='none'>"
+            + "<CubeGrant cube='Sales' access='custom'>"
+            + "<DimensionGrant dimension='[Store]' access='none'/>"
+            + "<HierarchyGrant hierarchy='[Store].[Stores]' access='all'/>"
+            + "</CubeGrant></SchemaGrant></Role></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("dimensions:"));
+        assertTrue(yaml, yaml.contains("[Store]"));
+        assertTrue(yaml, yaml.contains("hierarchies:"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<DimensionGrant dimension=\"[Store]\"")
+            || (emitted.contains("<DimensionGrant") && emitted.contains("dimension=\"[Store]\"")));
+    }
+
+    @Test
+    public void subCubeAnnotationsRoundTrip() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Dimension name='Store' table='store' key='K'>"
+            + "<Annotations><Annotation name='AppliesTo'>store</Annotation></Annotations>"
+            + "<Attributes>"
+            + "<Attribute name='K' keyColumn='store_id' hasHierarchy='false'>"
+            + "<Annotations><Annotation name='hidden'>true</Annotation></Annotations>"
+            + "</Attribute>"
+            + "<Attribute name='Country' keyColumn='country' hasHierarchy='false'/>"
+            + "</Attributes>"
+            + "<Hierarchies>"
+            + "<Hierarchy name='Stores'>"
+            + "<Annotations><Annotation name='default'>true</Annotation></Annotations>"
+            + "<Level attribute='Country'>"
+            + "<Annotations><Annotation name='note'>ctry</Annotation></Annotations>"
+            + "</Level>"
+            + "</Hierarchy></Hierarchies>"
+            + "</Dimension>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'>"
+            + "<Annotations><Annotation name='unit'>each</Annotation></Annotations>"
+            + "</Measure></Measures></MeasureGroup></MeasureGroups>"
+            + "</Cube>"
+            + "<Role name='R'>"
+            + "<Annotations><Annotation name='team'>bi</Annotation></Annotations>"
+            + "<SchemaGrant access='all'/></Role>"
+            + "</Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("AppliesTo"));   // dimension
+        assertTrue(yaml, yaml.contains("hidden"));        // attribute
+        assertTrue(yaml, yaml.contains("default"));       // hierarchy
+        assertTrue(yaml, yaml.contains("note"));          // level
+        assertTrue(yaml, yaml.contains("unit"));          // measure
+        assertTrue(yaml, yaml.contains("team"));          // role
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    @Test
+    public void calcMemberCaptionDescriptionVisibleAndCellFormatterRoundTrip() {
+        // Uses language='Groovy' (a non-default) so the explicit language
+        // attribute is preserved through the round-trip.  'JavaScript' is the
+        // XOM default and is suppressed by the ingest; that edge is covered by
+        // cellFormatterScriptWithoutLanguageRoundTrips().
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "<CalculatedMembers>"
+            + "<CalculatedMember name='Profit' dimension='Measures' caption='Prof'"
+            + " description='profit measure' visible='false'>"
+            + "<Formula>1+1</Formula>"
+            + "<CellFormatter className='com.example.Fmt'>"
+            + "<Script language='Groovy'>return value;</Script>"
+            + "</CellFormatter>"
+            + "</CalculatedMember>"
+            + "</CalculatedMembers>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("caption"));
+        assertTrue(yaml, yaml.contains("Prof"));
+        assertTrue(yaml, yaml.contains("description"));
+        assertTrue(yaml, yaml.contains("visible"));
+        assertTrue(yaml, yaml.contains("cell_formatter"));
+        assertTrue(yaml, yaml.contains("com.example.Fmt"));
+        assertTrue(yaml, yaml.contains("language"));
+        assertTrue(yaml, yaml.contains("Groovy"));
+        assertTrue(yaml, yaml.contains("return value;"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+        String emitted = M4YamlToXml.toXml(yaml);
+        assertTrue(emitted, emitted.contains("<CellFormatter className=\"com.example.Fmt\""));
+        assertTrue(emitted, emitted.contains("<Script language=\"Groovy\""));
+    }
+
+    @Test
+    public void cellFormatterScriptWithoutLanguageRoundTrips() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C' defaultMeasure='M'>"
+            + "<MeasureGroups><MeasureGroup name='g' table='t'>"
+            + "<Measures><Measure name='M' column='c' aggregator='sum'/></Measures>"
+            + "</MeasureGroup></MeasureGroups>"
+            + "<CalculatedMembers>"
+            + "<CalculatedMember name='P' dimension='Measures'>"
+            + "<Formula>1</Formula>"
+            + "<CellFormatter className='com.example.Fmt'><Script>return v;</Script></CellFormatter>"
+            + "</CalculatedMember></CalculatedMembers>"
+            + "</Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
 }

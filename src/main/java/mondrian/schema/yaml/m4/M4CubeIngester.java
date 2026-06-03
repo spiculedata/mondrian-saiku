@@ -89,9 +89,20 @@ final class M4CubeIngester {
     }
 
     private static Map<String, Object> calculatedMember(MondrianDef.CalculatedMember cm) {
-        // TODO: deferred fields not yet captured: caption, description, visible, CellFormatter
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("name", cm.name);
+        // Annotations second (after name, before dimension)
+        if (cm.childArray != null) {
+            for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
+                if (child instanceof MondrianDef.Annotations) {
+                    Map<String, Object> ann =
+                        M4XmlToYaml.annotations((MondrianDef.Annotations) child);
+                    if (ann != null && !ann.isEmpty()) {
+                        out.put("annotations", ann);
+                    }
+                }
+            }
+        }
         if (cm.dimension != null) {
             out.put("dimension", cm.dimension);
         }
@@ -100,6 +111,15 @@ final class M4CubeIngester {
         }
         if (cm.parent != null) {
             out.put("parent", cm.parent);
+        }
+        if (cm.caption != null) {
+            out.put("caption", cm.caption);
+        }
+        if (cm.description != null) {
+            out.put("description", cm.description);
+        }
+        if (cm.visible != null) {
+            out.put("visible", cm.visible);
         }
         // Prefer formula attribute; fall back to <Formula> child cdata
         String formula = cm.formula;
@@ -117,17 +137,48 @@ final class M4CubeIngester {
         if (cm.formatString != null) {
             out.put("format_string", cm.formatString);
         }
-        // Collect CalculatedMemberProperty children
+        // Scan children for CellFormatter and CalculatedMemberProperty
         if (cm.childArray != null) {
+            MondrianDef.CellFormatter cellFmt = null;
             List<Object> props = new ArrayList<>();
             for (MondrianDef.CalculatedMemberElement child : cm.childArray) {
-                if (child instanceof MondrianDef.CalculatedMemberProperty) {
+                if (child instanceof MondrianDef.CellFormatter) {
+                    cellFmt = (MondrianDef.CellFormatter) child;
+                } else if (child instanceof MondrianDef.CalculatedMemberProperty) {
                     props.add(calcMemberProperty((MondrianDef.CalculatedMemberProperty) child));
                 }
+            }
+            if (cellFmt != null) {
+                out.put("cell_formatter", cellFormatter(cellFmt));
             }
             if (!props.isEmpty()) {
                 out.put("properties", props);
             }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> cellFormatter(MondrianDef.CellFormatter cf) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (cf.className != null) {
+            out.put("class_name", cf.className);
+        }
+        if (cf.script != null) {
+            out.put("script", script(cf.script));
+        }
+        return out;
+    }
+
+    private static Map<String, Object> script(MondrianDef.Script s) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        // Suppress XOM's default "JavaScript" — it is set even when the XML
+        // omitted the attribute, so emitting it would cause yaml != yaml2 for
+        // round-trips that start with a <Script> that has no language attribute.
+        if (s.language != null && !"JavaScript".equals(s.language)) {
+            out.put("language", s.language);
+        }
+        if (s.cdata != null) {
+            out.put("body", s.cdata);
         }
         return out;
     }
@@ -212,7 +263,6 @@ final class M4CubeIngester {
     }
 
     private static Map<String, Object> measureGroup(MondrianDef.MeasureGroup mg) {
-        // TODO Phase 4+: approxRowCount, ignoreUnrelatedDimensions, Cube/MeasureGroup annotations not yet captured
         Map<String, Object> out = new LinkedHashMap<>();
         if (mg.name != null) {
             out.put("name", mg.name);
@@ -223,6 +273,14 @@ final class M4CubeIngester {
         // Only emit type when non-default (default is "fact")
         if (mg.type != null && !"fact".equals(mg.type)) {
             out.put("type", mg.type);
+        }
+        if (mg.approxRowCount != null) {
+            out.put("approx_row_count", mg.approxRowCount);
+        }
+        // Only emit when true (default is false — keeps round-trip clean)
+        if (mg.ignoreUnrelatedDimensions != null
+                && Boolean.TRUE.equals(mg.ignoreUnrelatedDimensions)) {
+            out.put("ignore_unrelated_dimensions", true);
         }
         if (mg.childArray != null) {
             List<Object> measureList = null;
@@ -267,6 +325,18 @@ final class M4CubeIngester {
         } else if (mor instanceof MondrianDef.Measure) {
             MondrianDef.Measure m = (MondrianDef.Measure) mor;
             out.put("name", m.name);
+            // Annotations second (after name, before column)
+            if (m.childArray != null) {
+                for (MondrianDef.MeasureElement me : m.childArray) {
+                    if (me instanceof MondrianDef.Annotations) {
+                        Map<String, Object> ann =
+                            M4XmlToYaml.annotations((MondrianDef.Annotations) me);
+                        if (ann != null && !ann.isEmpty()) {
+                            out.put("annotations", ann);
+                        }
+                    }
+                }
+            }
             if (m.column != null) {
                 out.put("column", m.column);
             }
@@ -328,8 +398,24 @@ final class M4CubeIngester {
                 out.put("attribute", fkl.attribute);
             }
         } else if (dl instanceof MondrianDef.CopyLink) {
+            MondrianDef.CopyLink cl = (MondrianDef.CopyLink) dl;
             out.put("type", "copy");
-            out.put("dimension", dl.dimension);
+            out.put("dimension", cl.dimension);
+            if (cl.columnRefs != null && cl.columnRefs.length > 0) {
+                List<Object> colRefList = new ArrayList<>();
+                for (MondrianDef.Column col : cl.columnRefs) {
+                    Map<String, Object> colMap = new LinkedHashMap<>();
+                    if (col.table != null) {
+                        colMap.put("table", col.table);
+                    }
+                    colMap.put("name", col.name);
+                    if (col.aggColumn != null) {
+                        colMap.put("agg_column", col.aggColumn);
+                    }
+                    colRefList.add(colMap);
+                }
+                out.put("column_refs", colRefList);
+            }
         } else if (dl instanceof MondrianDef.NoLink) {
             out.put("type", "no_link");
             out.put("dimension", dl.dimension);

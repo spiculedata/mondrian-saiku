@@ -138,6 +138,11 @@ public final class M4YamlToXml {
         role.name = str(r.get("name"));
         role.className = str(r.get("class_name"));
         List<MondrianDef.RoleElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = r.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(buildAnnotations((Map<?, ?>) annObj));
+        }
         Object sg = r.get("schema_grant");
         if (sg instanceof Map) {
             kids.add(buildSchemaGrant((Map<?, ?>) sg));
@@ -168,6 +173,16 @@ public final class M4YamlToXml {
         MondrianDef.CubeGrant grant = new MondrianDef.CubeGrant();
         grant.cube = str(cg.get("cube"));
         grant.access = str(cg.get("access"));
+        Object dims = cg.get("dimensions");
+        if (dims instanceof List && !((List<?>) dims).isEmpty()) {
+            List<MondrianDef.DimensionGrant> list = new ArrayList<>();
+            for (Object d : (List<?>) dims) {
+                if (d instanceof Map) {
+                    list.add(buildDimensionGrant((Map<?, ?>) d));
+                }
+            }
+            grant.dimensionGrants = list.toArray(new MondrianDef.DimensionGrant[0]);
+        }
         Object hiers = cg.get("hierarchies");
         if (hiers instanceof List && !((List<?>) hiers).isEmpty()) {
             List<MondrianDef.HierarchyGrant> list = new ArrayList<>();
@@ -178,6 +193,13 @@ public final class M4YamlToXml {
             }
             grant.hierarchyGrants = list.toArray(new MondrianDef.HierarchyGrant[0]);
         }
+        return grant;
+    }
+
+    private static MondrianDef.DimensionGrant buildDimensionGrant(Map<?, ?> dg) {
+        MondrianDef.DimensionGrant grant = new MondrianDef.DimensionGrant();
+        grant.dimension = str(dg.get("dimension"));
+        grant.access = str(dg.get("access"));
         return grant;
     }
 
@@ -219,6 +241,11 @@ public final class M4YamlToXml {
         d.key = str(dim.get("key"));
         d.type = str(dim.get("type"));
         List<MondrianDef.DimensionElement> dimKids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = dim.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            dimKids.add(buildAnnotations((Map<?, ?>) annObj));
+        }
         Object attrs = dim.get("attributes");
         if (attrs instanceof List && !((List<?>) attrs).isEmpty()) {
             dimKids.add(buildAttributes((List<?>) attrs));
@@ -268,6 +295,11 @@ public final class M4YamlToXml {
             a.hierarchyHasAll = boolToBoolean(hierHasAll);
         }
         List<MondrianDef.AttributeElement> kids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            kids.add(buildAnnotations((Map<?, ?>) annObj));
+        }
         Object key = m.get("key");
         if (key instanceof List && !((List<?>) key).isEmpty()) {
             kids.add(buildKey((List<?>) key));
@@ -311,14 +343,21 @@ public final class M4YamlToXml {
         if (hasAll != null) {
             h.hasAll = boolToBoolean(hasAll);
         }
+        List<MondrianDef.HierarchyElement> hierKids = new ArrayList<>();
+        // Annotations go first
+        Object annObj = m.get("annotations");
+        if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+            hierKids.add(buildAnnotations((Map<?, ?>) annObj));
+        }
         Object levels = m.get("levels");
         if (levels instanceof List && !((List<?>) levels).isEmpty()) {
-            List<MondrianDef.HierarchyElement> levelKids = new ArrayList<>();
             for (Object lvl : (List<?>) levels) {
-                levelKids.add(buildLevel(lvl));
+                hierKids.add(buildLevel(lvl));
             }
+        }
+        if (!hierKids.isEmpty()) {
             h.childArray =
-                levelKids.toArray(new MondrianDef.HierarchyElement[0]);
+                hierKids.toArray(new MondrianDef.HierarchyElement[0]);
         }
         return h;
     }
@@ -329,13 +368,19 @@ public final class M4YamlToXml {
             Map<?, ?> m = (Map<?, ?>) o;
             level.name = str(m.get("name"));
             level.attribute = str(m.get("attribute"));
+            Object annObj = m.get("annotations");
+            if (annObj instanceof Map && !((Map<?, ?>) annObj).isEmpty()) {
+                level.childArray = new MondrianDef.LevelElement[] {
+                    buildAnnotations((Map<?, ?>) annObj)
+                };
+            }
         } else {
             level.attribute = str(o);
         }
         return level;
     }
 
-    private static Boolean boolToBoolean(Object o) {
+    static Boolean boolToBoolean(Object o) {
         if (o instanceof Boolean) {
             return (Boolean) o;
         }
