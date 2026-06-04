@@ -588,7 +588,13 @@ public class SqlTupleReader implements TupleReader {
                                     + "  calcite: " + calciteSql);
                             }
                             sql = calciteSql;
-                        } catch (RuntimeException ex) {
+                        } catch (RuntimeException | AssertionError ex) {
+                            // #92: Calcite internals (RelBuilder, type
+                            // binding) can raise AssertionError, not just
+                            // RuntimeException. An Error escaping this catch
+                            // bypasses the fallback and hard-fails the query
+                            // even though legacy could answer it, so we treat
+                            // AssertionError the same as a translator gap.
                             if (Boolean.getBoolean("mondrian.calcite.trace")) {
                                 System.err.println(
                                     "[calcite-fallback tuple] "
