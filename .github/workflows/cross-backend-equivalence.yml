@@ -41,6 +41,19 @@ jobs:
             -Dtest=EquivalenceSmokeTest,EquivalenceAggregateTest,EquivalenceCalcTest \
             -Dmondrian.calcite.strict=true \
             test
+      - name: Run Calcite-vs-legacy result-parity fuzzer (#90)
+        # Generated MDX corpus (multi-measure-group conformed dims,
+        # snowflake leaves, parent-child, distinct-count, calc members)
+        # run on both backends with a hard cell-set parity gate. Catches
+        # the "translates fine but wrong" class invisible to the
+        # exception-based fallback. Not part of the -Pcalcite-harness
+        # include list, so it runs as its own step.
+        run: |
+          mvn -B -ntp \
+            -Dtest=CalciteParityFuzzTest,PlainEnumerationParityTest,ConformedDimensionTupleReadTest \
+            -Dsurefire.failIfNoSpecifiedTests=false \
+            -Dmondrian.calcite.strict=true \
+            test
       - name: Upload surefire reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
