@@ -229,6 +229,24 @@ public class CalciteParityFuzzTest {
             }
         }
 
+        // 2b) cross-measure-group: a Sales-group measure + a Warehouse-group
+        //     measure on the same conformed axis. The Calcite tuple read
+        //     declines this virtual-cube UNION shape and falls back to
+        //     legacy (standard SQL UNION of per-fact member lists); guards
+        //     that the fallback stays legacy-equivalent.
+        qs.add(new Q(
+            "wh+sales/cross-mg/country",
+            "SELECT {[Measures].[Unit Sales], [Measures].[Warehouse Sales]}"
+            + " ON COLUMNS, NON EMPTY "
+            + "[Store].[Stores].[Store Country].Members ON ROWS FROM "
+            + cube));
+        qs.add(new Q(
+            "wh+sales/cross-mg/product-family",
+            "SELECT {[Measures].[Unit Sales], [Measures].[Warehouse Sales]}"
+            + " ON COLUMNS, NON EMPTY "
+            + "[Product].[Products].[Product Family].Members ON ROWS FROM "
+            + cube));
+
         // 3) slicer (WHERE) variants on a conformed axis.
         qs.add(new Q(
             "wh+sales/slicer/family-by-1997",

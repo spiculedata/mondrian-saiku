@@ -710,27 +710,7 @@ public final class CalcitePlannerAdapters {
                 "fromTupleRead: SetConstraint has no measure group "
                 + "(virtual cube with no applicable base cube?)");
         }
-        if (mgs.size() > 1) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: SetConstraint spans multiple measure groups "
-                + "(virtual cube UNION shape not yet supported; got "
-                + mgs.size() + ")");
-        }
-        RolapStar star = mgs.get(0).getStar();
-        RolapStar.Table factTable = star.getFactTable();
-        RolapSchema.PhysRelation factRel = factTable.getRelation();
-        if (!(factRel instanceof RolapSchema.PhysTable)) {
-            throw new UnsupportedTranslation(
-                "fromTupleRead: fact table is not a PhysTable ("
-                + (factRel == null ? "null" : factRel.getClass().getName())
-                + ")");
-        }
-        String factName = ((RolapSchema.PhysTable) factRel).getName();
-        PlannerRequest.Builder b = PlannerRequest.builder(factName);
-        Set<String> joinedAliases = new LinkedHashSet<>();
-        joinedAliases.add(factTable.getAlias());
-
-        // Per-target shape pre-computation.
+        // Per-target shape pre-computation (measure-group independent).
         TargetShape[] shapes = new TargetShape[levels.size()];
         for (int i = 0; i < levels.size(); i++) {
             RolapCubeLevel lvl = levels.get(i);
@@ -750,12 +730,96 @@ public final class CalcitePlannerAdapters {
             }
         }
 
+        // Which measure groups fully join all targets? Mirrors legacy
+        // SqlTupleReader.getFullyJoiningMeasureGroups: a group qualifies
+        // when every target dimension's relations are reachable from its
+        // fact. A single qualifying group → one fact-rooted member query;
+        // more than one (a conformed dim with measures from >1 group) →
+        // a UNION of one such query per group, the M4 equivalent of the
+        // legacy virtual-cube UNION.
+        List<RolapMeasureGroup> joining =
+            new java.util.ArrayList<RolapMeasureGroup>();
+        for (RolapMeasureGroup mg : mgs) {
+            if (measureGroupJoinsAllTargets(mg, shapes)) {
+                joining.add(mg);
+            }
+        }
+        if (joining.isEmpty()) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: SetConstraint — no measure group joins all "
+                + "targets (" + mgs.size() + " candidate groups)");
+        }
+        if (joining.size() == 1) {
+            return buildSetConstraintArm(
+                levels, constraint, args, evaluator, shapes,
+                joining.get(0), true);
+        }
+        // Multiple fully-joining groups → UNION. TopCount/Filter carry
+        // group-specific sort-measure / HAVING / limit semantics that do
+        // not union cleanly; decline those (fall back to legacy) for now.
+        boolean isTopCountOrFilter =
+            constraint instanceof
+                mondrian.rolap.RolapNativeTopCount.TopCountConstraint
+            || constraint instanceof
+                mondrian.rolap.RolapNativeFilter.FilterConstraint;
+        if (isTopCountOrFilter) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: multi-measure-group TopCount/Filter tuple "
+                + "read not supported (got " + joining.size() + " groups)");
+        }
+        List<PlannerRequest> arms =
+            new java.util.ArrayList<PlannerRequest>(joining.size());
+        for (RolapMeasureGroup mg : joining) {
+            arms.add(
+                buildSetConstraintArm(
+                    levels, constraint, args, evaluator, shapes, mg, false));
+        }
+        // ORDER BY over the union: per-level orderBy + key columns ASC,
+        // matching the single-arm ordering (and legacy's union ORDER BY).
+        PlannerRequest.Builder ub = PlannerRequest.unionBuilder(arms);
+        Set<String> orderSeen = new LinkedHashSet<>();
+        for (int i = 0; i < levels.size(); i++) {
+            if (shapes[i] == null) {
+                continue;
+            }
+            addNecjOrderBy(ub, orderSeen, shapes[i]);
+        }
+        return ub.build();
+    }
+
+    /**
+     * Build the fact-rooted member sub-query for one measure group — the
+     * per-arm body of a (possibly UNION-ed) SetConstraint tuple read. When
+     * {@code includeOrderBy} is false (a UNION arm) the per-target ORDER BY
+     * is left to the enclosing union request.
+     */
+    private static PlannerRequest buildSetConstraintArm(
+        List<RolapCubeLevel> levels,
+        RolapNativeSet.SetConstraint constraint,
+        CrossJoinArg[] args,
+        RolapEvaluator evaluator,
+        TargetShape[] shapes,
+        RolapMeasureGroup measureGroup,
+        boolean includeOrderBy)
+    {
+        RolapStar star = measureGroup.getStar();
+        RolapStar.Table factTable = star.getFactTable();
+        RolapSchema.PhysRelation factRel = factTable.getRelation();
+        if (!(factRel instanceof RolapSchema.PhysTable)) {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: fact table is not a PhysTable ("
+                + (factRel == null ? "null" : factRel.getClass().getName())
+                + ")");
+        }
+        String factName = ((RolapSchema.PhysTable) factRel).getName();
+        PlannerRequest.Builder b = PlannerRequest.builder(factName);
+        Set<String> joinedAliases = new LinkedHashSet<>();
+        joinedAliases.add(factTable.getAlias());
+
         // First pass: join every dim table referenced by any target's
         // hierarchy walk. For a snowflake like Product→Product_Class we
         // need `product` joined (the target leaf) AND `product_class` (the
-        // parent levels' home). Per-target ensureJoinedChain handles the
-        // fact→leaf hop; walking the parent-level's column relations via
-        // ensureJoinedChain picks up intermediates like product_class.
+        // parent levels' home).
         for (int i = 0; i < shapes.length; i++) {
             TargetShape shape = shapes[i];
             if (shape == null) {
@@ -782,22 +846,17 @@ public final class CalcitePlannerAdapters {
         // Second pass: emit projections + group-by for each target in
         // target order, and each target's CrossJoinArg filter contribution.
         Set<String> projectedKeys = new LinkedHashSet<>();
-        Set<String> orderedKeys = new LinkedHashSet<>();
         for (int i = 0; i < levels.size(); i++) {
             TargetShape shape = shapes[i];
             if (shape == null) {
                 continue;
             }
-            CrossJoinArg arg = args[i];
             emitNecjTargetProjections(b, projectedKeys, shape);
-            addCrossJoinArgFilter(b, shape, arg);
+            addCrossJoinArgFilter(b, shape, args[i]);
         }
 
         // Filter-only extras: any args beyond the target level count
-        // contribute filters without projections. Their dim chain still
-        // needs joining so the filter column resolves; addCrossJoinArgFilter
-        // operates on a TargetShape so we build one for the extra arg's
-        // level (re-using shapeFor's snowflake-aware leaf resolution).
+        // contribute filters without projections.
         for (int i = levels.size(); i < args.length; i++) {
             CrossJoinArg extra = args[i];
             RolapCubeLevel extraLevel = extra.getLevel();
@@ -833,12 +892,9 @@ public final class CalcitePlannerAdapters {
             addCrossJoinArgFilter(b, extraShape, extra);
         }
 
-        // TopCount-only: add the sort-measure projection + primary
-        // ORDER BY on that measure. Must happen after dim projections
-        // (so the measure renders AFTER group-by cols, matching the
-        // legacy SELECT layout) and BEFORE per-target ORDER BYs
-        // (which become tiebreakers). The JDBC setMaxRows on the
-        // statement trims to `topCount` rows — no SQL LIMIT needed.
+        // TopCount sort-measure + primary ORDER BY (single-group only;
+        // the multi-group path declines TopCount/Filter before reaching
+        // here).
         if (constraint instanceof
             mondrian.rolap.RolapNativeTopCount.TopCountConstraint)
         {
@@ -847,10 +903,6 @@ public final class CalcitePlannerAdapters {
                 (mondrian.rolap.RolapNativeTopCount.TopCountConstraint)
                     constraint);
         }
-
-        // FilterConstraint: translate filterExpr into a HAVING predicate
-        // on the tuple-read aggregate. See addFilterHaving() for the
-        // MDX shapes accepted.
         if (constraint instanceof
             mondrian.rolap.RolapNativeFilter.FilterConstraint)
         {
@@ -860,11 +912,14 @@ public final class CalcitePlannerAdapters {
                     constraint);
         }
 
-        for (int i = 0; i < levels.size(); i++) {
-            if (shapes[i] == null) {
-                continue;
+        if (includeOrderBy) {
+            Set<String> orderedKeys = new LinkedHashSet<>();
+            for (int i = 0; i < levels.size(); i++) {
+                if (shapes[i] == null) {
+                    continue;
+                }
+                addNecjOrderBy(b, orderedKeys, shapes[i]);
             }
-            addNecjOrderBy(b, orderedKeys, shapes[i]);
         }
 
         // Slicer contribution: any non-all, non-measure member in the
@@ -872,6 +927,33 @@ public final class CalcitePlannerAdapters {
         addSlicerFilters(b, evaluator, factTable, joinedAliases, args);
 
         return b.build();
+    }
+
+    /**
+     * True if {@code measureGroup}'s fact joins every target dimension —
+     * every relation referenced by each non-all target shape is reachable
+     * from the group's fact table. Star-table-reachability stand-in for the
+     * legacy {@code RolapMeasureGroup.existsLink} (package-private to
+     * mondrian.rolap) used by {@code SqlTupleReader.allTargetsJoin}.
+     */
+    private static boolean measureGroupJoinsAllTargets(
+        RolapMeasureGroup measureGroup, TargetShape[] shapes)
+    {
+        RolapStar.Table factTable = measureGroup.getStar().getFactTable();
+        if (!(factTable.getRelation() instanceof RolapSchema.PhysTable)) {
+            return false;
+        }
+        for (TargetShape shape : shapes) {
+            if (shape == null) {
+                continue;
+            }
+            for (RolapSchema.PhysRelation rel : collectNecjRelations(shape)) {
+                if (findStarTable(factTable, rel) == null) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**
