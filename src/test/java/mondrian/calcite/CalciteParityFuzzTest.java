@@ -288,7 +288,116 @@ public class CalciteParityFuzzTest {
             + "NON EMPTY [Outlet].[Outlet].Members ON ROWS FROM " + g
             + " WHERE [Time].[Time].[Year].[1997]"));
 
+        addSalesCorpus(qs);
+        addHrCorpus(qs);
         return qs;
+    }
+
+    /**
+     * Single-measure-group [Sales] cube: snowflake Product, multi-level
+     * Store/Customer, a distinct-count measure (Customer Count) and a
+     * calculated measure (Profit) — exercises plain + NON EMPTY enumeration,
+     * member .Children reads, and segment loads for distinct-count / calc.
+     */
+    private static void addSalesCorpus(List<Q> qs) {
+        String cube = "[Sales]";
+        String[][] axes = {
+            {"store-country", "[Store].[Stores].[Store Country].Members"},
+            {"store-city",    "[Store].[Stores].[Store City].Members"},
+            {"store-name",    "[Store].[Stores].[Store Name].Members"},
+            {"product-family",
+                "[Product].[Products].[Product Family].Members"},
+            {"product-brand",
+                "[Product].[Products].[Brand Name].Members"},
+            {"product-name",
+                "[Product].[Products].[Product Name].Members"},
+            {"customer-country", "[Customer].[Customers].[Country].Members"},
+            {"customer-city",    "[Customer].[Customers].[City].Members"},
+            {"customer-name",    "[Customer].[Customers].[Name].Members"},
+            {"customer-education",
+                "[Customer].[Education Level].[Education Level].Members"},
+            {"promotion-media",
+                "[Promotion].[Media Type].[Media Type].Members"},
+            {"time-quarter",  "[Time].[Time].[Quarter].Members"},
+        };
+        String[][] measures = {
+            {"unit-sales", "[Measures].[Unit Sales]"},
+            {"customer-count", "[Measures].[Customer Count]"},
+            {"profit", "[Measures].[Profit]"},
+        };
+        for (String[] ax : axes) {
+            for (String[] m : measures) {
+                qs.add(new Q("sales/ne/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, NON EMPTY " + ax[1]
+                    + " ON ROWS FROM " + cube));
+                qs.add(new Q("sales/plain/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, " + ax[1]
+                    + " ON ROWS FROM " + cube));
+            }
+        }
+        // Specific-member .Children reads.
+        qs.add(new Q("sales/children/usa",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY [Store].[Stores].[USA].Children ON ROWS FROM "
+            + cube));
+        qs.add(new Q("sales/children/drink",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "[Product].[Products].[Drink].Children ON ROWS FROM " + cube));
+        // BottomCount + Hierarchize + a tuple slicer.
+        qs.add(new Q("sales/bottomcount/city",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "BottomCount([Store].[Stores].[Store City].Members, 5, "
+            + "[Measures].[Unit Sales]) ON ROWS FROM " + cube));
+        qs.add(new Q("sales/hierarchize/product-dept",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY Hierarchize("
+            + "[Product].[Products].[Product Department].Members) "
+            + "ON ROWS FROM " + cube));
+        qs.add(new Q("sales/slicer-tuple/customer-by-drink-1997",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY [Customer].[Customers].[Country].Members ON ROWS "
+            + "FROM " + cube
+            + " WHERE ([Product].[Products].[Drink], "
+            + "[Time].[Time].[Year].[1997])"));
+    }
+
+    /**
+     * [HR] cube: a parent-child Employee hierarchy (closure table) plus a
+     * Position hierarchy. Directly exercises the parent-child branch of
+     * emitTargetProjections (parent-attribute key columns) under plain and
+     * NON EMPTY enumeration, and .Children of a parent-child member.
+     */
+    private static void addHrCorpus(List<Q> qs) {
+        String cube = "[HR]";
+        String[][] axes = {
+            {"employees", "[Employee].[Employees].Members"},
+            {"employees-l2",
+                "[Employee].[Employees].[Employee Id].Members"},
+            {"position-role",
+                "[Employee].[Position].[Management Role].Members"},
+            {"position-title",
+                "[Employee].[Position].[Position Title].Members"},
+            {"department", "[Department].[Department].Members"},
+        };
+        String[][] measures = {
+            {"org-salary", "[Measures].[Org Salary]"},
+            {"count", "[Measures].[Count]"},
+            {"num-employees", "[Measures].[Number of Employees]"},
+        };
+        for (String[] ax : axes) {
+            for (String[] m : measures) {
+                qs.add(new Q("hr/ne/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, NON EMPTY " + ax[1]
+                    + " ON ROWS FROM " + cube));
+                qs.add(new Q("hr/plain/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, " + ax[1]
+                    + " ON ROWS FROM " + cube));
+            }
+        }
+        qs.add(new Q("hr/children/all-employees",
+            "SELECT {[Measures].[Org Salary]} ON COLUMNS, "
+            + "NON EMPTY [Employee].[Employees].[All Employees].Children "
+            + "ON ROWS FROM " + cube));
     }
 
     // ---- execution + comparison --------------------------------------
@@ -344,6 +453,7 @@ public class CalciteParityFuzzTest {
         List<String> drifts = new ArrayList<>();
         List<String> calciteErrors = new ArrayList<>();
         List<String> legacyErrors = new ArrayList<>();
+        List<String> bothErrors = new ArrayList<>();
 
         for (Q q : corpus) {
             String legacy = null;
@@ -364,6 +474,8 @@ public class CalciteParityFuzzTest {
             Verdict v;
             if (legacyErr != null && calciteErr != null) {
                 v = Verdict.BOTH_ERROR;
+                bothErrors.add(q.label + " :: legacy=" + legacyErr
+                    + " | calcite=" + calciteErr);
             } else if (legacyErr != null) {
                 v = Verdict.LEGACY_ERROR;
                 legacyErrors.add(q.label + " :: " + legacyErr);
@@ -404,6 +516,12 @@ public class CalciteParityFuzzTest {
         if (!legacyErrors.isEmpty()) {
             report.append("\n--- LEGACY_ERROR (one-sided) ---\n");
             for (String e : legacyErrors) {
+                report.append("  ").append(e).append("\n");
+            }
+        }
+        if (!bothErrors.isEmpty()) {
+            report.append("\n--- BOTH_ERROR (invalid/unsupported on both) ---\n");
+            for (String e : bothErrors) {
                 report.append("  ").append(e).append("\n");
             }
         }
