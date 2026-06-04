@@ -629,7 +629,35 @@ public class CalciteParityFuzzTest {
                 "New Calcite parity divergence(s) not in the #90 known-gap "
                 + "allowlist: " + unexpected + " — see report above");
         }
+        // No corpus query should fall back to legacy: every shape here is
+        // translated natively by the Calcite backend. A new fallback is a
+        // coverage regression — add the shape's translation (or, if a
+        // genuinely unsupported shape is added to the corpus, allowlist it
+        // in FALLBACK_ALLOWED).
+        List<String> unexpectedFallbacks = new ArrayList<>();
+        for (String f : fellBack) {
+            String label = f.substring(0, f.indexOf(" (fallbacks="));
+            if (!FALLBACK_ALLOWED.contains(label)) {
+                unexpectedFallbacks.add(label);
+            }
+        }
+        if (!unexpectedFallbacks.isEmpty()) {
+            throw new AssertionError(
+                "Corpus query regressed to a legacy fallback (Calcite "
+                + "coverage gap): " + unexpectedFallbacks
+                + " — see report above");
+        }
     }
+
+    /**
+     * Corpus labels permitted to reach correct results via a legacy
+     * fallback rather than native Calcite translation. Empty: the whole
+     * corpus translates natively (cross-measure-group UNION, unrelated
+     * dimensions, and parent-child hierarchies all landed). Add a label
+     * only when introducing a genuinely unsupported shape to the corpus.
+     */
+    private static final java.util.Set<String> FALLBACK_ALLOWED =
+        new java.util.HashSet<>();
 
     /**
      * Documented Calcite parity gaps (issue #90), each a label from
