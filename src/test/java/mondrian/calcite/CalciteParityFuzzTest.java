@@ -514,6 +514,9 @@ public class CalciteParityFuzzTest {
         List<String> calciteErrors = new ArrayList<>();
         List<String> legacyErrors = new ArrayList<>();
         List<String> bothErrors = new ArrayList<>();
+        // Correct results that nonetheless reached them via a fallback to
+        // legacy SQL — the remaining Calcite coverage gaps worth closing.
+        List<String> fellBack = new ArrayList<>();
 
         for (Q q : corpus) {
             String legacy = null;
@@ -525,10 +528,15 @@ public class CalciteParityFuzzTest {
             } catch (Throwable t) {
                 legacyErr = rootCause(t);
             }
+            CalcitePlannerAdapters.resetUnsupportedCount();
             try {
                 calcite = run(calciteConn, "calcite", q.mdx);
             } catch (Throwable t) {
                 calciteErr = rootCause(t);
+            }
+            long fallbacks = CalcitePlannerAdapters.unsupportedCount();
+            if (fallbacks > 0 && calciteErr == null) {
+                fellBack.add(q.label + " (fallbacks=" + fallbacks + ")");
             }
 
             Verdict v;
@@ -583,6 +591,15 @@ public class CalciteParityFuzzTest {
             report.append("\n--- BOTH_ERROR (invalid/unsupported on both) ---\n");
             for (String e : bothErrors) {
                 report.append("  ").append(e).append("\n");
+            }
+        }
+        report.append("\nMATCH via legacy fallback: ")
+            .append(fellBack.size()).append(" / ").append(corpus.size())
+            .append(" (correct, but a Calcite coverage gap)\n");
+        if (!fellBack.isEmpty()) {
+            report.append("--- FELL_BACK (still declines to Calcite) ---\n");
+            for (String f : fellBack) {
+                report.append("  ").append(f).append("\n");
             }
         }
         report.append("=============================================\n");
