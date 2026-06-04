@@ -437,6 +437,12 @@ public final class PlannerRequest {
      *  depends on driver-specific JDBC behaviour — DuckDB JDBC silently
      *  ignores setMaxRows. */
     public final int limit;
+    /** When non-empty, this request is a UNION (distinct) of these arms.
+     *  The renderer unions the arms and applies only {@link #orderBy} over
+     *  the union output; the request's own fact/joins/projections are
+     *  ignored. Used for cross-measure-group tuple reads — the M4
+     *  equivalent of the legacy virtual-cube UNION across fact tables. */
+    public final List<PlannerRequest> unionArms;
 
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
@@ -453,6 +459,7 @@ public final class PlannerRequest {
         this.distinct = b.distinct;
         this.universalFalse = b.universalFalse;
         this.limit = b.limit;
+        this.unionArms = List.copyOf(b.unionArms);
         if (this.distinct
             && (!this.measures.isEmpty() || !this.groupBy.isEmpty()))
         {
@@ -468,6 +475,22 @@ public final class PlannerRequest {
 
     public static Builder builder(String factTable) {
         return new Builder(factTable);
+    }
+
+    /**
+     * Builder for a UNION (distinct) of two or more arm requests — the
+     * cross-measure-group tuple-read shape. Add the union-level
+     * {@link OrderBy} entries (applied over the union output) before
+     * {@link Builder#build()}.
+     */
+    public static Builder unionBuilder(List<PlannerRequest> arms) {
+        if (arms == null || arms.size() < 2) {
+            throw new IllegalArgumentException(
+                "unionBuilder requires at least 2 arms");
+        }
+        Builder b = new Builder(arms.get(0).factTable);
+        b.unionArms.addAll(arms);
+        return b;
     }
 
     public static final class Builder {
@@ -486,6 +509,7 @@ public final class PlannerRequest {
         private boolean distinct;
         private boolean universalFalse;
         private int limit;
+        private final List<PlannerRequest> unionArms = new ArrayList<>();
 
         private Builder(String factTable) {
             if (factTable == null || factTable.isEmpty()) {
@@ -542,7 +566,8 @@ public final class PlannerRequest {
         }
 
         public PlannerRequest build() {
-            if (projections.isEmpty()
+            if (unionArms.isEmpty()
+                && projections.isEmpty()
                 && measures.isEmpty()
                 && groupBy.isEmpty())
             {

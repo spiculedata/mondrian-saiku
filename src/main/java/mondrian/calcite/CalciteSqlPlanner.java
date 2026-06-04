@@ -629,6 +629,29 @@ public final class CalciteSqlPlanner {
     }
 
     private RelNode build(RelBuilder b, PlannerRequest req) {
+        // Cross-measure-group tuple read: UNION (distinct) of one
+        // fact-rooted member sub-query per measure group, with a single
+        // ORDER BY over the union output. The M4 equivalent of the legacy
+        // virtual-cube UNION across fact tables.
+        if (!req.unionArms.isEmpty()) {
+            for (PlannerRequest arm : req.unionArms) {
+                b.push(build(b, arm));
+            }
+            b.union(false, req.unionArms.size());
+            if (!req.orderBy.isEmpty()) {
+                List<RexNode> exprs = new ArrayList<>();
+                for (PlannerRequest.OrderBy o : req.orderBy) {
+                    RexNode ref = b.field(o.column.name);
+                    exprs.add(
+                        o.direction == PlannerRequest.Order.DESC
+                            ? b.desc(ref)
+                            : ref);
+                }
+                b.sort(exprs);
+            }
+            return b.build();
+        }
+
         // Issue #46 third-class fix: when the schema aliases the fact
         // table (rare but valid), scan by physical name and rename to
         // the alias so subsequent field refs and joins resolve through

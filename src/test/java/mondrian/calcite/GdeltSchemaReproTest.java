@@ -298,6 +298,33 @@ public class GdeltSchemaReproTest {
             + "FROM [GDELT]");
     }
 
+    /**
+     * Cross-measure-group query (Event Count from the Events group +
+     * Mention Count from the Mentions group, by the conformed Event Root
+     * dimension). The Calcite tuple-read translator declines this
+     * virtual-cube UNION shape (UnsupportedTranslation: "spans multiple
+     * measure groups") and falls back to legacy, which emits a standard
+     * SQL UNION of per-fact member lists; the per-measure cell values load
+     * as two single-fact segment queries. This guards that the fallback
+     * keeps producing legacy-equivalent results — the shape that surfaced
+     * the MotherDuck "syntax error at or near union" before 4.8.1.19.
+     */
+    @Test
+    public void crossMeasureGroup() {
+        CalcitePlannerAdapters.resetUnsupportedCount();
+        assertParity("cross-mg",
+            "SELECT {[Measures].[Event Count], [Measures].[Mention Count]}"
+            + " ON COLUMNS,\n"
+            + "  NON EMPTY [Event Root].[Event Root].[Event Root].Members"
+            + " ON ROWS\n"
+            + "FROM [GDELT]");
+        // The Calcite path must translate the cross-measure-group UNION
+        // natively — no fallback to legacy SQL for the tuple read.
+        assertEquals(
+            0L, CalcitePlannerAdapters.tupleReadUnsupportedCount(),
+            "cross-measure-group tuple read must not fall back to legacy");
+    }
+
     /** Named-set on the Date dimension (different FK column per group). */
     @Test
     public void dateNamedSet() {
