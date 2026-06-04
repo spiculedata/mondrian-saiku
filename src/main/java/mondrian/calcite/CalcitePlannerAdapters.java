@@ -187,7 +187,18 @@ public final class CalcitePlannerAdapters {
             // filters) is the slicer-aware path below.
             if (constraint instanceof SqlContextConstraint) {
                 SqlContextConstraint sc = (SqlContextConstraint) constraint;
-                if (isEffectivelyEmptySlicer(sc)) {
+                // Issue #89: a NON EMPTY read needs the fact join even when
+                // the slicer is empty — the join is what filters members
+                // down to those that appear in the fact. Legacy keys this
+                // off `isJoinRequired() || evaluator.isNonEmpty()`
+                // (SqlTupleReader.makeLevelMembersSql). Collapsing such a
+                // read to a plain dim enumeration drops the join and
+                // silently returns every member (NON EMPTY lost) — for a
+                // conformed dimension with a distinct name column this
+                // mis-keys members and yields wrong/empty results. Only an
+                // empty slicer on a NON-NON-EMPTY read is a true plain
+                // enumeration.
+                if (isEffectivelyEmptySlicer(sc) && !isNonEmptyRead(sc)) {
                     // fall through to the DefaultTupleConstraint path below
                 } else {
                     return translateSqlContextConstraintTupleRead(
@@ -362,6 +373,19 @@ public final class CalcitePlannerAdapters {
             b, evaluator, factTable, joinedAliases,
             new CrossJoinArg[0]);
         return b.build();
+    }
+
+    /**
+     * Returns true if this {@link SqlContextConstraint} read is NON EMPTY —
+     * i.e. its evaluator context requests that members with no fact data be
+     * dropped. Mirrors the legacy {@code evaluator.isNonEmpty()} arm of
+     * {@code SqlTupleReader.makeLevelMembersSql}: a NON EMPTY read must join
+     * to the fact to filter members even when the slicer carries no pinned
+     * members, so it cannot be collapsed to a plain dimension enumeration.
+     */
+    private static boolean isNonEmptyRead(SqlContextConstraint c) {
+        Evaluator ev = c.getEvaluator();
+        return ev != null && ev.isNonEmpty();
     }
 
     /**
