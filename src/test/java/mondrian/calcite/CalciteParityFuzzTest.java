@@ -438,29 +438,12 @@ public class CalciteParityFuzzTest {
 
     /**
      * Documented Calcite parity gaps (issue #90), each a label from
-     * {@link #corpus()}. Both are in the plain (non-NON-EMPTY)
-     * DefaultTupleConstraint enumeration branch:
-     * <ul>
-     *   <li>{@code .../plain/product-name/*} — snowflake leaf enumeration
-     *       projects key columns in the wrong order vs the tuple-reader
-     *       column layout, mis-keying members (silent wrong results).</li>
-     *   <li>{@code .../plain/store-name/*} — deep flat-hierarchy leaf
-     *       enumeration under-projects member-property columns, raising
-     *       {@code AssertionError: cardinality != column count} (which,
-     *       being an Error not a RuntimeException, escapes the
-     *       SqlTupleReader fallback and hard-fails the query).</li>
-     * </ul>
-     * NON EMPTY variants of the same levels pass (they route through the
-     * fact-joined path fixed for #89).
+     * {@link #corpus()}. Empty: the originally-found plain-enumeration gaps
+     * — {@code .../plain/product-name/*} (#91, snowflake-leaf column order)
+     * and {@code .../plain/store-name/*} (#92, under-projected member
+     * properties) — are now fixed, so the corpus must be fully clean. Add a
+     * label here only to quarantine a newly-discovered gap pending its fix.
      */
     private static final java.util.Set<String> KNOWN_GAPS =
-        new java.util.HashSet<>(java.util.Arrays.asList(
-            "wh+sales/plain/product-name/unit-sales",
-            "wh+sales/plain/product-name/store-sales",
-            "wh+sales/plain/product-name/wh-sales",
-            "wh+sales/plain/product-name/units-shipped",
-            "wh+sales/plain/store-name/unit-sales",
-            "wh+sales/plain/store-name/store-sales",
-            "wh+sales/plain/store-name/wh-sales",
-            "wh+sales/plain/store-name/units-shipped"));
+        new java.util.HashSet<>();
 }

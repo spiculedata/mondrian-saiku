@@ -2432,132 +2432,100 @@ public final class CalcitePlannerAdapters {
         Set<String> seen,
         TargetShape t)
     {
-        String tableAlias = t.tableAlias;
-        RolapAttribute attribute = t.attribute;
-
-        // 0) Ancestor-level key columns (root → target, excluding target
-        //    itself). Mondrian's SqlTupleReader expects the column layout
-        //    to start with every ancestor level's keys so it can construct
-        //    the parent member context — without these, getLevelMembers()
-        //    of a non-root level explodes with
-        //      AssertionError: types [null, ...] cardinality != column count N
-        //    against the Calcite-generated SELECT (which previously only
-        //    projected the target level's own keys).
-        //    Mirrors the root-down walk in
-        //    translateDescendantsConstraintTupleRead. Flat hierarchies have
-        //    every level's keys on tableAlias; snowflakes would need
-        //    per-ancestor joins (deferred — throw UnsupportedTranslation so
-        //    the caller falls back to legacy SQL).
+        // Mirror legacy SqlTupleReader.addLevelMemberSql exactly: walk every
+        // non-all level root → leaf, and per level emit (in this order)
+        // parent-attribute keys, orderBy columns, key columns, name, caption
+        // and explicit-property key columns. The tuple reader reads result
+        // columns positionally against the LevelColumnLayout built by that
+        // same method, so the projection's column SET and ORDER must match
+        // it column-for-column. Two consequences this fixes:
+        //   #91 — a snowflake leaf with a distinct name column (e.g.
+        //         [Product Name]: orderBy defaults to product_name, so the
+        //         name column must precede the product_id key); emitting
+        //         key-before-name mis-keyed the members.
+        //   #92 — a deep leaf carrying member-property columns (e.g.
+        //         [Store Name]'s store_type/manager/sqft/...); omitting them
+        //         left the SELECT short of the layout's column count and
+        //         tripped "types cardinality != column count".
+        // Only orderBy + key columns contribute to ORDER BY (Clause
+        // SELECT_ORDER in legacy); name/caption/properties are SELECT-only.
+        // This is the dim-rooted (DISTINCT, no GROUP BY) analogue of
+        // emitNecjTargetProjections.
         java.util.List<? extends RolapCubeLevel> hierarchyLevels =
             t.level.getHierarchy().getLevelList();
-        for (int i = 0; i < t.level.getDepth(); i++) {
-            RolapCubeLevel anc = hierarchyLevels.get(i);
-            if (anc.isAll()) {
+        int leafDepth = t.level.getDepth();
+        for (int i = 0; i <= leafDepth; i++) {
+            RolapCubeLevel currLevel = hierarchyLevels.get(i);
+            if (currLevel.isAll()) {
                 continue;
             }
-            RolapAttribute ancAttr = anc.getAttribute();
-            for (RolapSchema.PhysColumn akc : ancAttr.getKeyList()) {
-                // Ancestor-key projection mirrors Step 1's key emission:
-                // each column references its own relation alias. The
-                // shapeFor() snowflake-upward path has already injected
-                // joins for any ancestor relations referenced by the
-                // *current* level's keyList — but a parent level may
-                // reference yet another ancestor not yet joined. In
-                // that case we still throw so the caller falls back.
-                String akcAlias = akc.relation == null
-                    ? null
-                    : akc.relation.getAlias();
-                if (akcAlias == null) {
+            RolapAttribute attr = currLevel.getAttribute();
+
+            // Parent-attribute keys (parent-child levels only). Mondrian's
+            // SqlMemberSource needs these to build the recursive hierarchy;
+            // legacy emits them ahead of the level's own columns.
+            RolapAttribute parentAttr = currLevel.getParentAttribute();
+            if (parentAttr != null) {
+                for (RolapSchema.PhysColumn pkc : parentAttr.getKeyList()) {
+                    emitTargetColumn(b, seen, pkc, "parent-key", false);
+                }
+            }
+
+            for (RolapSchema.PhysColumn o : attr.getOrderByList()) {
+                emitTargetColumn(b, seen, o, "order-by", true);
+            }
+            for (RolapSchema.PhysColumn kc : attr.getKeyList()) {
+                emitTargetColumn(b, seen, kc, "key", true);
+            }
+            RolapSchema.PhysColumn nameExp = attr.getNameExp();
+            if (nameExp != null) {
+                emitTargetColumn(b, seen, nameExp, "name", false);
+            }
+            RolapSchema.PhysColumn captionExp = attr.getCaptionExp();
+            if (captionExp != null) {
+                emitTargetColumn(b, seen, captionExp, "caption", false);
+            }
+            // Explicit member properties: legacy projects each property's
+            // (single) key column. Without them the JDBC result has fewer
+            // columns than the layout expects (#92).
+            for (RolapProperty property : attr.getExplicitProperties()) {
+                if (property.getAttribute().getKeyList().size() != 1) {
                     throw new UnsupportedTranslation(
-                        "fromTupleRead: ancestor level "
-                        + anc.getUniqueName()
-                        + " key column has null relation");
+                        "fromTupleRead: property " + property
+                        + " has composite key");
                 }
-                PlannerRequest.Column akp =
-                    asProjection(akc, akcAlias, "ancestor-key");
-                if (seen.add(akcAlias + "." + akp.name)) {
-                    b.addProjection(akp);
-                    // Note: no addOrderBy here. Step 1's keyList loop is the
-                    // authoritative ORDER BY emitter — for composite-key dims
-                    // (Product Category) it already projects+orders by the
-                    // ancestor cols, so doubling that here would duplicate
-                    // ORDER BY entries (caught by
-                    // TupleReadCompositeKeyProjectionTest).
-                }
+                emitTargetColumn(
+                    b, seen,
+                    property.getAttribute().getKeyList().get(0),
+                    "property", false);
             }
         }
+    }
 
-        // 1) Key columns (full list, parent-most to leaf-most — composite
-        // keys emit every key column, and every one contributes to the
-        // ORDER BY so cell-set key ordering matches legacy). Each key
-        // projects from its own relation alias: for a snowflake
-        // [Brand Name] keyed on (product_class.product_family, ...,
-        // product.brand_name), each column references its actual table.
-        java.util.List<RolapSchema.PhysColumn> keyList =
-            attribute.getKeyList();
-        java.util.Set<String> keyColNames =
-            new java.util.LinkedHashSet<String>();
-        for (RolapSchema.PhysColumn kc : keyList) {
-            String kcAlias =
-                kc.relation == null ? tableAlias : kc.relation.getAlias();
-            PlannerRequest.Column kp = asProjection(kc, kcAlias, "key");
-            if (seen.add(kcAlias + "." + kp.name)) {
-                b.addProjection(kp);
-            }
-            keyColNames.add(kp.name);
-            b.addOrderBy(
-                new PlannerRequest.OrderBy(kp, PlannerRequest.Order.ASC));
-        }
-
-        // 2) Order-by columns (any column not already contributed by the
-        //    key list — e.g. an explicit non-key ordering expression).
-        for (RolapSchema.PhysColumn o : attribute.getOrderByList()) {
-            PlannerRequest.Column c = asProjection(o, tableAlias, "order-by");
-            if (seen.add(tableAlias + "." + c.name)) {
-                b.addProjection(c);
-            }
-            if (!keyColNames.contains(c.name)) {
+    /**
+     * Emit one plain-enumeration projection (deduped by {@code (alias,
+     * name)} via {@code seen}) and, for orderBy/key roles, an ASC ORDER BY
+     * on the same column. The column references its own relation alias so
+     * snowflake ancestor columns resolve against the right table.
+     */
+    private static void emitTargetColumn(
+        PlannerRequest.Builder b,
+        Set<String> seen,
+        RolapSchema.PhysColumn col,
+        String role,
+        boolean orderBy)
+    {
+        String alias = col.relation == null ? null : col.relation.getAlias();
+        PlannerRequest.Column proj = asProjection(col, alias, role);
+        // asProjection may unwrap a calc column to a different relation; use
+        // its resolved alias for both the dedup tag and the ORDER BY.
+        String tag = proj.table + "." + proj.name;
+        if (seen.add(tag)) {
+            b.addProjection(proj);
+            if (orderBy) {
                 b.addOrderBy(
-                    new PlannerRequest.OrderBy(c, PlannerRequest.Order.ASC));
-            }
-        }
-
-        // 3) Name expression (optional).
-        RolapSchema.PhysColumn nameExp = attribute.getNameExp();
-        if (nameExp != null) {
-            PlannerRequest.Column nameProj =
-                asProjection(nameExp, tableAlias, "name");
-            if (seen.add(tableAlias + "." + nameProj.name)) {
-                b.addProjection(nameProj);
-            }
-        }
-
-        // 4) Caption expression (optional).
-        RolapSchema.PhysColumn captionExp = attribute.getCaptionExp();
-        if (captionExp != null) {
-            PlannerRequest.Column capProj =
-                asProjection(captionExp, tableAlias, "caption");
-            if (seen.add(tableAlias + "." + capProj.name)) {
-                b.addProjection(capProj);
-            }
-        }
-
-        // 5) Parent-attribute key columns (only for parent-child levels).
-        //    Mondrian's SqlMemberSource needs the parent-key columns so
-        //    the in-memory layer can build the recursive hierarchy.
-        //    For Employee → supervisor_id this projects the supervisor
-        //    column alongside the employee_id key.
-        RolapAttribute parentAttr = t.level.getParentAttribute();
-        if (parentAttr != null) {
-            for (RolapSchema.PhysColumn pkc : parentAttr.getKeyList()) {
-                String pkcAlias = pkc.relation == null
-                    ? tableAlias
-                    : pkc.relation.getAlias();
-                PlannerRequest.Column pkp =
-                    asProjection(pkc, pkcAlias, "parent-key");
-                if (seen.add(pkcAlias + "." + pkp.name)) {
-                    b.addProjection(pkp);
-                }
+                    new PlannerRequest.OrderBy(
+                        proj, PlannerRequest.Order.ASC));
             }
         }
     }
