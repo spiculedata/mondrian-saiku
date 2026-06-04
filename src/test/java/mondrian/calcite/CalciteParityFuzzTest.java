@@ -229,6 +229,24 @@ public class CalciteParityFuzzTest {
             }
         }
 
+        // 2b) cross-measure-group: a Sales-group measure + a Warehouse-group
+        //     measure on the same conformed axis. The Calcite tuple read
+        //     declines this virtual-cube UNION shape and falls back to
+        //     legacy (standard SQL UNION of per-fact member lists); guards
+        //     that the fallback stays legacy-equivalent.
+        qs.add(new Q(
+            "wh+sales/cross-mg/country",
+            "SELECT {[Measures].[Unit Sales], [Measures].[Warehouse Sales]}"
+            + " ON COLUMNS, NON EMPTY "
+            + "[Store].[Stores].[Store Country].Members ON ROWS FROM "
+            + cube));
+        qs.add(new Q(
+            "wh+sales/cross-mg/product-family",
+            "SELECT {[Measures].[Unit Sales], [Measures].[Warehouse Sales]}"
+            + " ON COLUMNS, NON EMPTY "
+            + "[Product].[Products].[Product Family].Members ON ROWS FROM "
+            + cube));
+
         // 3) slicer (WHERE) variants on a conformed axis.
         qs.add(new Q(
             "wh+sales/slicer/family-by-1997",
@@ -288,7 +306,158 @@ public class CalciteParityFuzzTest {
             + "NON EMPTY [Outlet].[Outlet].Members ON ROWS FROM " + g
             + " WHERE [Time].[Time].[Year].[1997]"));
 
+        addSalesCorpus(qs);
+        addHrCorpus(qs);
+        addNamedSetCorpus(qs);
         return qs;
+    }
+
+    /**
+     * Named-set NON EMPTY shape — {@code WITH SET [~ROWS] AS {axis} SELECT
+     * NON EMPTY [~ROWS] ON ROWS} — which is what Saiku Studio emits for
+     * every query. The set is materialized first (plain enumeration), then
+     * NON EMPTY filters it, a different path than the inline form (issue #89
+     * reopen). Covers the conformed-dimension, snowflake-leaf, deep-leaf and
+     * parent-child axes across the multi-MG and single-MG cubes.
+     */
+    private static void addNamedSetCorpus(List<Q> qs) {
+        String[][] cases = {
+            // {label, cube, axis-set, measure}
+            {"whs/outlet", "[GdeltLike]",
+                "[Outlet].[Outlet].Members", "[Measures].[Unit Sales]"},
+            {"whs/outlet-inv", "[GdeltLike]",
+                "[Outlet].[Outlet].Members", "[Measures].[Warehouse Sales]"},
+            {"whs/store-name", "[Warehouse and Sales]",
+                "[Store].[Stores].[Store Name].Members",
+                "[Measures].[Unit Sales]"},
+            {"whs/product-name", "[Warehouse and Sales]",
+                "[Product].[Products].[Product Name].Members",
+                "[Measures].[Warehouse Sales]"},
+            {"whs/store-country", "[Warehouse and Sales]",
+                "[Store].[Stores].[Store Country].Members",
+                "[Measures].[Unit Sales]"},
+            {"sales/product-name", "[Sales]",
+                "[Product].[Products].[Product Name].Members",
+                "[Measures].[Profit]"},
+            {"sales/customer-name", "[Sales]",
+                "[Customer].[Customers].[Name].Members",
+                "[Measures].[Customer Count]"},
+            {"hr/employees", "[HR]",
+                "[Employee].[Employees].Members", "[Measures].[Org Salary]"},
+        };
+        for (String[] c : cases) {
+            qs.add(new Q("named-set/" + c[0],
+                "WITH SET [~ROWS] AS {" + c[2] + "}\n"
+                + "SELECT NON EMPTY {" + c[3] + "} ON COLUMNS,\n"
+                + "  NON EMPTY [~ROWS] ON ROWS\nFROM " + c[1]));
+        }
+    }
+
+    /**
+     * Single-measure-group [Sales] cube: snowflake Product, multi-level
+     * Store/Customer, a distinct-count measure (Customer Count) and a
+     * calculated measure (Profit) — exercises plain + NON EMPTY enumeration,
+     * member .Children reads, and segment loads for distinct-count / calc.
+     */
+    private static void addSalesCorpus(List<Q> qs) {
+        String cube = "[Sales]";
+        String[][] axes = {
+            {"store-country", "[Store].[Stores].[Store Country].Members"},
+            {"store-city",    "[Store].[Stores].[Store City].Members"},
+            {"store-name",    "[Store].[Stores].[Store Name].Members"},
+            {"product-family",
+                "[Product].[Products].[Product Family].Members"},
+            {"product-brand",
+                "[Product].[Products].[Brand Name].Members"},
+            {"product-name",
+                "[Product].[Products].[Product Name].Members"},
+            {"customer-country", "[Customer].[Customers].[Country].Members"},
+            {"customer-city",    "[Customer].[Customers].[City].Members"},
+            {"customer-name",    "[Customer].[Customers].[Name].Members"},
+            {"customer-education",
+                "[Customer].[Education Level].[Education Level].Members"},
+            {"promotion-media",
+                "[Promotion].[Media Type].[Media Type].Members"},
+            {"time-quarter",  "[Time].[Time].[Quarter].Members"},
+        };
+        String[][] measures = {
+            {"unit-sales", "[Measures].[Unit Sales]"},
+            {"customer-count", "[Measures].[Customer Count]"},
+            {"profit", "[Measures].[Profit]"},
+        };
+        for (String[] ax : axes) {
+            for (String[] m : measures) {
+                qs.add(new Q("sales/ne/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, NON EMPTY " + ax[1]
+                    + " ON ROWS FROM " + cube));
+                qs.add(new Q("sales/plain/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, " + ax[1]
+                    + " ON ROWS FROM " + cube));
+            }
+        }
+        // Specific-member .Children reads.
+        qs.add(new Q("sales/children/usa",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY [Store].[Stores].[USA].Children ON ROWS FROM "
+            + cube));
+        qs.add(new Q("sales/children/drink",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "[Product].[Products].[Drink].Children ON ROWS FROM " + cube));
+        // BottomCount + Hierarchize + a tuple slicer.
+        qs.add(new Q("sales/bottomcount/city",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "BottomCount([Store].[Stores].[Store City].Members, 5, "
+            + "[Measures].[Unit Sales]) ON ROWS FROM " + cube));
+        qs.add(new Q("sales/hierarchize/product-dept",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY Hierarchize("
+            + "[Product].[Products].[Product Department].Members) "
+            + "ON ROWS FROM " + cube));
+        qs.add(new Q("sales/slicer-tuple/customer-by-drink-1997",
+            "SELECT {[Measures].[Unit Sales]} ON COLUMNS, "
+            + "NON EMPTY [Customer].[Customers].[Country].Members ON ROWS "
+            + "FROM " + cube
+            + " WHERE ([Product].[Products].[Drink], "
+            + "[Time].[Time].[Year].[1997])"));
+    }
+
+    /**
+     * [HR] cube: a parent-child Employee hierarchy (closure table) plus a
+     * Position hierarchy. Directly exercises the parent-child branch of
+     * emitTargetProjections (parent-attribute key columns) under plain and
+     * NON EMPTY enumeration, and .Children of a parent-child member.
+     */
+    private static void addHrCorpus(List<Q> qs) {
+        String cube = "[HR]";
+        String[][] axes = {
+            {"employees", "[Employee].[Employees].Members"},
+            {"employees-l2",
+                "[Employee].[Employees].[Employee Id].Members"},
+            {"position-role",
+                "[Employee].[Position].[Management Role].Members"},
+            {"position-title",
+                "[Employee].[Position].[Position Title].Members"},
+            {"department", "[Department].[Department].Members"},
+        };
+        String[][] measures = {
+            {"org-salary", "[Measures].[Org Salary]"},
+            {"count", "[Measures].[Count]"},
+            {"num-employees", "[Measures].[Number of Employees]"},
+        };
+        for (String[] ax : axes) {
+            for (String[] m : measures) {
+                qs.add(new Q("hr/ne/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, NON EMPTY " + ax[1]
+                    + " ON ROWS FROM " + cube));
+                qs.add(new Q("hr/plain/" + ax[0] + "/" + m[0],
+                    "SELECT {" + m[1] + "} ON COLUMNS, " + ax[1]
+                    + " ON ROWS FROM " + cube));
+            }
+        }
+        qs.add(new Q("hr/children/all-employees",
+            "SELECT {[Measures].[Org Salary]} ON COLUMNS, "
+            + "NON EMPTY [Employee].[Employees].[All Employees].Children "
+            + "ON ROWS FROM " + cube));
     }
 
     // ---- execution + comparison --------------------------------------
@@ -344,6 +513,10 @@ public class CalciteParityFuzzTest {
         List<String> drifts = new ArrayList<>();
         List<String> calciteErrors = new ArrayList<>();
         List<String> legacyErrors = new ArrayList<>();
+        List<String> bothErrors = new ArrayList<>();
+        // Correct results that nonetheless reached them via a fallback to
+        // legacy SQL — the remaining Calcite coverage gaps worth closing.
+        List<String> fellBack = new ArrayList<>();
 
         for (Q q : corpus) {
             String legacy = null;
@@ -355,15 +528,22 @@ public class CalciteParityFuzzTest {
             } catch (Throwable t) {
                 legacyErr = rootCause(t);
             }
+            CalcitePlannerAdapters.resetUnsupportedCount();
             try {
                 calcite = run(calciteConn, "calcite", q.mdx);
             } catch (Throwable t) {
                 calciteErr = rootCause(t);
             }
+            long fallbacks = CalcitePlannerAdapters.unsupportedCount();
+            if (fallbacks > 0 && calciteErr == null) {
+                fellBack.add(q.label + " (fallbacks=" + fallbacks + ")");
+            }
 
             Verdict v;
             if (legacyErr != null && calciteErr != null) {
                 v = Verdict.BOTH_ERROR;
+                bothErrors.add(q.label + " :: legacy=" + legacyErr
+                    + " | calcite=" + calciteErr);
             } else if (legacyErr != null) {
                 v = Verdict.LEGACY_ERROR;
                 legacyErrors.add(q.label + " :: " + legacyErr);
@@ -407,6 +587,21 @@ public class CalciteParityFuzzTest {
                 report.append("  ").append(e).append("\n");
             }
         }
+        if (!bothErrors.isEmpty()) {
+            report.append("\n--- BOTH_ERROR (invalid/unsupported on both) ---\n");
+            for (String e : bothErrors) {
+                report.append("  ").append(e).append("\n");
+            }
+        }
+        report.append("\nMATCH via legacy fallback: ")
+            .append(fellBack.size()).append(" / ").append(corpus.size())
+            .append(" (correct, but a Calcite coverage gap)\n");
+        if (!fellBack.isEmpty()) {
+            report.append("--- FELL_BACK (still declines to Calcite) ---\n");
+            for (String f : fellBack) {
+                report.append("  ").append(f).append("\n");
+            }
+        }
         report.append("=============================================\n");
         System.out.println(report);
 
@@ -434,7 +629,35 @@ public class CalciteParityFuzzTest {
                 "New Calcite parity divergence(s) not in the #90 known-gap "
                 + "allowlist: " + unexpected + " — see report above");
         }
+        // No corpus query should fall back to legacy: every shape here is
+        // translated natively by the Calcite backend. A new fallback is a
+        // coverage regression — add the shape's translation (or, if a
+        // genuinely unsupported shape is added to the corpus, allowlist it
+        // in FALLBACK_ALLOWED).
+        List<String> unexpectedFallbacks = new ArrayList<>();
+        for (String f : fellBack) {
+            String label = f.substring(0, f.indexOf(" (fallbacks="));
+            if (!FALLBACK_ALLOWED.contains(label)) {
+                unexpectedFallbacks.add(label);
+            }
+        }
+        if (!unexpectedFallbacks.isEmpty()) {
+            throw new AssertionError(
+                "Corpus query regressed to a legacy fallback (Calcite "
+                + "coverage gap): " + unexpectedFallbacks
+                + " — see report above");
+        }
     }
+
+    /**
+     * Corpus labels permitted to reach correct results via a legacy
+     * fallback rather than native Calcite translation. Empty: the whole
+     * corpus translates natively (cross-measure-group UNION, unrelated
+     * dimensions, and parent-child hierarchies all landed). Add a label
+     * only when introducing a genuinely unsupported shape to the corpus.
+     */
+    private static final java.util.Set<String> FALLBACK_ALLOWED =
+        new java.util.HashSet<>();
 
     /**
      * Documented Calcite parity gaps (issue #90), each a label from
