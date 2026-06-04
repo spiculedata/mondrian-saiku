@@ -247,12 +247,13 @@ public class SegmentLoader {
                                 new GroupingSetsList(groupingSets),
                                 compoundPredicateList);
                         precomputedCalciteSql = planner.plan(req);
-                    } catch (RuntimeException ex) {
+                    } catch (RuntimeException | AssertionError ex) {
                         // Calcite translator gap (e.g. snowflake mid-chain
                         // scan returning empty fields, or a measure with a
                         // CASE expression). Leave precomputedCalciteSql
                         // null so the worker falls back to the legacy SQL
-                        // string in pair.left.
+                        // string in pair.left. #92: AssertionError from
+                        // Calcite internals must fall back too, not escape.
                         if (Boolean.getBoolean("mondrian.calcite.trace")) {
                             System.err.println(
                                 "[calcite-fallback segment] "
@@ -863,10 +864,12 @@ public class SegmentLoader {
                             CalcitePlannerAdapters.fromSegmentLoad(
                                 groupingSetsList, compoundPredicateList);
                         calciteSql = planner.plan(req);
-                    } catch (RuntimeException ex) {
+                    } catch (RuntimeException | AssertionError ex) {
                         // Translator gap (snowflake mid-chain, CASE-expr
                         // measure) — leave calciteSql null so the legacy
-                        // `sql` from pair.left is used below.
+                        // `sql` from pair.left is used below. #92:
+                        // AssertionError from Calcite internals falls back
+                        // too rather than escaping to a hard failure.
                         // #10: WARN + per-fallback counter (worker-thread site).
                         LOGGER.warn(
                             "Calcite segment-load translation failed "
