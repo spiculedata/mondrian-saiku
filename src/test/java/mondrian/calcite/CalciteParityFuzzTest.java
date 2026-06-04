@@ -290,7 +290,49 @@ public class CalciteParityFuzzTest {
 
         addSalesCorpus(qs);
         addHrCorpus(qs);
+        addNamedSetCorpus(qs);
         return qs;
+    }
+
+    /**
+     * Named-set NON EMPTY shape — {@code WITH SET [~ROWS] AS {axis} SELECT
+     * NON EMPTY [~ROWS] ON ROWS} — which is what Saiku Studio emits for
+     * every query. The set is materialized first (plain enumeration), then
+     * NON EMPTY filters it, a different path than the inline form (issue #89
+     * reopen). Covers the conformed-dimension, snowflake-leaf, deep-leaf and
+     * parent-child axes across the multi-MG and single-MG cubes.
+     */
+    private static void addNamedSetCorpus(List<Q> qs) {
+        String[][] cases = {
+            // {label, cube, axis-set, measure}
+            {"whs/outlet", "[GdeltLike]",
+                "[Outlet].[Outlet].Members", "[Measures].[Unit Sales]"},
+            {"whs/outlet-inv", "[GdeltLike]",
+                "[Outlet].[Outlet].Members", "[Measures].[Warehouse Sales]"},
+            {"whs/store-name", "[Warehouse and Sales]",
+                "[Store].[Stores].[Store Name].Members",
+                "[Measures].[Unit Sales]"},
+            {"whs/product-name", "[Warehouse and Sales]",
+                "[Product].[Products].[Product Name].Members",
+                "[Measures].[Warehouse Sales]"},
+            {"whs/store-country", "[Warehouse and Sales]",
+                "[Store].[Stores].[Store Country].Members",
+                "[Measures].[Unit Sales]"},
+            {"sales/product-name", "[Sales]",
+                "[Product].[Products].[Product Name].Members",
+                "[Measures].[Profit]"},
+            {"sales/customer-name", "[Sales]",
+                "[Customer].[Customers].[Name].Members",
+                "[Measures].[Customer Count]"},
+            {"hr/employees", "[HR]",
+                "[Employee].[Employees].Members", "[Measures].[Org Salary]"},
+        };
+        for (String[] c : cases) {
+            qs.add(new Q("named-set/" + c[0],
+                "WITH SET [~ROWS] AS {" + c[2] + "}\n"
+                + "SELECT NON EMPTY {" + c[3] + "} ON COLUMNS,\n"
+                + "  NON EMPTY [~ROWS] ON ROWS\nFROM " + c[1]));
+        }
     }
 
     /**

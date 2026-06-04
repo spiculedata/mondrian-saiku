@@ -112,6 +112,19 @@ public class ConformedDimensionTupleReadTest {
         + "       NON EMPTY [Outlet].[Outlet].Members ON ROWS\n"
         + "FROM [GdeltLike]";
 
+    /**
+     * The Saiku Studio shape (issue #89 reopen): the rows axis is a
+     * <em>named set</em> referenced with NON EMPTY, rather than an inline
+     * set. The set is evaluated first, then NON EMPTY filters it — a
+     * different path than the inline form, which still diverged after the
+     * 4.8.1.18 fix.
+     */
+    private static final String NAMED_SET_MDX =
+        "WITH SET [~ROWS] AS {[Outlet].[Outlet].Members}\n"
+        + "SELECT NON EMPTY {[Measures].[Unit Sales]} ON COLUMNS,\n"
+        + "       NON EMPTY [~ROWS] ON ROWS\n"
+        + "FROM [GdeltLike]";
+
     private static Connection legacyConn;
     private static Connection calciteConn;
 
@@ -210,5 +223,14 @@ public class ConformedDimensionTupleReadTest {
     @Test
     public void conformedDimensionMatchesLegacy_inventoryGroup() {
         assertCalciteMatchesLegacy(INVENTORY_GROUP_MDX);
+    }
+
+    /**
+     * Issue #89 reopen: the named-set NON EMPTY shape Saiku Studio emits
+     * must match legacy too (inline-set fix in 4.8.1.18 did not cover it).
+     */
+    @Test
+    public void conformedDimensionMatchesLegacy_namedSet() {
+        assertCalciteMatchesLegacy(NAMED_SET_MDX);
     }
 }
