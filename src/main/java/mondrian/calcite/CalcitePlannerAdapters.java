@@ -730,13 +730,19 @@ public final class CalcitePlannerAdapters {
             }
         }
 
-        // Which measure groups fully join all targets? Mirrors legacy
-        // SqlTupleReader.getFullyJoiningMeasureGroups: a group qualifies
-        // when every target dimension's relations are reachable from its
-        // fact. A single qualifying group → one fact-rooted member query;
-        // more than one (a conformed dim with measures from >1 group) →
-        // a UNION of one such query per group, the M4 equivalent of the
-        // legacy virtual-cube UNION.
+        // Single measure group: one fact-rooted member query. Targets that
+        // link to the group's fact join it; targets the group does NOT link
+        // (unrelated dimensions — NoLink in the schema) are cross-joined, or
+        // enumerated straight off the dim table when no target links the
+        // fact. Mirrors legacy generateSelectForLevels' DimensionJoiner.
+        if (mgs.size() == 1) {
+            return buildSetConstraintArm(
+                levels, constraint, args, evaluator, shapes,
+                mgs.get(0), true);
+        }
+        // More than one measure group (a conformed dimension measured across
+        // groups): UNION one fact-rooted member query per fully-joining
+        // group. Mirrors legacy getFullyJoiningMeasureGroups.
         List<RolapMeasureGroup> joining =
             new java.util.ArrayList<RolapMeasureGroup>();
         for (RolapMeasureGroup mg : mgs) {
@@ -811,35 +817,99 @@ public final class CalcitePlannerAdapters {
                 + (factRel == null ? "null" : factRel.getClass().getName())
                 + ")");
         }
-        String factName = ((RolapSchema.PhysTable) factRel).getName();
-        PlannerRequest.Builder b = PlannerRequest.builder(factName);
-        Set<String> joinedAliases = new LinkedHashSet<>();
-        joinedAliases.add(factTable.getAlias());
 
-        // First pass: join every dim table referenced by any target's
-        // hierarchy walk. For a snowflake like Product→Product_Class we
-        // need `product` joined (the target leaf) AND `product_class` (the
-        // parent levels' home).
+        // Per-target reachability from this group's fact. A target whose
+        // dimension does not link to the group (an "unrelated" dimension —
+        // NoLink in the schema) is not reachable; legacy enumerates such a
+        // dimension without a fact join (cross-join when other targets DO
+        // relate; a plain dim read when none do).
+        boolean[] reachable = new boolean[shapes.length];
+        boolean anyReachable = false;
         for (int i = 0; i < shapes.length; i++) {
-            TargetShape shape = shapes[i];
-            if (shape == null) {
+            if (shapes[i] == null) {
                 continue;
             }
-            for (RolapSchema.PhysRelation rel :
-                collectNecjRelations(shape))
+            boolean r = true;
+            for (RolapSchema.PhysRelation rel
+                : collectNecjRelations(shapes[i]))
             {
-                RolapStar.Table relStar = findStarTable(factTable, rel);
-                if (relStar == null) {
-                    throw new UnsupportedTranslation(
-                        "fromTupleRead: SetConstraint target[" + i + "] "
-                        + "referenced table " + rel.getAlias()
-                        + " is not reachable from fact "
-                        + factTable.getAlias());
+                if (findStarTable(factTable, rel) == null) {
+                    r = false;
+                    break;
                 }
-                if (relStar != factTable) {
-                    ensureJoinedChain(
-                        b, factTable, relStar, joinedAliases);
+            }
+            reachable[i] = r;
+            anyReachable |= r;
+        }
+
+        PlannerRequest.Builder b;
+        Set<String> joinedAliases = new LinkedHashSet<>();
+        if (anyReachable) {
+            // Fact-rooted: related targets join the fact, unrelated targets
+            // are cross-joined (cartesian — legacy lists a NoLink dimension
+            // in FROM with no join predicate).
+            String factName = ((RolapSchema.PhysTable) factRel).getName();
+            b = PlannerRequest.builder(factName);
+            joinedAliases.add(factTable.getAlias());
+            for (int i = 0; i < shapes.length; i++) {
+                TargetShape shape = shapes[i];
+                if (shape == null) {
+                    continue;
                 }
+                if (reachable[i]) {
+                    for (RolapSchema.PhysRelation rel
+                        : collectNecjRelations(shape))
+                    {
+                        RolapStar.Table relStar =
+                            findStarTable(factTable, rel);
+                        if (relStar != factTable) {
+                            ensureJoinedChain(
+                                b, factTable, relStar, joinedAliases);
+                        }
+                    }
+                } else {
+                    crossJoinUnrelatedDim(b, shape, joinedAliases);
+                }
+            }
+        } else {
+            // No target relates to the measure → plain dim enumeration off
+            // the first target's table, cross-joining any further targets.
+            // A meaningful slicer or filter-only arg can't be honoured
+            // without a fact, so decline those (fall back to legacy).
+            if (args.length > levels.size()
+                || hasMeaningfulSlicer(evaluator))
+            {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: unrelated-dimension read with a slicer "
+                    + "or filter-only arg is not supported");
+            }
+            TargetShape rootShape = null;
+            for (TargetShape s : shapes) {
+                if (s != null) {
+                    rootShape = s;
+                    break;
+                }
+            }
+            if (rootShape == null) {
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: SetConstraint has no non-all target");
+            }
+            b = rootShape.tableName.equals(rootShape.tableAlias)
+                ? PlannerRequest.builder(rootShape.tableAlias)
+                : PlannerRequest.builder(rootShape.tableAlias)
+                    .factPhysName(rootShape.tableName);
+            joinedAliases.add(rootShape.tableAlias);
+            for (PlannerRequest.Join edge : rootShape.dimChain) {
+                if (joinedAliases.add(edge.dimTable)) {
+                    b.addJoin(edge);
+                }
+            }
+            for (int i = 0; i < shapes.length; i++) {
+                TargetShape shape = shapes[i];
+                if (shape == null || shape == rootShape) {
+                    continue;
+                }
+                crossJoinUnrelatedDim(b, shape, joinedAliases);
             }
         }
 
@@ -924,9 +994,56 @@ public final class CalcitePlannerAdapters {
 
         // Slicer contribution: any non-all, non-measure member in the
         // evaluator context that isn't already pinned by a CrossJoinArg.
-        addSlicerFilters(b, evaluator, factTable, joinedAliases, args);
+        // Only meaningful when fact-rooted; the dim-only (all-unrelated)
+        // branch already declined when a meaningful slicer is present.
+        if (anyReachable) {
+            addSlicerFilters(b, evaluator, factTable, joinedAliases, args);
+        }
 
         return b.build();
+    }
+
+    /**
+     * Cross-join an unrelated target's dim table(s) into the request — the
+     * cartesian FROM-entry legacy emits for a dimension the measure group
+     * does not link. The leaf table joins on TRUE (cross join); any
+     * snowflake chain among the dim's own tables is preserved.
+     */
+    private static void crossJoinUnrelatedDim(
+        PlannerRequest.Builder b, TargetShape shape, Set<String> joined)
+    {
+        if (joined.add(shape.tableAlias)) {
+            b.addJoin(
+                PlannerRequest.Join.cross(shape.tableAlias, shape.tableName));
+        }
+        for (PlannerRequest.Join edge : shape.dimChain) {
+            if (joined.add(edge.dimTable)) {
+                b.addJoin(edge);
+            }
+        }
+    }
+
+    /**
+     * True if the evaluator carries a meaningful slicer member — a
+     * non-measure, non-all, non-calculated, non-default member. Mirrors
+     * {@link #isEffectivelyEmptySlicer} for the SetConstraint path.
+     */
+    private static boolean hasMeaningfulSlicer(RolapEvaluator evaluator) {
+        Member[] members = evaluator.getMembers();
+        if (members == null) {
+            return false;
+        }
+        for (Member m : members) {
+            if (m == null || m.isMeasure() || m.isAll() || m.isCalculated()) {
+                continue;
+            }
+            Member def = m.getHierarchy().getDefaultMember();
+            if (def != null && def.equals(m)) {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1460,12 +1577,17 @@ public final class CalcitePlannerAdapters {
             if (currLevel.isAll()) {
                 continue;
             }
-            if (currLevel.getParentAttribute() != null) {
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: SetConstraint hierarchy has a "
-                    + "parent-attribute level (" + currLevel + ")");
-            }
             RolapAttribute attr = currLevel.getAttribute();
+            // Parent-child level: project the parent-attribute key columns
+            // (e.g. supervisor_id) ahead of the level's own columns so the
+            // reader can rebuild the recursive hierarchy. Legacy emits these
+            // first (SELECT supervisor_id, employee_id, full_name FROM ...).
+            RolapAttribute parentAttr = currLevel.getParentAttribute();
+            if (parentAttr != null) {
+                for (RolapSchema.PhysColumn pkc : parentAttr.getKeyList()) {
+                    emitNecjProjection(b, seen, pkc, "parent-key");
+                }
+            }
             // The column's table alias comes from the column's own
             // relation — on a snowflake like Product→Product_Class each
             // level's key may live on a different table (product_class
@@ -1539,6 +1661,10 @@ public final class CalcitePlannerAdapters {
                 continue;
             }
             RolapAttribute attr = currLevel.getAttribute();
+            RolapAttribute parentAttr = currLevel.getParentAttribute();
+            if (parentAttr != null) {
+                addRelationIfReal(out, parentAttr.getKeyList());
+            }
             addRelationIfReal(out, attr.getKeyList());
             addRelationIfReal(out, attr.getOrderByList());
             RolapSchema.PhysColumn nameExp = attr.getNameExp();
@@ -1594,6 +1720,14 @@ public final class CalcitePlannerAdapters {
                 continue;
             }
             RolapAttribute attr = currLevel.getAttribute();
+            // Parent-child: order by the parent-attribute key first
+            // (matching legacy: ORDER BY supervisor_id, employee_id).
+            RolapAttribute parentAttr = currLevel.getParentAttribute();
+            if (parentAttr != null) {
+                for (RolapSchema.PhysColumn pkc : parentAttr.getKeyList()) {
+                    addNecjOrderByColumn(b, seen, pkc);
+                }
+            }
             // Emit per-level ORDER BY in the same relative order as the
             // per-level SELECT list: orderByList (name column by default for
             // simple attributes) first, then keyList. For composite-key
