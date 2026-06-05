@@ -68,6 +68,24 @@ public class SymmetricAggregateSqlTest {
                 "INSERT INTO line_items VALUES (1, 'hat', 'apparel')");
             st.execute(
                 "INSERT INTO line_items VALUES (2, 'socks', 'apparel')");
+
+            // Bridge / many-to-many fixture (#107): accounts owned by
+            // customers via a bridge with allocation weights.
+            //   account 1: balance 1000, owned 50/50 by Alice & Bob
+            //   account 2: balance  500, owned 100% by Bob
+            st.execute(
+                "CREATE TABLE accounts (account_id INTEGER, balance INTEGER)");
+            st.execute(
+                "CREATE TABLE account_owner (account_id INTEGER,"
+                + " customer VARCHAR(32), weight DECIMAL(5,4))");
+            st.execute("INSERT INTO accounts VALUES (1, 1000)");
+            st.execute("INSERT INTO accounts VALUES (2, 500)");
+            st.execute(
+                "INSERT INTO account_owner VALUES (1, 'Alice', 0.5)");
+            st.execute(
+                "INSERT INTO account_owner VALUES (1, 'Bob', 0.5)");
+            st.execute(
+                "INSERT INTO account_owner VALUES (2, 'Bob', 1.0)");
         }
     }
 
@@ -80,6 +98,15 @@ public class SymmetricAggregateSqlTest {
             st.execute("SHUTDOWN");
         }
         conn.close();
+    }
+
+    private long scalarFor(String sql) throws Exception {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql))
+        {
+            rs.next();
+            return Math.round(rs.getDouble(1));
+        }
     }
 
     private long scalar(String sql) throws Exception {
@@ -131,5 +158,41 @@ public class SymmetricAggregateSqlTest {
         assertEquals(
             150L, apparel,
             "header deduped within the category cell (not 350)");
+    }
+
+    // ---- bridge (many-to-many) aggregation semantics (#107) ----------
+
+    private long balanceFor(String customer, boolean weighted)
+        throws Exception
+    {
+        String inner = weighted
+            // weighted: split each balance by its ownership weight.
+            ? "SELECT SUM(a.balance * o.weight) FROM accounts a"
+              + " JOIN account_owner o ON a.account_id = o.account_id"
+              + " WHERE o.customer = '" + customer + "'"
+            // fullCount: each customer gets the whole balance of every
+            // account they own — deduped per account PK within the cell
+            // (#103 pre-aggregation form).
+            : "SELECT SUM(balance) FROM ("
+              + "  SELECT DISTINCT a.account_id, a.balance"
+              + "  FROM accounts a JOIN account_owner o"
+              + "    ON a.account_id = o.account_id"
+              + "  WHERE o.customer = '" + customer + "') t";
+        return scalarFor(inner);
+    }
+
+    /** fullCount: shared account counted in full under each owner. */
+    @Test
+    public void bridgeFullCountSemantics() throws Exception {
+        assertEquals(1000L, balanceFor("Alice", false), "Alice = 1000");
+        assertEquals(1500L, balanceFor("Bob", false), "Bob = 1000 + 500");
+    }
+
+    /** weighted: each balance split across owners by weight (reconciles). */
+    @Test
+    public void bridgeWeightedSemantics() throws Exception {
+        assertEquals(500L, balanceFor("Alice", true), "Alice = 1000*0.5");
+        assertEquals(
+            1000L, balanceFor("Bob", true), "Bob = 1000*0.5 + 500*1.0");
     }
 }
