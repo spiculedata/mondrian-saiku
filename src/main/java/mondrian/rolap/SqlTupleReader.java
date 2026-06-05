@@ -517,6 +517,18 @@ public class SqlTupleReader implements TupleReader {
         return enumTargetCount;
     }
 
+    /** True if {@code level}'s dimension is reached through a bridge
+     *  ({@code <BridgeLink>}, #107) in any of the cube's measure groups. */
+    private static boolean isBridgedLevel(RolapCubeLevel level) {
+        final RolapCubeDimension dim = level.cubeDimension;
+        for (RolapMeasureGroup mg : level.getCube().getMeasureGroups()) {
+            if (mg.getBridgeInfo(dim) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void prepareTuples(
         Dialect dialect,
         DataSource dataSource,
@@ -537,6 +549,29 @@ public class SqlTupleReader implements TupleReader {
                         partialTargets.add(target);
                     }
                 }
+                // #107: a bridge (many-to-many) dimension's join cannot be
+                // built by the legacy SqlQueryBuilder — it routes via the
+                // schema graph, which has no edge through the bridge's
+                // fan-out hop, so path construction asserts. Detect such
+                // reads and fail with a clear message (instead of a cryptic
+                // AssertionError deep in the path builder). Legacy can never
+                // do it; the Calcite bridge read is the next increment.
+                for (Target t : partialTargets) {
+                    if (t.level != null && isBridgedLevel(t.level)) {
+                        if (!MondrianBackend.current().isCalcite()) {
+                            throw Util.newError(
+                                "Bridge (many-to-many) dimension '"
+                                + t.level.getDimension().getName()
+                                + "' requires the Calcite backend "
+                                + "(set mondrian.backend=calcite).");
+                        }
+                        throw Util.newError(
+                            "Calcite bridge tuple-read for dimension '"
+                            + t.level.getDimension().getName()
+                            + "' is not yet implemented (#107 Phase 3).");
+                    }
+                }
+
                 final Pair<String, List<SqlStatement.Type>> pair =
                     makeLevelMembersSql(dialect);
                 String sql = pair.left;
