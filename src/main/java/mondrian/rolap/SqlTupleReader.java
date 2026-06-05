@@ -529,6 +529,148 @@ public class SqlTupleReader implements TupleReader {
         return false;
     }
 
+    /** Projection-key for matching a level column against a
+     *  {@link mondrian.calcite.PlannerRequest.Column} ({@code alias.name}),
+     *  mirroring how the Calcite adapter aliases projections. Null for
+     *  non-real columns (unsupported in a bridge layout for now). */
+    private static String projKey(RolapSchema.PhysColumn col) {
+        if (col == null
+            || !(col instanceof RolapSchema.PhysRealColumn))
+        {
+            return null;
+        }
+        final String alias =
+            col.relation == null ? "" : col.relation.getAlias();
+        return alias + "." + ((RolapSchema.PhysRealColumn) col).name;
+    }
+
+    /**
+     * #107 Phase 3: build the bridge tuple-read SQL via the Calcite adapter,
+     * and the {@link Target} column layouts independently of the legacy
+     * {@code SqlQueryBuilder} (which cannot route through the fan-out hop).
+     * The layout ordinals come straight from the adapter's projection order
+     * (the SQL projects {@code req.projections} in order), so no separate
+     * column-order derivation is needed.
+     */
+    private Pair<String, List<SqlStatement.Type>> makeBridgeCalciteSql(
+        DataSource dataSource, List<Target> partialTargets)
+    {
+        final List<RolapCubeLevel> readLevels =
+            new ArrayList<RolapCubeLevel>(partialTargets.size());
+        for (Target t : partialTargets) {
+            readLevels.add(t.getLevel());
+        }
+        final RolapSchema schema =
+            readLevels.isEmpty()
+                ? null
+                : readLevels.get(0).getHierarchy().getRolapSchema();
+        final CalciteSqlPlanner planner = plannerFor(dataSource, schema);
+        if (planner == null) {
+            throw Util.newError(
+                "Bridge (many-to-many) dimensions require a Calcite-capable "
+                + "dialect.");
+        }
+        final mondrian.calcite.PlannerRequest req =
+            CalcitePlannerAdapters.fromTupleRead(readLevels, constraint);
+        final String sql = planner.plan(req);
+
+        // Map every projected column key -> ordinal (its index in the
+        // SELECT), and collect a key -> PhysColumn map for the types.
+        final Map<String, RolapSchema.PhysColumn> colByKey =
+            new HashMap<String, RolapSchema.PhysColumn>();
+        for (Target t : partialTargets) {
+            collectLevelColumns(t.getLevel(), colByKey);
+        }
+        final Map<String, Integer> projOrd =
+            new HashMap<String, Integer>();
+        final List<SqlStatement.Type> types =
+            new ArrayList<SqlStatement.Type>(req.projections.size());
+        for (int i = 0; i < req.projections.size(); i++) {
+            final mondrian.calcite.PlannerRequest.Column p =
+                req.projections.get(i);
+            final String key = (p.table == null ? "" : p.table) + "." + p.name;
+            projOrd.put(key, i);
+            final RolapSchema.PhysColumn pc = colByKey.get(key);
+            types.add(
+                pc != null
+                    ? pc.getInternalType()
+                    : SqlStatement.Type.OBJECT);
+        }
+
+        // Per target, build the column layout for every level root -> leaf.
+        for (Target t : partialTargets) {
+            final ColumnLayoutBuilder clb = new ColumnLayoutBuilder();
+            final RolapCubeLevel leaf = t.getLevel();
+            final List<? extends RolapCubeLevel> levels =
+                leaf.getHierarchy().getLevelList();
+            for (int i = 0; i <= leaf.getDepth(); i++) {
+                final RolapCubeLevel cur = levels.get(i);
+                if (cur.isAll()) {
+                    continue;
+                }
+                final LevelLayoutBuilder llb = clb.createLayoutFor(cur);
+                final RolapAttribute attr = cur.getAttribute();
+                for (RolapSchema.PhysColumn c : attr.getOrderByList()) {
+                    final Integer o = projOrd.get(projKey(c));
+                    if (o != null) {
+                        llb.orderByOrdinalList.add(o);
+                    }
+                }
+                for (RolapSchema.PhysColumn c : attr.getKeyList()) {
+                    final Integer o = projOrd.get(projKey(c));
+                    if (o != null) {
+                        llb.keyOrdinalList.add(o);
+                    }
+                }
+                final Integer nameO = projOrd.get(projKey(attr.getNameExp()));
+                if (nameO != null) {
+                    llb.nameOrdinal = nameO;
+                }
+                final Integer capO =
+                    projOrd.get(projKey(attr.getCaptionExp()));
+                if (capO != null) {
+                    llb.captionOrdinal = capO;
+                }
+            }
+            t.setColumnLayout(clb.toLayout());
+        }
+        return Pair.of(sql, types);
+    }
+
+    /** Collect every projectable column of a level's hierarchy (root→leaf)
+     *  into {@code out}, keyed by {@link #projKey}. */
+    private static void collectLevelColumns(
+        RolapCubeLevel leaf,
+        Map<String, RolapSchema.PhysColumn> out)
+    {
+        final List<? extends RolapCubeLevel> levels =
+            leaf.getHierarchy().getLevelList();
+        for (int i = 0; i <= leaf.getDepth(); i++) {
+            final RolapCubeLevel cur = levels.get(i);
+            if (cur.isAll()) {
+                continue;
+            }
+            final RolapAttribute attr = cur.getAttribute();
+            for (RolapSchema.PhysColumn c : attr.getKeyList()) {
+                putCol(out, c);
+            }
+            for (RolapSchema.PhysColumn c : attr.getOrderByList()) {
+                putCol(out, c);
+            }
+            putCol(out, attr.getNameExp());
+            putCol(out, attr.getCaptionExp());
+        }
+    }
+
+    private static void putCol(
+        Map<String, RolapSchema.PhysColumn> out, RolapSchema.PhysColumn c)
+    {
+        final String k = projKey(c);
+        if (k != null) {
+            out.put(k, c);
+        }
+    }
+
     private void prepareTuples(
         Dialect dialect,
         DataSource dataSource,
@@ -556,6 +698,7 @@ public class SqlTupleReader implements TupleReader {
                 // reads and fail with a clear message (instead of a cryptic
                 // AssertionError deep in the path builder). Legacy can never
                 // do it; the Calcite bridge read is the next increment.
+                Target bridgeTarget = null;
                 for (Target t : partialTargets) {
                     if (t.level != null && isBridgedLevel(t.level)) {
                         if (!MondrianBackend.current().isCalcite()) {
@@ -565,17 +708,23 @@ public class SqlTupleReader implements TupleReader {
                                 + "' requires the Calcite backend "
                                 + "(set mondrian.backend=calcite).");
                         }
-                        throw Util.newError(
-                            "Calcite bridge tuple-read for dimension '"
-                            + t.level.getDimension().getName()
-                            + "' is not yet implemented (#107 Phase 3).");
+                        bridgeTarget = t;
+                        break;
                     }
                 }
 
+                String sql;
+                List<SqlStatement.Type> types;
+                if (bridgeTarget != null) {
+                    final Pair<String, List<SqlStatement.Type>> bridge =
+                        makeBridgeCalciteSql(dataSource, partialTargets);
+                    sql = bridge.left;
+                    types = bridge.right;
+                } else {
                 final Pair<String, List<SqlStatement.Type>> pair =
                     makeLevelMembersSql(dialect);
-                String sql = pair.left;
-                List<SqlStatement.Type> types = pair.right;
+                sql = pair.left;
+                types = pair.right;
                 assert sql != null && !sql.equals("");
 
                 // Under backend=calcite, the Calcite path owns the SQL
@@ -684,6 +833,7 @@ public class SqlTupleReader implements TupleReader {
                     }
                     // planner == null => dialect not in Calcite map; fall
                     // back to the legacy sql string built above.
+                }
                 }
 
                 stmt = RolapUtil.executeQuery(

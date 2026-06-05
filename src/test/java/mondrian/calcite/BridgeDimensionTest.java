@@ -238,7 +238,6 @@ public class BridgeDimensionTest {
     // ---- acceptance tests for Phases 3-4 (bridge read + aggregate) ----
 
     /** fullCount: each member counted in full, deduped per account grain. */
-    @Disabled("enabled when the Calcite bridge read/aggregate lands (#107 P3-4)")
     @Test
     public void fullCountBalanceByCustomer() {
         Map<String, Double> m = rowMap(
