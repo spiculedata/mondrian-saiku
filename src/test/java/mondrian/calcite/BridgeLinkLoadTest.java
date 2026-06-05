@@ -17,6 +17,7 @@ import mondrian.rolap.RolapCube;
 import mondrian.rolap.RolapCubeDimension;
 import mondrian.rolap.RolapMeasureGroup;
 import mondrian.rolap.RolapSchema;
+import mondrian.rolap.RolapStar;
 import mondrian.rolap.RolapConnectionProperties;
 import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
@@ -175,6 +176,54 @@ public class BridgeLinkLoadTest {
                 mg[0].getBridgeInfo(dim[0]);
             assertNotNull(info, "bridge allocation recorded");
             assertFalse(info.weighted, "default allocation is fullCount");
+        } finally {
+            conn.close();
+        }
+    }
+
+    private static RolapStar.Table findStarTable(
+        RolapStar.Table t, String alias)
+    {
+        if (t.getRelation().getAlias().equals(alias)) {
+            return t;
+        }
+        for (RolapStar.Table c : t.getChildren()) {
+            RolapStar.Table f = findStarTable(c, alias);
+            if (f != null) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    /** Phase 2: the bridge dimension's table is registered in the star,
+     *  reachable via the bridge, with the fact→bridge hop flagged fan-out. */
+    @Test
+    public void bridgePathRegistersInStarAsFanOut() {
+        String bridge =
+            "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+            + " factForeignKeyColumn='account_id'"
+            + " bridgeFactKeyColumn='account_id'"
+            + " bridgeDimensionKeyColumn='customer_id'/>";
+        Connection conn = connect(schema(FACT_KEY, bridge));
+        try {
+            RolapMeasureGroup[] mg = new RolapMeasureGroup[1];
+            RolapCubeDimension[] dim = new RolapCubeDimension[1];
+            bridgePath(conn, mg, dim);
+            RolapStar.Table customer =
+                findStarTable(mg[0].getStar().getFactTable(), "dim_customer");
+            assertNotNull(
+                customer,
+                "dim_customer is registered in the star via the bridge");
+            RolapSchema.PhysPath p = customer.getPath();
+            assertEquals(3, p.hopList.size(), "fact->bridge->dim star path");
+            assertTrue(
+                p.hopList.get(1).link.oneToMany,
+                "fact->bridge hop in the star path is fan-out");
+            assertEquals(
+                "account_owner",
+                p.hopList.get(1).relation.getAlias(),
+                "intermediate is the bridge table");
         } finally {
             conn.close();
         }
