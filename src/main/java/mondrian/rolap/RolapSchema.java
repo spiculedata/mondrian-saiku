@@ -2064,6 +2064,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public final PhysRelation targetRelation;
         final List<PhysColumn> columnList;
         public final String sql;
+        /**
+         * True when this hop fans out — the source key is non-unique, so a
+         * single target (e.g. fact) row joins to many source (e.g. bridge)
+         * rows. False for ordinary many-to-one links (the default, so every
+         * pre-existing link is unchanged). Set only on the fact→bridge hop
+         * of a {@code <BridgeLink>} (#107); read by the Calcite backend to
+         * apply a fan-out-safe aggregate (#103).
+         */
+        public final boolean oneToMany;
 
         /**
          * Creates a link from {@code targetTable} to {@code sourceTable} over
@@ -2078,9 +2087,21 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysRelation targetRelation,
             List<PhysColumn> columnList)
         {
+            this(sourceKey, targetRelation, columnList, false);
+        }
+
+        /** As {@link #PhysLink(PhysKey, PhysRelation, List)} but with an
+         *  explicit fan-out (one-to-many) flag. */
+        public PhysLink(
+            PhysKey sourceKey,
+            PhysRelation targetRelation,
+            List<PhysColumn> columnList,
+            boolean oneToMany)
+        {
             this.sourceKey = sourceKey;
             this.targetRelation = targetRelation;
             this.columnList = columnList;
+            this.oneToMany = oneToMany;
             assert columnList.size() == sourceKey.columnList.size()
                 : columnList + " vs. " + sourceKey.columnList;
             for (PhysColumn column : columnList) {
@@ -2660,9 +2681,21 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysKey sourceKey,
             List<PhysColumn> columnList)
         {
+            return add(sourceKey, columnList, false);
+        }
+
+        /** As {@link #add(PhysKey, List)} but marks the new hop's link as
+         *  fan-out (one-to-many) — used for the fact→bridge hop of a
+         *  {@code <BridgeLink>} (#107). */
+        public PhysPathBuilder add(
+            PhysKey sourceKey,
+            List<PhysColumn> columnList,
+            boolean oneToMany)
+        {
             final PhysHop prevHop = hopList.get(hopList.size() - 1);
             add(
-                new PhysLink(sourceKey, prevHop.relation, columnList),
+                new PhysLink(
+                    sourceKey, prevHop.relation, columnList, oneToMany),
                 sourceKey.relation,
                 true);
             return this;
