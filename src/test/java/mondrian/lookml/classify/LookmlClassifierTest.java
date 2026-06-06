@@ -871,6 +871,76 @@ class LookmlClassifierTest {
     assertEquals(Classification.CLEAN,
         record(r, "customers.c").classification());
   }
+
+  // --- #115 gap 6: un-parseable sql_on join → DEGRADE note --------------
+
+  /** A star-eligible join whose sql_on cannot be reduced to a single
+   * fact/dimension key pair (a multi-column / expression condition) DEGRADEs
+   * with DEGRADE_JOIN_SQL_ON_UNPARSEABLE instead of vanishing silently (#115). */
+  @Test void unparseableSqlOnJoinDegrades() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: LOWER(${orders.region}) = LOWER('x') ;; }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:orders.join:users");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+    assertEquals(Classification.DEGRADE, join.classification());
+    // The explore itself still classifies (star-eligible, left_outer).
+    assertEquals(Classification.CLEAN,
+        record(r, "explore:orders").classification());
+  }
+
+  /** A resolvable single-key join records NO unparseable-join DEGRADE. */
+  @Test void resolvableSqlOnJoinHasNoDegradeNote() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    assertTrue(r.records().stream().noneMatch(rec ->
+            rec.reasonCode() == ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE),
+        () -> r.records().toString());
+  }
+
+  // --- #115 gap 2: unknown value_format_name → DEGRADE note ------------
+
+  /** A measure with an unknown value_format_name DEGRADEs; a known preset
+   * stays CLEAN (#115). */
+  @Test void unknownValueFormatNameDegrades() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: known { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: usd }\n"
+        + "  measure: unknown { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: weird_custom }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    final ClassificationResult r = classify(lookml);
+    assertEquals(Classification.CLEAN, record(r, "f.known").classification());
+    assertEquals(ReasonCode.DEGRADE_VALUE_FORMAT_NAME_UNKNOWN,
+        record(r, "f.unknown").reasonCode());
+  }
 }
 
 // End LookmlClassifierTest.java

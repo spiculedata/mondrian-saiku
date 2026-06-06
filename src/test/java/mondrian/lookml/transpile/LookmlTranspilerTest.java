@@ -62,14 +62,21 @@ public class LookmlTranspilerTest {
   private static final String[] DDL = {
     "DROP TABLE IF EXISTS \"orders\"",
     "DROP TABLE IF EXISTS \"users\"",
+    "DROP TABLE IF EXISTS \"payments\"",
     "CREATE TABLE \"users\" (\"user_id\" INTEGER, \"country\" VARCHAR(8))",
     "CREATE TABLE \"orders\" (\"order_id\" INTEGER, \"user_id\" INTEGER,"
         + " \"amount\" INTEGER, \"status\" VARCHAR(16))",
+    // payments: a second fact conformed by the same users (country) dimension.
+    "CREATE TABLE \"payments\" (\"payment_id\" INTEGER, \"user_id\" INTEGER,"
+        + " \"paid\" INTEGER)",
     "INSERT INTO \"users\" VALUES (10,'GB'),(20,'GB'),(30,'US')",
     "INSERT INTO \"orders\" VALUES"
         + " (1,10,100,'complete'),(2,10,200,'complete'),"
         + " (3,20,50,'cancelled'),(4,30,400,'complete'),"
         + " (5,30,250,'cancelled')",
+    // payments by user: GB users (10,20) → 30+70+20 = 120; US user (30) → 80.
+    "INSERT INTO \"payments\" VALUES"
+        + " (1,10,30),(2,10,70),(3,20,20),(4,30,80)",
   };
 
   /** The core fixture: single-base star, two clean measures + a filtered
@@ -123,6 +130,10 @@ public class LookmlTranspilerTest {
   }
 
   private static Connection connect(String catalogXml) {
+    return connect(catalogXml, null);
+  }
+
+  private static Connection connect(String catalogXml, String role) {
     Util.PropertyList props = new Util.PropertyList();
     props.put("Provider", "mondrian");
     props.put(RolapConnectionProperties.Jdbc.name(), H2_URL);
@@ -130,6 +141,9 @@ public class LookmlTranspilerTest {
     props.put(RolapConnectionProperties.JdbcUser.name(), "sa");
     props.put(RolapConnectionProperties.JdbcPassword.name(), "");
     props.put("UseSchemaPool", "false");
+    if (role != null) {
+      props.put(RolapConnectionProperties.Role.name(), role);
+    }
     props.put(RolapConnectionProperties.CatalogContent.name(), catalogXml);
     return DriverManager.getConnection(props, null, null);
   }
@@ -600,6 +614,283 @@ public class LookmlTranspilerTest {
     assertTrue(result.yaml().contains("revenue"), result.yaml());
     // the fact table declares its grain key (order_id) in the physical schema.
     assertTrue(result.yaml().contains("order_id"), result.yaml());
+  }
+
+  // --- #115 gap 1: dimension-key access_filter → member-grant Role ---------
+
+  /** An access_filter on a modelled dimension key emits a Role with a
+   * member-level HierarchyGrant, and a static {@code value:} bakes the granted
+   * member. Two users (two generated roles) see only their granted country's
+   * data (#115). orders→users star: GB total = 350, US total = 650. */
+  @Test
+  public void dimensionKeyAccessFilterRestrictsToGrantedMembers() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: total_amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders_gb {\n"
+        + "  from: orders\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "  access_filter: { field: users.country value: \"GB\" }\n"
+        + "}\n"
+        + "explore: orders_us {\n"
+        + "  from: orders\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "  access_filter: { field: users.country value: \"US\" }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    // A member-grant role is emitted (not a predicate grant) for the dim key.
+    assertTrue(yaml.contains("orders_gb_dim_security"), yaml);
+    assertTrue(yaml.contains("hierarchies:"), yaml);
+    assertTrue(yaml.contains("member: \"[users].[country].[GB]\""), yaml);
+    assertTrue(yaml.contains("member: \"[users].[country].[US]\""), yaml);
+    assertFalse(yaml.contains("predicate_grants:"), yaml);
+
+    String xml = result.toXml();
+    // GB role sees only GB (350); US is hidden.
+    Connection gb = connect(xml, "orders_gb_dim_security");
+    try {
+      Map<String, Double> g = grid(gb,
+          "SELECT {[Measures].[total_amount]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders_gb]");
+      assertEquals(350.0, g.get("GB|total_amount"), 0.001, g.toString());
+      assertFalse(g.containsKey("US|total_amount"), g.toString());
+    } finally {
+      gb.close();
+    }
+    // US role sees only US (650); GB is hidden.
+    Connection us = connect(xml, "orders_us_dim_security");
+    try {
+      Map<String, Double> g = grid(us,
+          "SELECT {[Measures].[total_amount]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders_us]");
+      assertEquals(650.0, g.get("US|total_amount"), 0.001, g.toString());
+      assertFalse(g.containsKey("GB|total_amount"), g.toString());
+    } finally {
+      us.close();
+    }
+  }
+
+  // --- #115 gap 5: conformed multi-base → one cube, multiple MeasureGroups -
+
+  /** A conformed two-fact explore (orders + payments, both joined to users)
+   * becomes one cube with a MeasureGroup per fact base over the shared
+   * conformed country dimension. A measure from each base slices by country
+   * (#115). orders total by country: GB=350, US=650; payments: GB=120, US=80. */
+  @Test
+  public void conformedMultiBaseEmitsMeasureGroupPerFact() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: total_amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: payments {\n"
+        + "  sql_table_name: payments ;;\n"
+        + "  measure: total_paid { type: sum sql: ${TABLE}.paid ;; }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: sales {\n"
+        + "  from: orders\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "  join: payments { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${payments.user_id} = ${users.user_id} ;; }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    // One cube, two measure groups (orders + payments) over conformed users.
+    assertTrue(yaml.contains("name: \"orders\""), yaml);
+    assertTrue(yaml.contains("name: \"payments\""), yaml);
+    assertTrue(yaml.contains("total_amount"), yaml);
+    assertTrue(yaml.contains("total_paid"), yaml);
+    // Both fact groups link to the conformed users dimension.
+    assertTrue(yaml.contains("dimension: \"users\""), yaml);
+
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> orders = grid(conn,
+          "SELECT {[Measures].[total_amount]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [sales]");
+      assertEquals(350.0, orders.get("GB|total_amount"), 0.001,
+          orders.toString());
+      assertEquals(650.0, orders.get("US|total_amount"), 0.001,
+          orders.toString());
+      Map<String, Double> pay = grid(conn,
+          "SELECT {[Measures].[total_paid]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [sales]");
+      assertEquals(120.0, pay.get("GB|total_paid"), 0.001, pay.toString());
+      assertEquals(80.0, pay.get("US|total_paid"), 0.001, pay.toString());
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- #115 gap 4: drill_fields → drillthrough RETURN column set -----------
+
+  /** An explore's {@code drill_fields} maps to the M4 drillthrough RETURN set,
+   * carried as a cube-level annotation (M4 has no &lt;DrillThrough&gt; element).
+   * The set is asserted and the cube still loads (#115). */
+  @Test
+  public void drillFieldsEmitDrillthroughReturnSet() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+        + "  measure: total_amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  drill_fields: [status, total_amount]\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    assertTrue(yaml.contains("annotations:"), yaml);
+    assertTrue(yaml.contains("drill_fields: \"status,total_amount\""), yaml);
+    assertTrue(result.provenance().m4Path("explore:orders.drill_fields")
+        .isPresent(), result.provenance().toString());
+    // The cube still loads and queries.
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[total_amount]} ON COLUMNS,\n"
+          + " {[status].[status].Members} ON ROWS\n"
+          + "FROM [orders]");
+      assertEquals(700.0, g.get("complete|total_amount"), 0.001, g.toString());
+    } finally {
+      conn.close();
+    }
+  }
+
+  /** A view-level {@code drill_fields} (no explore-level one) is used as the
+   * cube's drillthrough RETURN set (#115). */
+  @Test
+  public void viewLevelDrillFieldsUsedWhenExploreHasNone() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+        + "  measure: total_amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "  drill_fields: [status]\n"
+        + "}\n"
+        + "explore: orders { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("drill_fields: \"status\""), yaml);
+  }
+
+  // --- #115 gap 3: derived table → <Query> SQL-backed physical table ------
+
+  /** A derived_table view emits a <Query> physical table (SQL-backed), and a
+   * dimension/measure over it loads and queries end-to-end (#115). The derived
+   * SQL aggregates orders by status; a sum over it matches hand totals. */
+  @Test
+  public void derivedTableEmitsQueryAndLoads() {
+    String lookml =
+        "view: order_summary {\n"
+        + "  derived_table: {\n"
+        + "    sql: SELECT \"status\" AS \"status\","
+        + " SUM(\"amount\") AS \"total\""
+        + " FROM \"orders\" GROUP BY \"status\" ;;\n"
+        + "    datagroup_trigger: nightly\n"
+        + "  }\n"
+        + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+        + "  measure: total_sum { type: sum sql: ${TABLE}.total ;; }\n"
+        + "}\n"
+        + "explore: order_summary { }\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    // A <Query> physical table (not a plain table) with the derived SQL.
+    assertTrue(yaml.contains("queries:"), yaml);
+    assertTrue(yaml.contains("alias: \"order_summary\""), yaml);
+    assertTrue(yaml.contains("expression:"), yaml);
+    assertTrue(yaml.contains("GROUP BY"), yaml);
+    // Persistence policy dropped → DEGRADE note recorded.
+    assertTrue(result.classification()
+            .withClassification(Classification.DEGRADE).stream()
+            .anyMatch(r -> r.qualifiedName().equals("view:order_summary")),
+        result.classification().toString());
+
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[total_sum]} ON COLUMNS,\n"
+          + " {[status].[status].Members} ON ROWS\n"
+          + "FROM [order_summary]");
+      // orders grouped by status: complete = 100+200+400 = 700;
+      // cancelled = 50+250 = 300.
+      assertEquals(700.0, g.get("complete|total_sum"), 0.001, g.toString());
+      assertEquals(300.0, g.get("cancelled|total_sum"), 0.001, g.toString());
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- #115 gap 2: Looker named formats → Mondrian format_string ----------
+
+  /** A measure's {@code value_format_name} (usd / percent_2 / decimal_0 / gbp)
+   * is translated to the Mondrian format-string mask, while a literal
+   * {@code value_format} mask still passes straight through (#115). */
+  @Test
+  public void namedValueFormatsTranslateToMondrianMasks() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: m_usd { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: usd }\n"
+        + "  measure: m_usd0 { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: usd_0 }\n"
+        + "  measure: m_pct { type: average sql: ${TABLE}.amount ;;"
+        + "    value_format_name: percent_2 }\n"
+        + "  measure: m_dec { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: decimal_0 }\n"
+        + "  measure: m_gbp { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: gbp }\n"
+        + "  measure: m_lit { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format: \"0.000\" }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("format_string: \"$#,##0.00\""), yaml);
+    assertTrue(yaml.contains("format_string: \"$#,##0\""), yaml);
+    assertTrue(yaml.contains("format_string: \"0.00%\""), yaml);
+    assertTrue(yaml.contains("format_string: \"#,##0\""), yaml);
+    assertTrue(yaml.contains("format_string: \"\\xA3#,##0.00\"")
+        || yaml.contains("format_string: \"£#,##0.00\""), yaml);
+    // literal value_format mask still passes straight through.
+    assertTrue(yaml.contains("format_string: \"0.000\""), yaml);
+  }
+
+  /** An unknown {@code value_format_name} is kept verbatim as the
+   * format_string and the field DEGRADEs (#115). */
+  @Test
+  public void unknownNamedValueFormatKeptVerbatimAndDegrades() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: m { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: my_custom_format }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    TranspileResult result = transpile(lookml);
+    assertTrue(result.yaml().contains("format_string: \"my_custom_format\""),
+        result.yaml());
+    assertTrue(result.classification()
+            .withClassification(Classification.DEGRADE).stream()
+            .anyMatch(r -> r.qualifiedName().equals("f.m")),
+        result.classification().toString());
   }
 
   // --- Test 6: golden-compare the core YAML (stable shape) ----------------

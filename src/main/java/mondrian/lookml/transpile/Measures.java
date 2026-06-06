@@ -165,11 +165,18 @@ final class Measures {
         .orElse("");
   }
 
-  /** {@code value_format} (a literal) wins over {@code value_format_name} (a
-   * named format) for the M4 {@code format_string}. */
+  /** The M4 {@code format_string}: a literal {@code value_format} mask wins;
+   * else a {@code value_format_name} named preset is translated to its Mondrian
+   * mask via {@link LookerFormats} (#115). An unknown named format is kept
+   * verbatim (the classifier records the DEGRADE note). */
   private static Optional<String> formatString(LookmlNode measure) {
-    return measure.stringValue(TranspileKeywords.VALUE_FORMAT)
-        .or(() -> measure.stringValue(TranspileKeywords.VALUE_FORMAT_NAME));
+    final Optional<String> literal =
+        measure.stringValue(TranspileKeywords.VALUE_FORMAT);
+    if (literal.isPresent()) {
+      return literal;
+    }
+    return measure.stringValue(TranspileKeywords.VALUE_FORMAT_NAME)
+        .map(name -> LookerFormats.mondrianMask(name).orElse(name));
   }
 
   /** Reads {@code filters: [dim: "value"]} as equality pairs. A filter whose

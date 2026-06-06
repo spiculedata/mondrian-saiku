@@ -35,6 +35,7 @@ final class TranspileKeywords {
   static final String PARAMETER = "parameter";
   static final String ACCESS_FILTER = "access_filter";
   static final String DERIVED_TABLE = "derived_table";
+  static final String DRILL_FIELDS = "drill_fields";
 
   // --- scalar keys --------------------------------------------------------
   static final String TYPE = "type";
