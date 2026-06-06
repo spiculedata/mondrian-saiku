@@ -66,6 +66,12 @@ public final class PlannerRequest {
          *  ({@code warehouse_sales - warehouse_cost}). Mutually
          *  exclusive with {@link #literal} and {@link #caseExpr}. */
         public final ArithExpr arithExpr;
+        /** #107 weighted bridge: when non-null, the measure's operand
+         *  (whatever its shape — column / CASE / arithmetic / literal) is
+         *  multiplied by this bridge weight column before aggregating, i.e.
+         *  {@code SUM(operand × weight)}. Orthogonal to the other operand
+         *  fields. Only set for weighted bridges. */
+        public final Column weightColumn;
         /** Sentinel value used in {@link #literal} to represent SQL NULL,
          *  distinguishing it from the field being unset (which is also
          *  Java null). */
@@ -94,6 +100,14 @@ public final class PlannerRequest {
             AggFn fn, Column column, String alias, boolean distinct,
             Object literal, CaseExpr caseExpr, ArithExpr arithExpr)
         {
+            this(fn, column, alias, distinct, literal, caseExpr, arithExpr,
+                null);
+        }
+        public Measure(
+            AggFn fn, Column column, String alias, boolean distinct,
+            Object literal, CaseExpr caseExpr, ArithExpr arithExpr,
+            Column weightColumn)
+        {
             this.fn = fn;
             this.column = column;
             this.alias = alias;
@@ -101,6 +115,16 @@ public final class PlannerRequest {
             this.literal = literal;
             this.caseExpr = caseExpr;
             this.arithExpr = arithExpr;
+            this.weightColumn = weightColumn;
+        }
+
+        /** Copy of {@code base} that multiplies its operand by
+         *  {@code weightColumn} when aggregating — the weighted-bridge form
+         *  of any measure shape (#107). */
+        public static Measure weighted(Measure base, Column weightColumn) {
+            return new Measure(
+                base.fn, base.column, base.alias, base.distinct,
+                base.literal, base.caseExpr, base.arithExpr, weightColumn);
         }
     }
 
@@ -443,6 +467,15 @@ public final class PlannerRequest {
      *  ignored. Used for cross-measure-group tuple reads — the M4
      *  equivalent of the legacy virtual-cube UNION across fact tables. */
     public final List<PlannerRequest> unionArms;
+    /** #103 symmetric aggregate: when non-null, this aggregation fans out
+     *  over a one-to-many join (a bridge), so the renderer must de-duplicate
+     *  on the fact grain before aggregating — {@code SUM} over a
+     *  {@code SELECT DISTINCT groupKeys, grain, measureCols} subquery —
+     *  instead of a naive {@code SUM} that would double-count fanned rows.
+     *  The column is the fact-grain key (the fact table's primary key). Only
+     *  set for full-count bridges with plain real-column measures; weighted
+     *  bridges roll up additively and never set this. */
+    public final Column symmetricGrainColumn;
 
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
@@ -460,6 +493,7 @@ public final class PlannerRequest {
         this.universalFalse = b.universalFalse;
         this.limit = b.limit;
         this.unionArms = List.copyOf(b.unionArms);
+        this.symmetricGrainColumn = b.symmetricGrainColumn;
         if (this.distinct
             && (!this.measures.isEmpty() || !this.groupBy.isEmpty()))
         {
@@ -510,6 +544,7 @@ public final class PlannerRequest {
         private boolean universalFalse;
         private int limit;
         private final List<PlannerRequest> unionArms = new ArrayList<>();
+        private Column symmetricGrainColumn;
 
         private Builder(String factTable) {
             if (factTable == null || factTable.isEmpty()) {
@@ -527,6 +562,12 @@ public final class PlannerRequest {
         public Builder addJoin(Join j) { joins.add(j); return this; }
         public Builder addGroupBy(Column c) { groupBy.add(c); return this; }
         public Builder addMeasure(Measure m) { measures.add(m); return this; }
+        /** #103: mark this aggregation as fan-out-safe over the given fact
+         *  grain key — see {@link PlannerRequest#symmetricGrainColumn}. */
+        public Builder symmetricGrainColumn(Column c) {
+            this.symmetricGrainColumn = c;
+            return this;
+        }
         public Builder addProjection(Column c) {
             projections.add(c);
             return this;

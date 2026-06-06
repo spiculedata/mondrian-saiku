@@ -109,11 +109,20 @@ public class GdeltSchemaReproTest {
         + " keyColumn='goldstein_bucket'/>\n"
         + "        </Attributes>\n"
         + "      </Dimension>\n"
+        + "      <Dimension name='Source Name' table='fact_mentions'"
+        + " key='Source Name'>\n"
+        + "        <Attributes>\n"
+        + "          <Attribute name='Source Name'"
+        + " keyColumn='mentionsourcename'/>\n"
+        + "        </Attributes>\n"
+        + "      </Dimension>\n"
         + "    </Dimensions>\n"
         + "    <MeasureGroups>\n"
         + "      <MeasureGroup name='Events' table='fact_events'>\n"
         + "        <Measures>\n"
         + "          <Measure name='Event Count' column='event_count'"
+        + " aggregator='sum'/>\n"
+        + "          <Measure name='Mentions' column='num_mentions'"
         + " aggregator='sum'/>\n"
         + "          <Measure name='Avg Tone' column='avg_tone'"
         + " aggregator='avg'/>\n"
@@ -128,6 +137,7 @@ public class GdeltSchemaReproTest {
         + "          <ForeignKeyLink dimension='Action Country'"
         + " foreignKeyColumn='action_country'/>\n"
         + "          <FactLink dimension='Goldstein Bucket'/>\n"
+        + "          <NoLink dimension='Source Name'/>\n"
         + "        </DimensionLinks>\n"
         + "      </MeasureGroup>\n"
         + "      <MeasureGroup name='Mentions' table='fact_mentions'>\n"
@@ -144,6 +154,7 @@ public class GdeltSchemaReproTest {
         + " foreignKeyColumn='quadclass_key'/>\n"
         + "          <ForeignKeyLink dimension='Action Country'"
         + " foreignKeyColumn='action_country'/>\n"
+        + "          <FactLink dimension='Source Name'/>\n"
         + "          <NoLink dimension='Goldstein Bucket'/>\n"
         + "        </DimensionLinks>\n"
         + "      </MeasureGroup>\n"
@@ -170,13 +181,15 @@ public class GdeltSchemaReproTest {
         "CREATE TABLE \"dim_country\" (\"country_code\" VARCHAR(8),"
             + " \"country_name\" VARCHAR(64))",
         "CREATE TABLE \"fact_events\" (\"event_count\" INTEGER,"
+            + " \"num_mentions\" INTEGER,"
             + " \"avg_tone\" DOUBLE, \"date_key\" INTEGER,"
             + " \"event_root_code\" VARCHAR(8), \"quadclass_key\" INTEGER,"
             + " \"action_country\" VARCHAR(8),"
             + " \"goldstein_bucket\" VARCHAR(16))",
         "CREATE TABLE \"fact_mentions\" (\"mention_count\" INTEGER,"
             + " \"mention_date_key\" INTEGER, \"event_root_code\" VARCHAR(8),"
-            + " \"quadclass_key\" INTEGER, \"action_country\" VARCHAR(8))",
+            + " \"quadclass_key\" INTEGER, \"action_country\" VARCHAR(8),"
+            + " \"mentionsourcename\" VARCHAR(64))",
         // dims
         "INSERT INTO \"dim_date\" VALUES (20150101, 2015, '2015')",
         "INSERT INTO \"dim_date\" VALUES (20160101, 2016, '2016')",
@@ -189,14 +202,16 @@ public class GdeltSchemaReproTest {
         "INSERT INTO \"dim_country\" VALUES ('GB', 'United Kingdom')",
         // fact_events: event roots 010, 020 appear (not 030)
         "INSERT INTO \"fact_events\""
-            + " VALUES (5, 1.5, 20150101, '010', 1, 'US', 'pos')",
+            + " VALUES (5, 12, 1.5, 20150101, '010', 1, 'US', 'pos')",
         "INSERT INTO \"fact_events\""
-            + " VALUES (3, -2.0, 20150101, '020', 2, 'GB', 'neg')",
+            + " VALUES (3, 8, -2.0, 20150101, '020', 2, 'GB', 'neg')",
         "INSERT INTO \"fact_events\""
-            + " VALUES (7, 0.5, 20160101, '010', 1, 'US', 'pos')",
-        // fact_mentions: event roots 010, 030 appear
-        "INSERT INTO \"fact_mentions\" VALUES (9, 20150101, '010', 1, 'US')",
-        "INSERT INTO \"fact_mentions\" VALUES (4, 20160101, '030', 2, 'GB')",
+            + " VALUES (7, 20, 0.5, 20160101, '010', 1, 'US', 'pos')",
+        // fact_mentions: source names BBC, Reuters
+        "INSERT INTO \"fact_mentions\""
+            + " VALUES (9, 20150101, '010', 1, 'US', 'BBC')",
+        "INSERT INTO \"fact_mentions\""
+            + " VALUES (4, 20160101, '030', 2, 'GB', 'Reuters')",
     };
 
     private static Connection legacyConn;
@@ -323,6 +338,61 @@ public class GdeltSchemaReproTest {
         assertEquals(
             0L, CalcitePlannerAdapters.tupleReadUnsupportedCount(),
             "cross-measure-group tuple read must not fall back to legacy");
+    }
+
+    /**
+     * Events-group measures ({@code Event Count}, {@code Mentions}) sliced
+     * by {@code Source Name} — a degenerate dimension that FactLinks only to
+     * {@code fact_mentions}. The measures have no Source Name relationship,
+     * so both backends correctly return an <em>empty</em> result. This is
+     * NOT a Calcite regression; the Saiku grid looking empty is expected.
+     * (The fix is to use a Mentions-group measure — see the next test.)
+     */
+    @Test
+    public void eventsMeasureByMentionsDimensionIsEmptyOnBoth() {
+        assertGridParity(
+            "events-by-source",
+            "SELECT NON EMPTY CrossJoin("
+            + "{[Measures].[Event Count], [Measures].[Mentions]}, "
+            + "[Source Name].[Source Name].[Source Name].Members) ON COLUMNS,\n"
+            + "  NON EMPTY [Date].[Calendar].[Year].Members ON ROWS\n"
+            + "FROM [GDELT]");
+    }
+
+    /**
+     * The shape that does return data: a Mentions-group measure
+     * ({@code Mention Count}) by the {@code Source Name} (Mentions-fact)
+     * dimension and conformed Date. Calcite must match legacy.
+     */
+    @Test
+    public void mentionsMeasureBySourceNameMatchesLegacy() {
+        assertGridParity(
+            "mentioncount-by-source",
+            "SELECT NON EMPTY [Source Name].[Source Name].[Source Name]"
+            + ".Members ON COLUMNS,\n"
+            + "  NON EMPTY [Date].[Calendar].[Year].Members ON ROWS\n"
+            + "FROM [GDELT] WHERE [Measures].[Mention Count]");
+    }
+
+    /** Assert legacy and Calcite produce the identical result grid. */
+    private void assertGridParity(String label, String mdx) {
+        System.setProperty("mondrian.backend", "legacy");
+        String legacy;
+        try {
+            legacy = TestContext.toString(
+                legacyConn.execute(legacyConn.parseQuery(mdx)));
+        } finally {
+            System.clearProperty("mondrian.backend");
+        }
+        System.setProperty("mondrian.backend", "calcite");
+        String calcite;
+        try {
+            calcite = TestContext.toString(
+                calciteConn.execute(calciteConn.parseQuery(mdx)));
+        } finally {
+            System.clearProperty("mondrian.backend");
+        }
+        assertEquals(legacy, calcite, label + ": Calcite must match legacy");
     }
 
     /** Named-set on the Date dimension (different FK column per group). */

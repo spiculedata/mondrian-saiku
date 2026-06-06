@@ -58,6 +58,48 @@ public class RolapMeasureGroup {
         new HashMap<RolapCubeDimension, RolapSchema.PhysPath>();
 
     /**
+     * Allocation semantics for dimensions reached through a bridge table
+     * ({@code <BridgeLink>}, #107). Empty unless a cube uses bridge links;
+     * read by the Calcite backend to emit the fan-out-safe aggregate (#103).
+     */
+    private final Map<RolapCubeDimension, BridgeInfo> bridgeInfoMap =
+        new HashMap<RolapCubeDimension, BridgeInfo>();
+
+    /** How measures aggregate across a bridge: full-count (deduped per fact
+     *  grain) or weighted (split by a weight column). */
+    public static final class BridgeInfo {
+        public final boolean weighted;
+        /** Bridge weight column; non-null iff {@link #weighted}. */
+        public final RolapSchema.PhysColumn weightColumn;
+        public BridgeInfo(
+            boolean weighted, RolapSchema.PhysColumn weightColumn)
+        {
+            this.weighted = weighted;
+            this.weightColumn = weightColumn;
+        }
+    }
+
+    /** Records the bridge allocation for a dimension. */
+    public void addBridgeInfo(
+        RolapCubeDimension dimension, BridgeInfo info)
+    {
+        bridgeInfoMap.put(dimension, info);
+    }
+
+    /** Bridge allocation for a dimension, or null if it is not bridged. */
+    public BridgeInfo getBridgeInfo(RolapCubeDimension dimension) {
+        return bridgeInfoMap.get(dimension);
+    }
+
+    /** All bridge allocations recorded for this measure group (empty if it
+     *  has no {@code <BridgeLink>}). Read by the Calcite backend to resolve
+     *  the weighted-bridge allocation at segment-load time, where only the
+     *  star (shared across cubes) and cube name are in hand. */
+    public java.util.Collection<BridgeInfo> getBridgeInfos() {
+        return bridgeInfoMap.values();
+    }
+
+    /**
      * Measure which computes the number of rows in the fact table. Used for
      * value allocation during writeback.
      */

@@ -3908,13 +3908,42 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
         </Array>
     </Element>
 
-    <!--
-    // TODO: Define ManyToManyDimensionLink extends DimensionLink.
-    // "The dimension table is joined to
-    // an intermediate fact table. The intermediate fact table is joined, in
-    // turn, to an intermediate dimension table to which the fact table is
-    // joined".
-    -->
+    <Element type="BridgeLink" class="DimensionLink">
+        <Doc>
+            Dimension linked to a measure group through a bridge (intermediate)
+            table, modelling a many-to-many relationship between the fact and
+            the dimension. The fact joins to the bridge on a non-unique key
+            (the one-to-many "fan-out" hop); the bridge joins to the
+            dimension's key. Measures aggregated across the bridge use the
+            allocation given by 'aggregation' ('fullCount' or 'weighted') so
+            the shared fact is not double-counted.
+
+            <p>Realises the long-standing ManyToManyDimensionLink TODO.
+            Bridge dimensions require the Calcite backend.</p>
+        </Doc>
+        <Attribute name="bridgeTable">
+            <Doc>Name of the bridge (intermediate) table.</Doc>
+        </Attribute>
+        <Attribute name="factForeignKeyColumn">
+            <Doc>Column in the fact table joined to the bridge.</Doc>
+        </Attribute>
+        <Attribute name="bridgeFactKeyColumn">
+            <Doc>Column in the bridge table joined to the fact. Non-unique —
+                this is the one-to-many fan-out hop.</Doc>
+        </Attribute>
+        <Attribute name="bridgeDimensionKeyColumn">
+            <Doc>Column in the bridge table joined to the dimension's key.</Doc>
+        </Attribute>
+        <Attribute name="aggregation">
+            <Doc>How measures aggregate across the bridge: 'fullCount'
+                (default if omitted — each member counted in full, deduped per
+                fact grain) or 'weighted' (split by weightColumn).</Doc>
+        </Attribute>
+        <Attribute name="weightColumn">
+            <Doc>Column in the bridge holding the allocation weight; required
+                when aggregation='weighted'.</Doc>
+        </Attribute>
+    </Element>
 
     <!--
     // TODO: Define ReferencedDimensionLink extends DimensionLink.

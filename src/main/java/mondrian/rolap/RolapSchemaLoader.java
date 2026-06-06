@@ -1894,6 +1894,14 @@ public class RolapSchemaLoader {
                         dimension,
                         (MondrianDef.CopyLink) xmlDimensionLink);
                 } else if (xmlDimensionLink
+                    instanceof MondrianDef.BridgeLink)
+                {
+                    addBridgeLink(
+                        fact,
+                        measureGroup,
+                        dimension,
+                        (MondrianDef.BridgeLink) xmlDimensionLink);
+                } else if (xmlDimensionLink
                     instanceof MondrianDef.NoLink)
                 {
                     // safe to ignore dimension
@@ -2570,6 +2578,126 @@ public class RolapSchemaLoader {
                 buf.toString());
         }
         return aggregator;
+    }
+
+    /**
+     * #107: link a dimension to a measure group through a bridge table,
+     * modelling a many-to-many relationship. Builds a two-hop path
+     * fact → bridge → dimension where the fact→bridge hop is flagged
+     * one-to-many (the fan-out), and records the allocation semantics
+     * (fullCount / weighted) the Calcite backend uses to keep the shared
+     * fact from being double-counted (#103).
+     */
+    private void addBridgeLink(
+        RolapSchema.PhysRelation fact,
+        RolapMeasureGroup measureGroup,
+        RolapCubeDimension dimension,
+        MondrianDef.BridgeLink xml)
+    {
+        if (xml.bridgeTable == null
+            || xml.factForeignKeyColumn == null
+            || xml.bridgeFactKeyColumn == null
+            || xml.bridgeDimensionKeyColumn == null)
+        {
+            getHandler().error(
+                "BridgeLink for dimension '" + dimension.getName()
+                + "' requires bridgeTable, factForeignKeyColumn, "
+                + "bridgeFactKeyColumn and bridgeDimensionKeyColumn",
+                xml, null);
+            return;
+        }
+
+        final RolapSchema.PhysRelation bridge =
+            getPhysRelation(xml.bridgeTable, xml, "bridgeTable");
+        if (bridge == null) {
+            return;
+        }
+        final RolapSchema.PhysColumn factFk =
+            getPhysColumn(fact, xml.factForeignKeyColumn, xml,
+                "factForeignKeyColumn");
+        final RolapSchema.PhysColumn bridgeFactKeyCol =
+            getPhysColumn(bridge, xml.bridgeFactKeyColumn, xml,
+                "bridgeFactKeyColumn");
+        final RolapSchema.PhysColumn bridgeDimKeyCol =
+            getPhysColumn(bridge, xml.bridgeDimensionKeyColumn, xml,
+                "bridgeDimensionKeyColumn");
+        if (factFk == null || bridgeFactKeyCol == null
+            || bridgeDimKeyCol == null)
+        {
+            return;
+        }
+
+        final RolapAttribute keyAttribute =
+            dimension.rolapDimension.keyAttribute;
+        if (keyAttribute == null) {
+            getHandler().error(
+                "Dimension '" + dimension.getName()
+                + "' is used in a BridgeLink but has no key attribute.",
+                xml, null);
+            return;
+        }
+        if (keyAttribute.getKeyList().size() != 1) {
+            getHandler().error(
+                "BridgeLink dimension '" + dimension.getName()
+                + "' must have a single-column key.", xml, null);
+            return;
+        }
+        final RolapSchema.PhysKey dimKey = dimension.rolapDimension.key.get();
+
+        // Allocation semantics. Default (null/blank) is fullCount.
+        final boolean weighted = "weighted".equalsIgnoreCase(xml.aggregation);
+        RolapSchema.PhysColumn weightColumn = null;
+        if (weighted) {
+            if (xml.weightColumn == null) {
+                getHandler().error(
+                    "BridgeLink dimension '" + dimension.getName()
+                    + "' has aggregation='weighted' but no weightColumn.",
+                    xml, "weightColumn");
+                return;
+            }
+            weightColumn =
+                getPhysColumn(bridge, xml.weightColumn, xml, "weightColumn");
+            if (weightColumn == null) {
+                return;
+            }
+        } else if (xml.aggregation != null
+            && !"fullCount".equalsIgnoreCase(xml.aggregation))
+        {
+            getHandler().error(
+                "BridgeLink dimension '" + dimension.getName()
+                + "' has unknown aggregation '" + xml.aggregation
+                + "' (expected 'fullCount' or 'weighted').", xml,
+                "aggregation");
+            return;
+        } else if (fact.getKeyList().isEmpty()) {
+            getHandler().error(
+                "BridgeLink dimension '" + dimension.getName()
+                + "' uses fullCount but the fact table has no <Key> "
+                + "(declare the grain primary key on the fact <Table>).",
+                xml, null);
+            return;
+        }
+
+        // Build the two-hop path: fact -> bridge (one-to-many) -> dimension.
+        final RolapSchema.PhysKey bridgeFactKey =
+            new RolapSchema.PhysKey(
+                bridge, "bridge_fact_" + xml.bridgeFactKeyColumn,
+                Collections.singletonList(bridgeFactKeyCol));
+        final RolapSchema.PhysPath path =
+            new RolapSchema.PhysPathBuilder(fact)
+                .add(
+                    bridgeFactKey,
+                    Collections.singletonList(factFk),
+                    true,          // fan-out hop: one fact row -> many bridge
+                    weightColumn)  // weighted-bridge allocation (null = full)
+                .add(dimKey, Collections.singletonList(bridgeDimKeyCol))
+                .done();
+
+        measureGroup.addLink(dimension, path);
+        dimensionPaths.put(Pair.of(measureGroup, dimension), path);
+        measureGroup.addBridgeInfo(
+            dimension,
+            new RolapMeasureGroup.BridgeInfo(weighted, weightColumn));
     }
 
     private void addForeignKeyLink(

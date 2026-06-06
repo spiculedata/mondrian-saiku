@@ -2074,6 +2074,23 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public final PhysRelation targetRelation;
         final List<PhysColumn> columnList;
         public final String sql;
+        /**
+         * True when this hop fans out — the source key is non-unique, so a
+         * single target (e.g. fact) row joins to many source (e.g. bridge)
+         * rows. False for ordinary many-to-one links (the default, so every
+         * pre-existing link is unchanged). Set only on the fact→bridge hop
+         * of a {@code <BridgeLink>} (#107); read by the Calcite backend to
+         * apply a fan-out-safe aggregate (#103).
+         */
+        public final boolean oneToMany;
+        /**
+         * Allocation weight column on a weighted {@code <BridgeLink>}
+         * (#107) — non-null only on the fan-out hop of a bridge whose
+         * aggregation is 'weighted'. The Calcite segment-load multiplies
+         * each measure by this column so a shared fact is split across its
+         * bridge members (rather than full-counted). Null otherwise.
+         */
+        public final PhysColumn weightColumn;
 
         /**
          * Creates a link from {@code targetTable} to {@code sourceTable} over
@@ -2088,9 +2105,33 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysRelation targetRelation,
             List<PhysColumn> columnList)
         {
+            this(sourceKey, targetRelation, columnList, false, null);
+        }
+
+        /** As {@link #PhysLink(PhysKey, PhysRelation, List)} but with an
+         *  explicit fan-out (one-to-many) flag. */
+        public PhysLink(
+            PhysKey sourceKey,
+            PhysRelation targetRelation,
+            List<PhysColumn> columnList,
+            boolean oneToMany)
+        {
+            this(sourceKey, targetRelation, columnList, oneToMany, null);
+        }
+
+        /** As above, with a weighted-bridge allocation weight column. */
+        public PhysLink(
+            PhysKey sourceKey,
+            PhysRelation targetRelation,
+            List<PhysColumn> columnList,
+            boolean oneToMany,
+            PhysColumn weightColumn)
+        {
             this.sourceKey = sourceKey;
             this.targetRelation = targetRelation;
             this.columnList = columnList;
+            this.oneToMany = oneToMany;
+            this.weightColumn = weightColumn;
             assert columnList.size() == sourceKey.columnList.size()
                 : columnList + " vs. " + sourceKey.columnList;
             for (PhysColumn column : columnList) {
@@ -2670,9 +2711,32 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysKey sourceKey,
             List<PhysColumn> columnList)
         {
+            return add(sourceKey, columnList, false);
+        }
+
+        /** As {@link #add(PhysKey, List)} but marks the new hop's link as
+         *  fan-out (one-to-many) — used for the fact→bridge hop of a
+         *  {@code <BridgeLink>} (#107). */
+        public PhysPathBuilder add(
+            PhysKey sourceKey,
+            List<PhysColumn> columnList,
+            boolean oneToMany)
+        {
+            return add(sourceKey, columnList, oneToMany, null);
+        }
+
+        /** As above, carrying a weighted-bridge allocation weight column. */
+        public PhysPathBuilder add(
+            PhysKey sourceKey,
+            List<PhysColumn> columnList,
+            boolean oneToMany,
+            PhysColumn weightColumn)
+        {
             final PhysHop prevHop = hopList.get(hopList.size() - 1);
             add(
-                new PhysLink(sourceKey, prevHop.relation, columnList),
+                new PhysLink(
+                    sourceKey, prevHop.relation, columnList, oneToMany,
+                    weightColumn),
                 sourceKey.relation,
                 true);
             return this;

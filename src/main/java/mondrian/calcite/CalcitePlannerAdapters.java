@@ -16,6 +16,7 @@ import mondrian.rolap.DescendantsConstraint;
 import mondrian.rolap.SqlContextConstraint;
 import mondrian.rolap.RolapAggregator;
 import mondrian.rolap.RolapAttribute;
+import mondrian.rolap.RolapCube;
 import mondrian.rolap.RolapCubeDimension;
 import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.RolapEvaluator;
@@ -3330,6 +3331,44 @@ public final class CalcitePlannerAdapters {
             throw new UnsupportedTranslation(
                 "fromSegmentLoad: no segments (no measures)");
         }
+
+        // #107 weighted bridge: if this load groups by a weighted bridge
+        // dimension (a <BridgeLink> with a weightColumn), every measure is
+        // allocated by the bridge weight — SUM(measure × weight) — rather
+        // than full-counted. The bridge table is already joined (step 1
+        // stitched the fact→bridge→dim chain), so the weight column is in
+        // scope for the arithmetic.
+        RolapSchema.PhysColumn bridgeWeight =
+            findBridgeWeightColumn(columns, segments, star);
+
+        // #103 symmetric aggregate: a full-count bridge (no weight) fans out
+        // over the bridge join, so when this load groups by a bridge-reached
+        // column the renderer must de-duplicate on the fact grain before
+        // summing — otherwise a fact row shared by several owners in the
+        // same group is double-counted (correct at the leaf today, wrong
+        // once rolled up to an intermediate bridge level). Weighted bridges
+        // roll up additively and never need this.
+        if (bridgeWeight == null) {
+            RolapSchema.PhysColumn grain = findBridgeFanoutGrain(columns);
+            if (grain instanceof RolapSchema.PhysRealColumn) {
+                b.symmetricGrainColumn(
+                    new PlannerRequest.Column(
+                        grain.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) grain).name));
+            }
+        }
+        // #107 weighted bridge: scale every measure's operand by this
+        // bridge weight column — SUM(operand × weight) — whatever the
+        // measure's shape (real column, CASE, arithmetic, literal). Null for
+        // full-count bridges and non-bridge loads. Resolved once here, then
+        // attached to each base measure below via Measure.weighted(...).
+        PlannerRequest.Column weightCol = null;
+        if (bridgeWeight instanceof RolapSchema.PhysRealColumn) {
+            RolapSchema.PhysRealColumn wc =
+                (RolapSchema.PhysRealColumn) bridgeWeight;
+            weightCol = new PlannerRequest.Column(
+                wc.relation.getAlias(), wc.name);
+        }
         // Map from RolapStar.Measure → its alias in the request, used
         // when resolving a pushable calc's base-measure references below.
         java.util.Map<RolapStar.Measure, String> starMeasureAliases =
@@ -3345,96 +3384,77 @@ public final class CalcitePlannerAdapters {
             RolapSchema.PhysColumn mexpr = unwrapToRealColumn(rawExpr);
             String alias = "m" + i;
             AggOp op = mapAggregator(m.getAggregator());
-            // Synthetic/null-expression measure → emit SUM(NULL).
+
+            // Build the base measure in its natural shape; weighting (if
+            // any) is applied uniformly afterwards so calc-column measures
+            // weight just like plain ones.
+            PlannerRequest.Measure base;
             if (rawExpr == null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        PlannerRequest.Measure.NULL_LITERAL));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            if (mexpr instanceof RolapSchema.PhysRealColumn) {
+                // Synthetic/null-expression measure → SUM(NULL).
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, PlannerRequest.Measure.NULL_LITERAL);
+            } else if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), mcol),
-                        alias,
-                        op.distinct));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            // Calc-column that's a pure literal (e.g.
-            // <CalculatedColumnDef><SQL>0</SQL>) — aggregate the literal
-            // directly. SUM(0)=0*N, SUM(NULL)=NULL, etc.
-            Object lit = literalCalcValue(m.getExpression());
-            if (lit != UNRESOLVED_LITERAL) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        lit == null
-                            ? PlannerRequest.Measure.NULL_LITERAL
-                            : lit));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            // Calc-column shaped like the canonical FoodMart Promotion
-            // Sales: case when COL = LIT then LIT else COL end. Match
-            // the PhysCalcColumn list and emit a structured CaseExpr.
-            PlannerRequest.CaseExpr caseExpr =
-                caseExprFromCalc(m.getExpression(), factTable.getAlias());
-            if (caseExpr != null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        null,
-                        caseExpr));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            // Calc-column shaped like the warehouse_profit binary
-            // arithmetic: lhsCol <op> rhsCol.
-            PlannerRequest.ArithExpr arithExpr =
-                arithExprFromCalc(m.getExpression(), factTable.getAlias());
-            if (arithExpr != null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        null,
-                        null,
-                        arithExpr));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            String shape = "";
-            if (m.getExpression() instanceof RolapSchema.PhysCalcColumn) {
-                try {
-                    shape = " [sql=" + m.getExpression().toSql() + "]";
-                } catch (RuntimeException ignored) {
-                    // best-effort
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), mcol),
+                    alias, op.distinct);
+            } else if (literalCalcValue(m.getExpression())
+                != UNRESOLVED_LITERAL)
+            {
+                // Calc-column that's a pure literal (e.g.
+                // <CalculatedColumnDef><SQL>0</SQL>).
+                Object lit = literalCalcValue(m.getExpression());
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct,
+                    lit == null
+                        ? PlannerRequest.Measure.NULL_LITERAL : lit);
+            } else if (caseExprFromCalc(
+                m.getExpression(), factTable.getAlias()) != null)
+            {
+                // Calc-column shaped like FoodMart Promotion Sales:
+                // case when COL = LIT then LIT else COL end.
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, null,
+                    caseExprFromCalc(
+                        m.getExpression(), factTable.getAlias()));
+            } else if (arithExprFromCalc(
+                m.getExpression(), factTable.getAlias()) != null)
+            {
+                // Calc-column shaped like warehouse_profit: lhs <op> rhs.
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, null, null,
+                    arithExprFromCalc(
+                        m.getExpression(), factTable.getAlias()));
+            } else {
+                String shape = "";
+                if (m.getExpression()
+                    instanceof RolapSchema.PhysCalcColumn)
+                {
+                    try {
+                        shape = " [sql=" + m.getExpression().toSql() + "]";
+                    } catch (RuntimeException ignored) {
+                        // best-effort
+                    }
                 }
+                throw new UnsupportedTranslation(
+                    "fromSegmentLoad: non-real measure expression "
+                    + mexpr + shape);
             }
-            throw new UnsupportedTranslation(
-                "fromSegmentLoad: non-real measure expression "
-                + mexpr + shape);
+
+            b.addMeasure(
+                weightCol != null
+                    ? PlannerRequest.Measure.weighted(base, weightCol)
+                    : base);
+            starMeasureAliases.put(m, alias);
         }
 
         // 3) Computed (calc) measures from the per-query registry. For
@@ -3509,6 +3529,100 @@ public final class CalcitePlannerAdapters {
      * table's alias so the renderer can disambiguate columns that share
      * names across the chain (e.g. {@code product_class_id}).
      */
+    /**
+     * #107: resolve the weighted-bridge allocation column for a segment
+     * load, or {@code null} if this load does not group by a weighted
+     * bridge dimension.
+     *
+     * <p>The fan-out marker ({@code oneToMany}) lives on the shared
+     * physical star, so any load that groups by a bridge dimension can
+     * spot the fan-out hop. But the <em>weight</em> is a property of the
+     * {@code <BridgeLink>} on a specific measure group, and two cubes can
+     * share one star (keyed by fact table) — one declaring the bridge
+     * full-count, the other weighted. So we identify the bridge relation
+     * from the fan-out hop, then disambiguate the allocation by the owning
+     * cube (read from the segment's measure) rather than trusting the
+     * shared star path.
+     */
+    private static RolapSchema.PhysColumn findBridgeWeightColumn(
+        RolapStar.Column[] columns,
+        List<Segment> segments,
+        RolapStar star)
+    {
+        // 1) Find the bridge (fan-out) relation among the grouping columns.
+        RolapSchema.PhysRelation bridgeRel = null;
+        for (RolapStar.Column col : columns) {
+            for (RolapSchema.PhysHop hop : col.getTable().getPath().hopList) {
+                if (hop.link != null && hop.link.oneToMany) {
+                    bridgeRel = hop.relation;
+                    break;
+                }
+            }
+            if (bridgeRel != null) {
+                break;
+            }
+        }
+        if (bridgeRel == null) {
+            return null;
+        }
+        // 2) Resolve the owning cube and consult its measure groups' bridge
+        //    allocation. A weighted bridge to this relation contributes its
+        //    weight column; a full-count bridge (or another cube's load)
+        //    leaves the measures un-weighted.
+        String cubeName = null;
+        for (Segment s : segments) {
+            if (s.aggMeasure != null) {
+                cubeName = s.aggMeasure.getCubeName();
+                if (cubeName != null) {
+                    break;
+                }
+            }
+        }
+        if (cubeName == null) {
+            return null;
+        }
+        mondrian.olap.Cube cube = star.getSchema().lookupCube(cubeName, false);
+        if (!(cube instanceof RolapCube)) {
+            return null;
+        }
+        for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
+            for (RolapMeasureGroup.BridgeInfo info : mg.getBridgeInfos()) {
+                if (info.weighted
+                    && info.weightColumn != null
+                    && info.weightColumn.relation == bridgeRel)
+                {
+                    return info.weightColumn;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * #103: when a grouping column is reached through a fan-out hop, return
+     * the fact-grain key column that the {@link PlannerRequest} must
+     * de-duplicate on (the fact-side column of the one-to-many link), or
+     * {@code null} if this load does not fan out. Used for the full-count
+     * symmetric aggregate; the weighted path uses
+     * {@link #findBridgeWeightColumn} instead.
+     */
+    private static RolapSchema.PhysColumn findBridgeFanoutGrain(
+        RolapStar.Column[] columns)
+    {
+        for (RolapStar.Column col : columns) {
+            for (RolapSchema.PhysHop hop : col.getTable().getPath().hopList) {
+                if (hop.link != null && hop.link.oneToMany) {
+                    List<RolapSchema.PhysColumn> cl =
+                        hop.link.getColumnList();
+                    if (!cl.isEmpty()) {
+                        return cl.get(0);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private static void ensureJoinedChain(
         PlannerRequest.Builder b,
         RolapStar.Table factTable,

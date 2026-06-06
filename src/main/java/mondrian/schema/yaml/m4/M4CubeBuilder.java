@@ -345,6 +345,19 @@ final class M4CubeBuilder {
             link.viaDimension = M4YamlToXml.str(m.get("via_dimension"));
             link.viaAttribute = M4YamlToXml.str(m.get("via_attribute"));
             return link;
+        } else if ("bridge".equals(type)) {
+            MondrianDef.BridgeLink link = new MondrianDef.BridgeLink();
+            link.dimension = dimension;
+            link.bridgeTable = M4YamlToXml.str(m.get("bridge_table"));
+            link.factForeignKeyColumn =
+                M4YamlToXml.str(m.get("fact_foreign_key_column"));
+            link.bridgeFactKeyColumn =
+                M4YamlToXml.str(m.get("bridge_fact_key_column"));
+            link.bridgeDimensionKeyColumn =
+                M4YamlToXml.str(m.get("bridge_dimension_key_column"));
+            link.aggregation = M4YamlToXml.str(m.get("aggregation"));
+            link.weightColumn = M4YamlToXml.str(m.get("weight_column"));
+            return link;
         } else {
             throw new IllegalArgumentException(
                 "unknown dimension_link type: " + type
