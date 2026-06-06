@@ -697,6 +697,39 @@ Each entry in `column_refs` has:
   via_attribute: "Store Id"
 ```
 
+**`bridge`** — a many-to-many relationship: the fact joins to the dimension through an intermediate **bridge table** (e.g. a joint bank account co-owned by several customers). The fact→bridge hop fans out, so measures are allocated either full-count (deduplicated on the fact grain) or split by a weight column. Maps to `<BridgeLink>`. Requires the Calcite backend, and the fact table must declare its grain as a `<Key>` (under `physical_schema.tables`).
+
+| Key | Required | Notes |
+|---|---|---|
+| `type` | yes | `"bridge"` |
+| `dimension` | yes | The many-to-many dimension name |
+| `bridge_table` | yes | The intermediate (bridge) table mapping fact rows to dimension members |
+| `fact_foreign_key_column` | yes | Fact-grain key column on the fact table |
+| `bridge_fact_key_column` | yes | Bridge column matching `fact_foreign_key_column` |
+| `bridge_dimension_key_column` | yes | Bridge column matching the dimension key |
+| `aggregation` | no | `"fullCount"` (default, omit to use it) or `"weighted"` |
+| `weight_column` | no | Allocation-weight column on the bridge; required when `aggregation: "weighted"` |
+
+```yaml
+# Full-count (the default): omit aggregation/weight_column.
+- type: "bridge"
+  dimension: "Customer"
+  bridge_table: "account_owner"
+  fact_foreign_key_column: "account_id"
+  bridge_fact_key_column: "account_id"
+  bridge_dimension_key_column: "customer_id"
+
+# Weighted allocation: split each measure by the bridge weight.
+- type: "bridge"
+  dimension: "Customer"
+  bridge_table: "account_owner"
+  fact_foreign_key_column: "account_id"
+  bridge_fact_key_column: "account_id"
+  bridge_dimension_key_column: "customer_id"
+  aggregation: "weighted"
+  weight_column: "weight"
+```
+
 **Full measure group example** (from the Sales cube):
 
 ```yaml

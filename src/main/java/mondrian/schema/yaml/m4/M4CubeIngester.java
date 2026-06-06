@@ -432,6 +432,32 @@ final class M4CubeIngester {
             if (rl.viaAttribute != null) {
                 out.put("via_attribute", rl.viaAttribute);
             }
+        } else if (dl instanceof MondrianDef.BridgeLink) {
+            // #107 bridge (many-to-many) link. Mirror of the YAML→XML map in
+            // M4CubeBuilder.buildDimensionLink. Only non-null attributes are
+            // emitted, so an omitted (defaulted) aggregation round-trips
+            // without being materialised as 'fullCount'.
+            MondrianDef.BridgeLink bl = (MondrianDef.BridgeLink) dl;
+            out.put("type", "bridge");
+            out.put("dimension", bl.dimension);
+            if (bl.bridgeTable != null) {
+                out.put("bridge_table", bl.bridgeTable);
+            }
+            if (bl.factForeignKeyColumn != null) {
+                out.put("fact_foreign_key_column", bl.factForeignKeyColumn);
+            }
+            if (bl.bridgeFactKeyColumn != null) {
+                out.put("bridge_fact_key_column", bl.bridgeFactKeyColumn);
+            }
+            if (bl.bridgeDimensionKeyColumn != null) {
+                out.put("bridge_dimension_key_column", bl.bridgeDimensionKeyColumn);
+            }
+            if (bl.aggregation != null) {
+                out.put("aggregation", bl.aggregation);
+            }
+            if (bl.weightColumn != null) {
+                out.put("weight_column", bl.weightColumn);
+            }
         }
         return out;
     }

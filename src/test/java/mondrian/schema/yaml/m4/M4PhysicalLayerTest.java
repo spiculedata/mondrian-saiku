@@ -450,6 +450,94 @@ public class M4PhysicalLayerTest {
         assertEquals(yaml, yaml2);
     }
 
+    // ---- #107 bridge (many-to-many) dimension link ----
+
+    /** Weighted bridge: every attribute set, exercising the full surface. */
+    private static final String BRIDGE_XML =
+        "<Schema name='Bank' metamodelVersion='4.0'>"
+        + "<Cube name='Accounts'>"
+        + "<MeasureGroups><MeasureGroup name='Balances' table='account_fact'>"
+        + "<Measures>"
+        + "<Measure name='Balance' column='balance' aggregator='sum'/>"
+        + "</Measures>"
+        + "<DimensionLinks>"
+        + "<ForeignKeyLink dimension='Date' foreignKeyColumn='date_key'/>"
+        + "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+        + " factForeignKeyColumn='account_id' bridgeFactKeyColumn='account_id'"
+        + " bridgeDimensionKeyColumn='customer_id' aggregation='weighted'"
+        + " weightColumn='weight'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "</Cube></Schema>";
+
+    /** Full-count bridge: aggregation + weight omitted (the default). */
+    private static final String BRIDGE_FULLCOUNT_XML =
+        "<Schema name='Bank' metamodelVersion='4.0'>"
+        + "<Cube name='Accounts'>"
+        + "<MeasureGroups><MeasureGroup name='Balances' table='account_fact'>"
+        + "<Measures>"
+        + "<Measure name='Balance' column='balance' aggregator='sum'/>"
+        + "</Measures>"
+        + "<DimensionLinks>"
+        + "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+        + " factForeignKeyColumn='account_id' bridgeFactKeyColumn='account_id'"
+        + " bridgeDimensionKeyColumn='customer_id'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "</Cube></Schema>";
+
+    @Test
+    public void ingestsBridgeLink() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        assertTrue(yaml, yaml.contains("type: \"bridge\"")
+            || yaml.contains("type: bridge"));
+        assertTrue(yaml, yaml.contains("dimension: \"Customer\"")
+            || yaml.contains("dimension: Customer"));
+        assertTrue(yaml, yaml.contains("bridge_table"));
+        assertTrue(yaml, yaml.contains("account_owner"));
+        assertTrue(yaml, yaml.contains("fact_foreign_key_column"));
+        assertTrue(yaml, yaml.contains("bridge_fact_key_column"));
+        assertTrue(yaml, yaml.contains("bridge_dimension_key_column"));
+        assertTrue(yaml, yaml.contains("aggregation"));
+        assertTrue(yaml, yaml.contains("weighted"));
+        assertTrue(yaml, yaml.contains("weight_column"));
+    }
+
+    @Test
+    public void emitsBridgeLink() {
+        // Drive YAML -> XML from the YAML the ingester produced.
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        String xml = M4YamlToXml.toXml(yaml);
+        assertTrue(xml, xml.contains("<BridgeLink"));
+        assertTrue(xml, xml.contains("dimension=\"Customer\""));
+        assertTrue(xml, xml.contains("bridgeTable=\"account_owner\""));
+        assertTrue(xml, xml.contains("factForeignKeyColumn=\"account_id\""));
+        assertTrue(xml, xml.contains("bridgeFactKeyColumn=\"account_id\""));
+        assertTrue(xml, xml.contains("bridgeDimensionKeyColumn=\"customer_id\""));
+        assertTrue(xml, xml.contains("aggregation=\"weighted\""));
+        assertTrue(xml, xml.contains("weightColumn=\"weight\""));
+    }
+
+    @Test
+    public void bridgeLinkRoundTripsThroughEmit() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    /** A full-count bridge omits aggregation/weight in YAML (no default
+     *  materialised) and still round-trips identically. */
+    @Test
+    public void fullCountBridgeOmitsDefaultsAndRoundTrips() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_FULLCOUNT_XML);
+        assertTrue(yaml, yaml.contains("type: \"bridge\"")
+            || yaml.contains("type: bridge"));
+        assertFalse(yaml, yaml.contains("aggregation"));
+        assertFalse(yaml, yaml.contains("weight_column"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
     // ---- calc members + named sets ----
 
     private static final String CALC_XML =
