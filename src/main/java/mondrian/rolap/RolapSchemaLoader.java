@@ -2386,9 +2386,9 @@ public class RolapSchemaLoader {
                 xmlMeasure.column,
                 xmlMeasure.getArguments());
 
-        // Validate aggregator name.
+        // Validate aggregator name (and parameterise percentile, #104).
         final RolapAggregator aggregator =
-            lookupAggregator(xmlMeasure.aggregator);
+            resolveAggregator(xmlMeasure);
 
         if (measureExp == null) {
             if (aggregator == RolapAggregator.Count) {
@@ -2550,6 +2550,41 @@ public class RolapSchemaLoader {
             }
         }
         return false;
+    }
+
+    /**
+     * Resolves the aggregator for a measure, handling the #104 parameterised
+     * {@code percentile} aggregator: {@code aggregator="percentile"} reads
+     * the {@code percentile} attribute (0..100, default 50) and builds a
+     * {@link RolapAggregator.PercentileAggregator} with that fraction. All
+     * other aggregators resolve by name.
+     */
+    private static RolapAggregator resolveAggregator(
+        MondrianDef.Measure xmlMeasure)
+    {
+        if ("percentile".equals(xmlMeasure.aggregator)) {
+            double p = 50.0;
+            if (xmlMeasure.percentile != null
+                && !xmlMeasure.percentile.trim().isEmpty())
+            {
+                try {
+                    p = Double.parseDouble(xmlMeasure.percentile.trim());
+                } catch (NumberFormatException e) {
+                    throw Util.newError(
+                        "Measure '" + xmlMeasure.name + "': percentile='"
+                        + xmlMeasure.percentile + "' is not a number");
+                }
+            }
+            if (p < 0.0 || p > 100.0) {
+                throw Util.newError(
+                    "Measure '" + xmlMeasure.name + "': percentile must be "
+                    + "between 0 and 100 (got " + p + ")");
+            }
+            return new RolapAggregator.PercentileAggregator(
+                "percentile", RolapAggregator.Percentile.getOrdinal(),
+                p / 100.0);
+        }
+        return lookupAggregator(xmlMeasure.aggregator);
     }
 
     private static RolapAggregator lookupAggregator(String aggregatorName) {

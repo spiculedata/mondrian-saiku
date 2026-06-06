@@ -1183,6 +1183,22 @@ public final class CalciteSqlPlanner {
     private static RelBuilder.AggCall aggCall(
         RelBuilder b, PlannerRequest.Measure m)
     {
+        if (m.fn == PlannerRequest.AggFn.PERCENTILE_CONT) {
+            // #104 ordered-set aggregate:
+            //   PERCENTILE_CONT(fraction) WITHIN GROUP (ORDER BY column)
+            // The fraction is the operand; the ORDER BY column rides in via
+            // AggCall.sort (Calcite's WITHIN GROUP collation).
+            // BigDecimal literal renders as a plain decimal (0.5) rather than
+            // the scientific form (5E-1) a double would produce — friendlier
+            // to every dialect's PERCENTILE_CONT fraction argument.
+            return b.aggregateCall(
+                    org.apache.calcite.sql.fun.SqlStdOperatorTable
+                        .PERCENTILE_CONT,
+                    b.literal(
+                        java.math.BigDecimal.valueOf(m.percentileFraction)))
+                .sort(b.field(m.column.name))
+                .as(m.alias);
+        }
         return aggOf(b, m.fn, m.distinct, m.alias, measureRef(b, m));
     }
 

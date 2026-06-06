@@ -266,11 +266,67 @@ public abstract class RolapAggregator
         };
 
     /**
+     * Non-additive leaf aggregator computing a percentile (continuous) of a
+     * column via {@code PERCENTILE_CONT(fraction) WITHIN GROUP (ORDER BY
+     * column)} (#104). Not rollupable — correct only at the queried grain.
+     * Carries the {@link #fraction} (0..1) per measure; {@link #Median} is a
+     * named instance with fraction 0.5.
+     */
+    public static final class PercentileAggregator extends RolapAggregator {
+        public final double fraction;
+
+        public PercentileAggregator(String name, int ordinal, double fraction) {
+            super(name, ordinal, false);
+            this.fraction = fraction;
+        }
+
+        @Override
+        public boolean isRollupable() {
+            return false;
+        }
+
+        @Override
+        public Object aggregate(
+            Evaluator evaluator, TupleList members, Calc exp)
+        {
+            // In-memory MDX evaluation of a non-additive leaf aggregate is
+            // out of scope (#104 targets SQL pushdown via Calcite).
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Dialect.Datatype deriveDatatype(
+            List<Dialect.Datatype> parameterDatatypes)
+        {
+            return Dialect.Datatype.Numeric;
+        }
+
+        @Override
+        public String getExpression(String operand) {
+            return "percentile_cont(" + fraction
+                + ") within group (order by " + operand + ")";
+        }
+    }
+
+    public static final RolapAggregator Median =
+        new PercentileAggregator("median", index++, 0.5);
+
+    /**
+     * Representative {@code percentile} aggregator used for name resolution
+     * (fraction 0.5). The actual per-measure fraction is supplied by the
+     * schema loader, which builds a fresh {@link PercentileAggregator} from
+     * the measure's {@code percentile} attribute.
+     */
+    public static final RolapAggregator Percentile =
+        new PercentileAggregator("percentile", index++, 0.5);
+
+    /**
      * List of all valid aggregation operators.
      */
     public static final EnumeratedValues<RolapAggregator> enumeration =
         new EnumeratedValues<RolapAggregator>(
-            new RolapAggregator[] {Sum, Count, Min, Max, Avg, DistinctCount});
+            new RolapAggregator[] {
+                Sum, Count, Min, Max, Avg, DistinctCount, Median, Percentile});
 
     /**
      * This is the base class for implementing aggregators over sum and
@@ -432,6 +488,23 @@ public abstract class RolapAggregator
      */
     public RolapAggregator getRollup() {
         return this;
+    }
+
+    /**
+     * Whether this aggregator is <em>rollupable</em> — i.e. a coarser-grain
+     * result can be derived by combining finer-grain (cached or
+     * aggregate-table) sub-aggregates. True for the additive aggregators
+     * (sum/count/min/max/avg). False for non-additive leaf aggregators such
+     * as median / percentile (#104): there is no median-of-medians, so they
+     * are correct only at the exact grain queried and must be excluded from
+     * aggregate-table substitution and segment rollup-from-cache.
+     *
+     * <p>Distinct-count is additive-enough to roll up via {@code Sum} in the
+     * cases Mondrian allows, so it stays rollupable here; its own narrower
+     * restrictions are handled separately.
+     */
+    public boolean isRollupable() {
+        return true;
     }
 
     /**

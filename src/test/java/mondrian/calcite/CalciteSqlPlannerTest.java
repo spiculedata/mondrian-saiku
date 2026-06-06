@@ -70,6 +70,50 @@ public class CalciteSqlPlannerTest {
         assertTrue("expected SUM in: " + sql, lower.contains("sum("));
     }
 
+    /** #104: a median (percentile 0.5) measure emits
+     *  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col). */
+    @Test
+    public void medianEmitsPercentileContWithinGroup() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addJoin(new PlannerRequest.Join(
+                "time_by_day", "time_id", "time_id"))
+            .addGroupBy(new PlannerRequest.Column("time_by_day", "the_year"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "med_sales",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.5))
+            .build();
+        String sql = planner.plan(req);
+        assertNotNull(sql);
+        String lower = sql.toLowerCase();
+        assertTrue("expected PERCENTILE_CONT in: " + sql,
+            lower.contains("percentile_cont("));
+        assertTrue("expected the fraction 0.5 in: " + sql,
+            lower.contains("0.5"));
+        assertTrue("expected WITHIN GROUP in: " + sql,
+            lower.contains("within group"));
+        assertTrue("expected ORDER BY unit_sales in: " + sql,
+            lower.contains("order by") && lower.contains("unit_sales"));
+    }
+
+    /** #104: percentile(0.9) renders the requested fraction. */
+    @Test
+    public void percentile90EmitsFraction() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "p90_sales",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.9))
+            .build();
+        String sql = planner.plan(req).toLowerCase();
+        assertTrue("expected PERCENTILE_CONT(0.9) in: " + sql,
+            sql.contains("percentile_cont(") && sql.contains("0.9"));
+    }
+
     @Test
     public void distinctProjectionEmitsSelectDistinct() {
         CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);

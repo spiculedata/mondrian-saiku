@@ -3397,10 +3397,19 @@ public final class CalcitePlannerAdapters {
                     alias, op.distinct, PlannerRequest.Measure.NULL_LITERAL);
             } else if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
-                base = new PlannerRequest.Measure(
-                    op.fn,
-                    new PlannerRequest.Column(factTable.getAlias(), mcol),
-                    alias, op.distinct);
+                if (op.fn == PlannerRequest.AggFn.PERCENTILE_CONT) {
+                    // #104: PERCENTILE_CONT(fraction) WITHIN GROUP
+                    //       (ORDER BY mcol).
+                    base = PlannerRequest.Measure.percentile(
+                        alias,
+                        new PlannerRequest.Column(factTable.getAlias(), mcol),
+                        op.percentileFraction);
+                } else {
+                    base = new PlannerRequest.Measure(
+                        op.fn,
+                        new PlannerRequest.Column(factTable.getAlias(), mcol),
+                        alias, op.distinct);
+                }
             } else if (literalCalcValue(m.getExpression())
                 != UNRESOLVED_LITERAL)
             {
@@ -4105,9 +4114,18 @@ public final class CalcitePlannerAdapters {
     static final class AggOp {
         final PlannerRequest.AggFn fn;
         final boolean distinct;
+        /** #104: fraction (0..1) for PERCENTILE_CONT; null otherwise. */
+        final Double percentileFraction;
         AggOp(PlannerRequest.AggFn fn, boolean distinct) {
+            this(fn, distinct, null);
+        }
+        AggOp(
+            PlannerRequest.AggFn fn, boolean distinct,
+            Double percentileFraction)
+        {
             this.fn = fn;
             this.distinct = distinct;
+            this.percentileFraction = percentileFraction;
         }
     }
 
@@ -4129,6 +4147,12 @@ public final class CalcitePlannerAdapters {
         }
         if (agg == RolapAggregator.DistinctCount) {
             return new AggOp(PlannerRequest.AggFn.COUNT, true);
+        }
+        // #104 non-additive leaf aggregators → PERCENTILE_CONT(fraction).
+        if (agg instanceof RolapAggregator.PercentileAggregator) {
+            return new AggOp(
+                PlannerRequest.AggFn.PERCENTILE_CONT, false,
+                ((RolapAggregator.PercentileAggregator) agg).fraction);
         }
         throw new UnsupportedTranslation(
             "fromSegmentLoad: unsupported aggregator "
