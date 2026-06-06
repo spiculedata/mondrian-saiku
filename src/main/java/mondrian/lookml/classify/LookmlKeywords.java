@@ -103,6 +103,13 @@ final class LookmlKeywords {
   static final ImmutableSet<String> LIQUID_SCAN_KEYS =
       ImmutableSet.of(SQL, "sql_distinct_key", FILTERS, LABEL, HTML,
           "value_format", "value_format_name");
+
+  /** The {@code label} / {@code html} keys carry presentation-only Liquid: a
+   * bounded reference there never shapes engine SQL, so it is dropped (DEGRADE)
+   * rather than routed. Kept separate so the router only fires for predicate /
+   * filter / sql contexts. */
+  static final ImmutableSet<String> LIQUID_PRESENTATION_KEYS =
+      ImmutableSet.of(LABEL, HTML, "value_format", "value_format_name");
 }
 
 // End LookmlKeywords.java

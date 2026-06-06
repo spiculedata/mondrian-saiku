@@ -63,6 +63,10 @@ public final class LookmlClassifier {
     //    apart from an arbitrary predicate (a measure / unknown field).
     final Set<String> dimensionKeys = indexDimensionKeys(document);
 
+    // 0b. Index declared bounded parameter names so a {% parameter X %} use can
+    //     be confirmed bounded (it selects among declared parameters, #118).
+    final Set<String> parameterNames = indexParameterNames(document);
+
     // 1. Build every explore graph; index base view -> fan-out edge so a
     //    measure can be tested for symmetric-aggregate dependence.
     final Map<String, JoinEdge> fanOutByBaseView = new HashMap<>();
@@ -75,7 +79,7 @@ public final class LookmlClassifier {
 
     // 2. Classify every view's fields, consulting the fan-out index.
     for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
-      classifyView(view, fanOutByBaseView, out);
+      classifyView(view, fanOutByBaseView, parameterNames, out);
     }
 
     return out.build();
@@ -102,6 +106,19 @@ public final class LookmlClassifier {
         keys.add(viewName + "." + name);
       }
     }
+  }
+
+  /** Collects every declared {@code parameter:} name (lower-cased) across all
+   * views — the bounded set a {@code {% parameter X %}} use can select from. */
+  private Set<String> indexParameterNames(LookmlNode document) {
+    final Set<String> names = new HashSet<>();
+    for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
+      for (LookmlNode param : view.children(LookmlKeywords.PARAMETER)) {
+        param.name().ifPresent(
+            n -> names.add(n.toLowerCase(java.util.Locale.ROOT)));
+      }
+    }
+    return names;
   }
 
   // --- explores ----------------------------------------------------------
@@ -207,12 +224,13 @@ public final class LookmlClassifier {
   // --- views -------------------------------------------------------------
 
   private void classifyView(LookmlNode view,
-      Map<String, JoinEdge> fanOutByBaseView, ClassificationResult.Builder out) {
+      Map<String, JoinEdge> fanOutByBaseView, Set<String> parameterNames,
+      ClassificationResult.Builder out) {
     final String viewName = view.name().orElse("?");
 
     classifyDerivedTable(view, viewName).ifPresent(out::add);
 
-    final FieldClassifier fields = new FieldClassifier(viewName);
+    final FieldClassifier fields = new FieldClassifier(viewName, parameterNames);
     final Optional<JoinEdge> fanOut =
         Optional.ofNullable(fanOutByBaseView.get(viewName));
     final FieldClassifier.PrimaryKey primaryKey = primaryKeyOf(view);

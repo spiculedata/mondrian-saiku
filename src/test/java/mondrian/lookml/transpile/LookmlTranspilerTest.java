@@ -527,6 +527,52 @@ public class LookmlTranspilerTest {
     assertTrue(yaml.contains("roles:") || yaml.contains("parameters:"), yaml);
   }
 
+  // --- #118 bounded Liquid: user-attribute access_filter → PredicateGrant -
+
+  /** A {{ _user_attributes['region'] }} reference in an access_filter on a fact
+   * column emits a <PredicateGrant> bound to a generated session.region
+   * <QueryParameter> (#118 → reuses the #106 RowSecurity emitter). */
+  @Test
+  public void userAttributeLiquidAccessFilterEmitsPredicateGrant() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  access_filter: { field: orders.region\n"
+        + "    value: \"{{ _user_attributes['region'] }}\" }\n"
+        + "}\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("predicate_grants:"), yaml);
+    assertTrue(yaml.contains("column: \"region\""), yaml);
+    // the bound parameter is the session.region user attribute (#118).
+    assertTrue(yaml.contains("session.region"), yaml);
+  }
+
+  /** A declared bounded parameter used via {% parameter %} still emits its
+   * top-level <QueryParameter> (#105); the use DEGRADEs but the parameter is
+   * mapped (#118). */
+  @Test
+  public void declaredParameterUsedInLiquidStillEmitsQueryParameter() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  parameter: region {\n"
+        + "    type: unquoted\n"
+        + "    allowed_value: { value: \"EAST\" }\n"
+        + "    allowed_value: { value: \"WEST\" }\n"
+        + "  }\n"
+        + "  dimension: dyn { sql: {% parameter region %} ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("parameters:"), yaml);
+    assertTrue(yaml.contains("name: \"region\""), yaml);
+    assertTrue(yaml.contains("EAST"), yaml);
+  }
+
   // --- #103 fan-out symmetric aggregate (with declared fact PK) -----------
 
   /** A sum on the one-side of a one_to_many, with a declared primary key, is

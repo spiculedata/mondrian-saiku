@@ -101,6 +101,18 @@ public enum ReasonCode {
    * not by the imported model. */
   DEGRADE_PREDICATE_ROW_SECURITY(Classification.DEGRADE, "#106"),
 
+  /** A field carries Liquid that matches one of the <em>bounded</em>, enumerable
+   * patterns the importer can route to a shipped feature instead of refusing
+   * wholesale (#118): a {@code {{ _user_attributes['x'] }}} reference (&rarr; a
+   * {@code session.x} {@code <QueryParameter>}, and a {@code <PredicateGrant>}
+   * when it restricts a real fact column, #105/#106); a {@code {% parameter X %}}
+   * use of a declared bounded parameter (field-switching becomes a Saiku-layer
+   * {@code WITH MEMBER}, not engine SQL, #105); or a {@code {% condition Y %}}
+   * parameter-bound filter (#105). It DEGRADEs (not CLEAN) because the templated
+   * fragment itself is dropped — only the typed, enumerated, bind-only construct
+   * is emitted; the value is supplied at query time through the #105 sandbox. */
+  DEGRADE_LIQUID_BOUNDED(Classification.DEGRADE, "#118"),
+
   /** A fan-out additive aggregate the importer cannot fully bridge: the
    * fan-out-safe (#103) measure-group grain is emitted, but a genuine
    * many-to-many that needs a {@code <BridgeLink>} (#107) is only partially

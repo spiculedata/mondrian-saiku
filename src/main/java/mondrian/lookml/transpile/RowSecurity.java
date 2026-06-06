@@ -14,6 +14,7 @@
 package mondrian.lookml.transpile;
 
 import mondrian.lookml.parse.LookmlNode;
+import mondrian.lookml.parse.Value;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,6 +23,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Maps a LookML {@code access_filter} on an arbitrary fact <em>column</em> to
@@ -41,6 +44,17 @@ final class RowSecurity {
   private static final String ROLE_SUFFIX = "_row_security";
   /** The membership operator the predicate uses (IN a set of allowed values). */
   private static final String OPERATOR_IN = "in";
+  /** Prefix for a query-context parameter sourced from a user attribute (#118):
+   * a {@code {{ _user_attributes['x'] }}} Liquid reference binds to {@code
+   * session.x}. */
+  private static final String SESSION_PREFIX = "session.";
+
+  /** A bounded {@code {{ _user_attributes['x'] }}} / {@code {{ _user_attributes._x }}}
+   * Liquid output reference (#118); group 1/2 is the attribute name. */
+  private static final Pattern USER_ATTRIBUTE_LIQUID = Pattern.compile(
+      "\\{\\{-?\\s*_user_attributes\\s*(?:\\[\\s*['\"]([\\w.-]+)['\"]\\s*\\]"
+          + "|\\.([\\w]+))\\s*-?\\}\\}",
+      Pattern.CASE_INSENSITIVE);
 
   /** Emits a query parameter + role for each arbitrary-column access_filter on
    * the explore, into the shared model. {@code dimensionNames} (lower-cased)
@@ -91,21 +105,41 @@ final class RowSecurity {
   }
 
   /** The fact column the predicate filters on: the leaf of the access_filter
-   * {@code field:} reference ({@code view.column} or {@code column}). */
+   * {@code field:} reference ({@code view.column} or {@code column}). A Liquid-
+   * bearing {@code field:} is not a usable column reference (skipped). */
   private static Optional<String> column(LookmlNode accessFilter) {
     return accessFilter.stringValue(TranspileKeywords.FIELD)
         .map(String::trim)
         .filter(f -> !f.isEmpty())
+        .filter(f -> USER_ATTRIBUTE_LIQUID.matcher(f).replaceAll("").indexOf("{") < 0)
         .map(RowSecurity::leaf);
   }
 
-  /** The parameter bound to the predicate: the LookML {@code user_attribute}
-   * if present, else the column name. */
+  /** The parameter bound to the predicate. A bounded {@code {{ _user_attributes
+   * ['x'] }}} Liquid reference anywhere on the access_filter binds to {@code
+   * session.x} (#118); else the LookML {@code user_attribute}; else the column. */
   private static String parameterName(LookmlNode accessFilter, String column) {
+    final Optional<String> liquidAttr = userAttributeLiquid(accessFilter);
+    if (liquidAttr.isPresent()) {
+      return SESSION_PREFIX + liquidAttr.get();
+    }
     return accessFilter.stringValue(TranspileKeywords.USER_ATTRIBUTE)
         .map(String::trim)
         .filter(a -> !a.isEmpty())
         .orElse(column);
+  }
+
+  /** The user-attribute name a {@code {{ _user_attributes['x'] }}} Liquid
+   * reference on any string value of the access_filter resolves to, if any. */
+  private static Optional<String> userAttributeLiquid(LookmlNode accessFilter) {
+    for (Map.Entry<String, Value> entry : accessFilter.properties()) {
+      final Matcher m =
+          USER_ATTRIBUTE_LIQUID.matcher(LookmlNode.asString(entry.getValue()));
+      if (m.find()) {
+        return Optional.of(m.group(1) != null ? m.group(1) : m.group(2));
+      }
+    }
+    return Optional.empty();
   }
 
   private static Map<String, Object> parameter(String name) {

@@ -32,9 +32,19 @@ import static java.util.Objects.requireNonNull;
  */
 final class FieldClassifier {
   private final String viewName;
+  private final java.util.Set<String> declaredParameters;
 
   FieldClassifier(String viewName) {
+    this(viewName, java.util.Collections.emptySet());
+  }
+
+  /** {@code declaredParameters} are the lower-cased names of bounded
+   * {@code parameter:} declarations visible to this view's fields, so a
+   * {@code {% parameter X %}} use can be confirmed bounded (#118). */
+  FieldClassifier(String viewName, java.util.Set<String> declaredParameters) {
     this.viewName = requireNonNull(viewName, "viewName");
+    this.declaredParameters =
+        requireNonNull(declaredParameters, "declaredParameters");
   }
 
   /**
@@ -48,6 +58,13 @@ final class FieldClassifier {
       Optional<JoinEdge> fanOutEdge, PrimaryKey primaryKey) {
     final String qn = qualifiedName(measure);
     final String type = lowerType(measure);
+
+    // Liquid takes precedence: a bounded pattern DEGRADEs (routed to a mapping),
+    // arbitrary computed Liquid REFUSEs (#118). Decided before other guards.
+    final Optional<CoverageRecord> liquid = classifyLiquid(qn, measure);
+    if (liquid.isPresent()) {
+      return liquid.get();
+    }
 
     // Order matters: refuse the most decisive reasons first.
     final Optional<ReasonCode> guard = guardRefusals(measure, type);
@@ -163,6 +180,10 @@ final class FieldClassifier {
   CoverageRecord classifyDimension(LookmlNode dimension) {
     final String qn = qualifiedName(dimension);
     final String type = lowerType(dimension);
+    final Optional<CoverageRecord> liquid = classifyLiquid(qn, dimension);
+    if (liquid.isPresent()) {
+      return liquid.get();
+    }
     final Optional<ReasonCode> guard = guardRefusals(dimension, type);
     if (guard.isPresent()) {
       return refusal(qn, guard.get(), dimension, type, Optional.empty());
@@ -173,13 +194,11 @@ final class FieldClassifier {
 
   // --- shared refusal guards (apply to any field) ------------------------
 
-  /** Metadata-only refusals that apply regardless of fan-out. */
+  /** Metadata-only refusals that apply regardless of fan-out. Liquid is handled
+   * separately (see {@link #classifyLiquid}). */
   private Optional<ReasonCode> guardRefusals(LookmlNode field, String type) {
     if (!field.values(LookmlKeywords.REQUIRED_ACCESS_GRANTS).isEmpty()) {
       return Optional.of(ReasonCode.REFUSE_REQUIRED_ACCESS_GRANTS);
-    }
-    if (hasLiquid(field)) {
-      return Optional.of(ReasonCode.REFUSE_LIQUID);
     }
     if (LookmlKeywords.TYPE_LIST.equals(type)) {
       return Optional.of(ReasonCode.REFUSE_TYPE_LIST);
@@ -190,32 +209,127 @@ final class FieldClassifier {
     return Optional.empty();
   }
 
-  /** Whether any scanned key on the field carries Liquid. */
-  private boolean hasLiquid(LookmlNode field) {
+  // --- Liquid (#118): bounded patterns DEGRADE, arbitrary REFUSEs ---------
+
+  /**
+   * Classifies any Liquid the field carries: empty if there is none; a DEGRADE
+   * record routed to the matched bounded mapping; or a {@code REFUSE_LIQUID}
+   * record naming why it is arbitrary. A field is bounded only if EVERY Liquid
+   * fragment it carries is bounded — any arbitrary fragment refuses the field.
+   */
+  private Optional<CoverageRecord> classifyLiquid(String qn, LookmlNode field) {
+    boolean any = false;
+    LiquidPattern.Kind routed = null;
+    String routedFragment = null;
     for (String key : LookmlKeywords.LIQUID_SCAN_KEYS) {
       for (Value v : field.values(key)) {
-        if (valueHasLiquid(v)) {
-          return true;
+        for (String fragment : liquidFragments(v)) {
+          any = true;
+          final LiquidPattern.Kind kind = liquidKind(fragment);
+          if (kind == LiquidPattern.Kind.ARBITRARY) {
+            return Optional.of(refusalLiquid(qn, field, fragment));
+          }
+          routed = kind;
+          routedFragment = fragment;
         }
       }
     }
-    return false;
+    if (!any) {
+      return Optional.empty();
+    }
+    return Optional.of(boundedLiquid(qn, field, routed, routedFragment));
   }
 
-  /** Scans a value (including list/pair shapes used by {@code filters:}). */
-  private boolean valueHasLiquid(Value v) {
+  /** Recognises the Liquid {@link LiquidPattern.Kind} of one fragment, but only
+   * treats a {@code {% parameter X %}} use as bounded when X is a declared
+   * bounded parameter (else it is field-switching we cannot resolve → arbitrary). */
+  private LiquidPattern.Kind liquidKind(String fragment) {
+    final LiquidPattern.Kind kind = LiquidPattern.classify(fragment);
+    if (kind == LiquidPattern.Kind.PARAMETER) {
+      final boolean declared = LiquidPattern.boundFieldName(fragment)
+          .map(n -> declaredParameters.contains(n.toLowerCase(Locale.ROOT)))
+          .orElse(false);
+      return declared ? kind : LiquidPattern.Kind.ARBITRARY;
+    }
+    return kind;
+  }
+
+  /** A bounded-Liquid DEGRADE record describing the mapping the fragment routes
+   * to (#118). */
+  private CoverageRecord boundedLiquid(String qn, LookmlNode field,
+      LiquidPattern.Kind kind, String fragment) {
+    return CoverageRecord.builder(Scope.FIELD, qn,
+            ReasonCode.DEGRADE_LIQUID_BOUNDED,
+            boundedReason(field, kind, fragment))
+        .producedM4(boundedM4(kind))
+        .lostCapability("templated Liquid fragment dropped; only the typed, "
+            + "enumerated bind-only construct is emitted")
+        .build();
+  }
+
+  private String boundedReason(LookmlNode field, LiquidPattern.Kind kind,
+      String fragment) {
+    final String name = simpleName(field);
+    switch (kind) {
+    case USER_ATTRIBUTE:
+      final String attr = LiquidPattern.userAttributeName(fragment).orElse("?");
+      return "field `" + name + "` references the user attribute `" + attr
+          + "` via Liquid; mapped to a `session." + attr
+          + "` <QueryParameter> (and a <PredicateGrant> when it restricts a "
+          + "fact column, #105/#106)";
+    case PARAMETER:
+      final String p = LiquidPattern.boundFieldName(fragment).orElse("?");
+      return "field `" + name + "` uses the bounded parameter `" + p
+          + "` via {% parameter %}; the declared parameter maps to an M4 "
+          + "<QueryParameter> (#105); the selection is a Saiku-layer "
+          + "field-switch (WITH MEMBER), not engine SQL";
+    case CONDITION:
+      final String y = LiquidPattern.boundFieldName(fragment).orElse("?");
+      return "field `" + name + "` ties a {% condition %} filter to `" + y
+          + "`; mapped to a parameter-bound filter (#105)";
+    default:
+      return "field `" + name + "` contains bounded Liquid";
+    }
+  }
+
+  private static String boundedM4(LiquidPattern.Kind kind) {
+    return kind == LiquidPattern.Kind.USER_ATTRIBUTE
+        ? "QueryParameter(+PredicateGrant)"
+        : "QueryParameter";
+  }
+
+  private CoverageRecord refusalLiquid(String qn, LookmlNode field,
+      String fragment) {
+    return CoverageRecord.builder(Scope.FIELD, qn, ReasonCode.REFUSE_LIQUID,
+            "field `" + simpleName(field) + "` contains computed Liquid SQL "
+                + "(control flow / arithmetic / string-building) that is not a "
+                + "bounded, bind-only pattern; emitting it would be silently "
+                + "wrong")
+        .lostCapability("field not emitted")
+        .build();
+  }
+
+  /** The Liquid-bearing string fragments of a value (flattening the list/pair
+   * shapes {@code filters:} uses); only fragments that actually carry Liquid. */
+  private List<String> liquidFragments(Value v) {
+    final List<String> out = new java.util.ArrayList<>();
+    collectLiquidFragments(v, out);
+    return out;
+  }
+
+  private void collectLiquidFragments(Value v, List<String> out) {
     if (v instanceof Values.ListValue) {
       for (Value e : ((Values.ListValue) v).list) {
-        if (valueHasLiquid(e)) {
-          return true;
-        }
+        collectLiquidFragments(e, out);
       }
-      return false;
+      return;
     }
-    if (v instanceof Values.PairValue) {
-      return Liquid.isPresent(((Values.PairValue) v).s);
+    final String s = v instanceof Values.PairValue
+        ? ((Values.PairValue) v).s
+        : LookmlNode.asString(v);
+    if (Liquid.isPresent(s)) {
+      out.add(s);
     }
-    return Liquid.isPresent(LookmlNode.asString(v));
   }
 
   // --- record helpers ----------------------------------------------------

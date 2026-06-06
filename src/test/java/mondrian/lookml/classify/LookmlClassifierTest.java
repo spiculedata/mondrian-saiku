@@ -210,6 +210,156 @@ class LookmlClassifierTest {
         record(r, "orders.plain_rev").classification());
   }
 
+  // --- bounded Liquid (#118) --------------------------------------------
+
+  /** A {{ _user_attributes['region'] }} reference in a measure filter is a
+   * bounded user-attribute pattern: DEGRADE routed to a session.region
+   * parameter (#118), not REFUSE_LIQUID. */
+  @Test void userAttributeLiquidInFilterDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: regional_rev {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "    filters: [region: \"{{ _user_attributes['region'] }}\"]\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.regional_rev");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED, rec.reasonCode());
+    assertEquals("#118", rec.relatedIssue().orElseThrow());
+  }
+
+  /** A {{ _user_attributes._region }} dotted reference is equally bounded. */
+  @Test void userAttributeDottedLiquidDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: tenant {\n"
+        + "    sql: {{ _user_attributes._tenant_id }} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED,
+        record(classify(lookml), "orders.tenant").reasonCode());
+  }
+
+  /** A {% parameter region %} use of a DECLARED bounded parameter is bounded:
+   * DEGRADE (field-switching maps to a Saiku-layer WITH MEMBER, #118). */
+  @Test void parameterUseOfDeclaredParameterDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  parameter: region { type: unquoted\n"
+        + "    allowed_value: { value: \"east\" } }\n"
+        + "  dimension: dyn {\n"
+        + "    sql: {% parameter region %} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.dyn");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED, rec.reasonCode());
+    // and the declaration itself is still CLEAN (#105).
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.region").classification());
+  }
+
+  /** A {% parameter X %} use of an UNDECLARED parameter cannot be resolved to a
+   * bounded enumeration, so it stays REFUSE_LIQUID (the safety boundary). */
+  @Test void parameterUseOfUndeclaredParameterStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: dyn { sql: {% parameter mystery %} ;; }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.dyn").reasonCode());
+  }
+
+  /** A {% condition %} filter tied to a field is a bounded parameter-bound
+   * filter: DEGRADE (#118). */
+  @Test void conditionTagDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: filtered {\n"
+        + "    type: sum\n"
+        + "    sql: SUM({% condition date_filter %} ${TABLE}.amount "
+        + "{% endcondition %}) ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED,
+        record(classify(lookml), "orders.filtered").reasonCode());
+  }
+
+  /** Computed Liquid control flow ({% if %}) producing SQL stays REFUSE_LIQUID
+   * — the safety boundary that prevents silently-wrong emits (#118). */
+  @Test void computedIfLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: computed {\n"
+        + "    type: sum\n"
+        + "    sql: {% if _user_attributes['x'] == 'a' %} ${TABLE}.a "
+        + "{% else %} ${TABLE}.b {% endif %} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.computed");
+    assertEquals(Classification.REFUSE, rec.classification());
+    assertEquals(ReasonCode.REFUSE_LIQUID, rec.reasonCode());
+  }
+
+  /** An arithmetic / field-value {{ }} output is computed, not a bounded
+   * user-attribute reference: stays REFUSE_LIQUID. */
+  @Test void arithmeticOutputLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: m {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount * {{ value }} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.m").reasonCode());
+  }
+
+  /** A field mixing a bounded user-attribute ref with arbitrary control flow is
+   * refused as a whole (any arbitrary fragment refuses the field). */
+  @Test void mixedBoundedAndArbitraryLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: m {\n"
+        + "    type: sum\n"
+        + "    sql: {{ _user_attributes['x'] }} ;;\n"
+        + "    filters: [y: \"{% if z %}a{% endif %}\"]\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.m").reasonCode());
+  }
+
+  /** ${TABLE}.col is NOT Liquid and is unaffected — CLEAN (regression guard). */
+  @Test void tableRefIsNotLiquidAndStaysClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: rev { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.rev").classification());
+  }
+
   // --- per-field metadata refusals --------------------------------------
 
   /** A bounded parameter DECLARATION is now CLEAN: it maps to an M4
