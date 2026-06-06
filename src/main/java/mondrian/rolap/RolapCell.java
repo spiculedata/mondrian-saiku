@@ -129,11 +129,17 @@ public class RolapCell implements Cell {
                 .getMondrianConnection();
         final RolapAggregationManager aggMgr =
             connection.getServer().getAggregationManager();
+        // #106 (SECURITY): thread the connection's role + parameter context so
+        // predicate row-security grants are enforced on the drill-through SQL.
+        // Drill-through runs outside the Calcite segment-load chokepoint, so it
+        // must carry the security context explicitly or it would leak rows.
         return aggMgr.getDrillThroughSql(
             cellRequest,
             starPredicateSlicer,
             fields,
-            false);
+            false,
+            connection.getRole(),
+            connection.getQueryParameterContext());
     }
 
     public int getDrillThroughCount() {
@@ -163,7 +169,9 @@ public class RolapCell implements Cell {
                 cellRequest,
                 starPredicateSlicer,
                 new ArrayList<Exp>(),
-                true);
+                true,
+                connection.getRole(),
+                connection.getQueryParameterContext());
 
         final SqlStatement stmt =
             RolapUtil.executeQuery(

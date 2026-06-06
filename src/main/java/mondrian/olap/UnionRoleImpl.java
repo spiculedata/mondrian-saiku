@@ -196,6 +196,15 @@ class UnionRoleImpl implements Role {
      * as an AND filter at injection, so a fact row must satisfy ALL of them —
      * the conservative, fail-safe reading of a union for row security (a row
      * is visible only if every constituent's restriction admits it).
+     *
+     * <p>NOTE: this is DELIBERATELY the opposite polarity to {@link #getAccess}
+     * above, which combines constituent access with {@code max(...)} (most-
+     * PERMISSIVE wins). For predicate row-security we choose most-RESTRICTIVE
+     * (AND) on purpose: a union must never widen the rows a constituent role
+     * could see. An asymmetric union — one arm grants a predicate, another arm
+     * has none on this measure group — still applies the granting arm's
+     * restriction (the un-granting arm contributes no grant, so it cannot
+     * relax the result). See PredicateGrantSecurityBatteryTest.
      */
     public java.util.List<PredicateGrant> getPredicateGrants(
         String measureGroupKey)

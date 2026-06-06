@@ -790,6 +790,30 @@ public abstract class RolapAggregationManager {
         List<Exp> fields,
         boolean countOnly);
 
+    /**
+     * #106 (SECURITY): generates drill-through SQL that enforces predicate
+     * row-security. The role's {@link mondrian.olap.PredicateGrant}s for the
+     * touched measure group(s) are injected as fail-closed {@code WHERE}
+     * predicates on the real fact column (see {@link PredicateGrantSqlFilter}).
+     * The {@code role}/{@code paramContext} pair is threaded explicitly from the
+     * connection because drill-through SQL is generated outside the Calcite
+     * segment-load chokepoint (and outside any {@code Locus}), so it cannot rely
+     * on ambient resolution.
+     *
+     * @param role the connection's active role (null → no predicate filtering)
+     * @param paramContext the connection's resolved query-parameter context
+     * @throws mondrian.olap.MondrianException if a predicate grant applies but
+     *     its bound parameter cannot be resolved (fail-closed; no unfiltered SQL
+     *     is ever returned)
+     */
+    public abstract String getDrillThroughSql(
+        DrillThroughCellRequest request,
+        StarPredicate starPredicateSlicer,
+        List<Exp> fields,
+        boolean countOnly,
+        mondrian.olap.Role role,
+        mondrian.calcite.QueryParameterContext paramContext);
+
     public static RolapCacheRegion makeCacheRegion(
         final RolapMeasureGroup measureGroup,
         final CacheControl.CellRegion region)

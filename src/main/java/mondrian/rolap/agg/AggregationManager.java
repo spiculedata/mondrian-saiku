@@ -201,11 +201,28 @@ public class AggregationManager extends RolapAggregationManager {
         List<Exp> fields,
         final boolean countOnly)
     {
+        // No role / parameter context supplied: no predicate row-security
+        // filtering. Retained for back-compat callers (e.g. tests) that drive
+        // drill-through without a secured connection.
+        return getDrillThroughSql(
+            request, starPredicateSlicer, fields, countOnly, null, null);
+    }
+
+    public String getDrillThroughSql(
+        final DrillThroughCellRequest request,
+        final StarPredicate starPredicateSlicer,
+        List<Exp> fields,
+        final boolean countOnly,
+        final mondrian.olap.Role role,
+        final mondrian.calcite.QueryParameterContext paramContext)
+    {
         DrillThroughQuerySpec spec =
             new DrillThroughQuerySpec(
                 request,
                 starPredicateSlicer,
-                countOnly);
+                countOnly,
+                role,
+                paramContext);
         Pair<String, List<SqlStatement.Type>> pair =
             spec.generateSqlQuery("drill through");
         if (getLogger().isDebugEnabled()) {
