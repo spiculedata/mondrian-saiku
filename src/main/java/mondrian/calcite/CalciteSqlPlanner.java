@@ -1113,20 +1113,17 @@ public final class CalciteSqlPlanner {
         }
         proj.add(fieldRef(b, req.symmetricGrainColumn));
         aliases.add("g_grain");
+        // Project each measure's operand — a plain column, a CASE, a binary
+        // arithmetic (e.g. a calc-column measure like balance - cost), or a
+        // literal — into the de-dup subquery, so the calc EXPRESSION is what
+        // gets de-duplicated on the grain and then summed. The value is
+        // functionally determined by the grain, so including it in the
+        // DISTINCT never changes which rows collapse.
         List<String> msrcNames = new ArrayList<>(req.measures.size());
         for (int mi = 0; mi < req.measures.size(); mi++) {
             PlannerRequest.Measure m = req.measures.get(mi);
-            if (m.column == null
-                || m.caseExpr != null
-                || m.arithExpr != null
-                || m.literal != null)
-            {
-                throw new UnsupportedTranslation(
-                    "symmetric aggregate supports plain real-column measures "
-                    + "only (measure '" + m.alias + "')");
-            }
             String mn = "msrc_" + mi;
-            proj.add(fieldRef(b, m.column));
+            proj.add(measureRef(b, m));
             aliases.add(mn);
             msrcNames.add(mn);
         }
@@ -1149,25 +1146,33 @@ public final class CalciteSqlPlanner {
         b.aggregate(b.groupKey(symKeys), aggs);
     }
 
-    private static RelBuilder.AggCall aggCall(
+    /** Build the operand RexNode a measure aggregates over: a CASE, a binary
+     *  arithmetic, a literal, or a plain column reference. Shared by the
+     *  normal aggregate ({@link #aggCall}) and the #103 symmetric aggregate,
+     *  which projects this operand into its de-dup subquery. */
+    private static RexNode measureRef(
         RelBuilder b, PlannerRequest.Measure m)
     {
         // Literal-valued measure: aggregate the literal directly
         // (SUM(0), SUM(NULL), etc.) instead of a column reference.
         // CASE-valued measure: build a RexCase from the descriptor.
-        RexNode ref;
         if (m.caseExpr != null) {
-            ref = caseRex(b, m.caseExpr);
+            return caseRex(b, m.caseExpr);
         } else if (m.arithExpr != null) {
-            ref = arithRex(b, m.arithExpr);
+            return arithRex(b, m.arithExpr);
         } else if (m.literal != null) {
-            ref = m.literal == PlannerRequest.Measure.NULL_LITERAL
+            return m.literal == PlannerRequest.Measure.NULL_LITERAL
                 ? b.literal(null)
                 : b.literal(m.literal);
         } else {
-            ref = b.field(m.column.name);
+            return b.field(m.column.name);
         }
-        return aggOf(b, m.fn, m.distinct, m.alias, ref);
+    }
+
+    private static RelBuilder.AggCall aggCall(
+        RelBuilder b, PlannerRequest.Measure m)
+    {
+        return aggOf(b, m.fn, m.distinct, m.alias, measureRef(b, m));
     }
 
     /** Map an {@link PlannerRequest.AggFn} + already-built operand RexNode to
