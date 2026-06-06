@@ -166,6 +166,28 @@ public interface Role {
     boolean canAccess(OlapElement olapElement);
 
     /**
+     * #106: returns the predicate-based row-security grants restricting the
+     * measure group identified by {@code measureGroupKey}
+     * ({@code cubeName + '.' + measureGroupName}), or an empty list if the
+     * role places no predicate restriction on it.
+     *
+     * <p>The returned list is immutable. Callers (the Calcite segment-load
+     * injection) MUST apply every returned grant as a pre-aggregation filter;
+     * an unbound parameter value fails closed (zero rows).
+     *
+     * @param measureGroupKey fully-qualified measure-group identity
+     * @return immutable list of predicate grants (never null)
+     */
+    java.util.List<PredicateGrant> getPredicateGrants(String measureGroupKey);
+
+    /**
+     * #106: returns whether this role declares any predicate grants at all.
+     * A fast pre-check so the hot segment-load path can skip grant lookup
+     * for the unsecured case.
+     */
+    boolean hasPredicateGrants();
+
+    /**
      * Enumeration of the policies by which a cell is calculated if children
      * of a member are not accessible.
      */

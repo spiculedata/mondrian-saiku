@@ -74,6 +74,16 @@ public class DelegatingRole implements Role {
     public boolean canAccess(OlapElement olapElement) {
         return role.canAccess(olapElement);
     }
+
+    public java.util.List<PredicateGrant> getPredicateGrants(
+        String measureGroupKey)
+    {
+        return role.getPredicateGrants(measureGroupKey);
+    }
+
+    public boolean hasPredicateGrants() {
+        return role.hasPredicateGrants();
+    }
 }
 
 // End DelegatingRole.java

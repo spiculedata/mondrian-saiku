@@ -619,10 +619,17 @@ class BatchLoader {
         // Is request matched by one of the headers we intend to load?
         final Map<String, Comparable> mappedCellValues =
             request.getMappedCellValues();
+        // #106: append the predicate-grant security key so a cache lookup for
+        // one user's bound value never matches another user's (or an
+        // unsecured) cached segment. Mirrors the write-side append in
+        // SegmentBuilder.toHeader.
         final List<String> compoundPredicates =
-            AggregationKey.getCompoundPredicateStringList(
-                key.getStar(),
-                key.getCompoundPredicateList());
+            mondrian.rolap.agg.SegmentCacheManager.withPredicateSecurityKey(
+                AggregationKey.getCompoundPredicateStringList(
+                    key.getStar(),
+                    key.getCompoundPredicateList()),
+                request.getMeasure(),
+                key.getStar());
 
         for (SegmentHeader header : cacheHeaders) {
             if (SegmentCacheIndexImpl.matches(
@@ -724,9 +731,15 @@ class BatchLoader {
                     star.getFactTable().getAlias(),
                     request.getConstrainedColumnsBitKey(),
                     mappedCellValues,
-                    AggregationKey.getCompoundPredicateStringList(
-                        star,
-                        key.getCompoundPredicateList()));
+                    // #106: key rollup-candidate lookup to the requesting
+                    // user's bound value too, so a rollup never reuses another
+                    // user's (or an unsecured) cached segment.
+                    mondrian.rolap.agg.SegmentCacheManager
+                        .withPredicateSecurityKey(
+                            AggregationKey.getCompoundPredicateStringList(
+                                star,
+                                key.getCompoundPredicateList()),
+                            measure, star));
             if (!rollup.isEmpty()) {
                 rollups.add(
                     new RollupInfo(

@@ -365,6 +365,7 @@ public class RolapSchemaLoader {
             xmlSchema.getUserDefinedFunctions(),
             xmlSchema.getDimensions(),
             xmlSchema.getParameters(),
+            xmlSchema.getQueryParameters(),
             xmlSchema.getCubes());
         return schema;
     }
@@ -474,6 +475,7 @@ public class RolapSchemaLoader {
         final List<MondrianDef.UserDefinedFunction> xmlUserDefinedFunctions,
         final List<MondrianDef.Dimension> xmlDimensions,
         final List<MondrianDef.Parameter> xmlParameters,
+        final List<MondrianDef.QueryParameter> xmlQueryParameters,
         final List<MondrianDef.Cube> xmlCubes)
     {
         final Dialect dialect = schema.getDialect();
@@ -517,6 +519,34 @@ public class RolapSchemaLoader {
                     schema, parameterName, defaultValue, description, type,
                     modifiable);
             validator.putXml(param, xmlParameter);
+        }
+
+        // #105: Create bounded, typed query-context parameters. Distinct from
+        // the MDX <Parameter> above — these ride as a binding layer, resolved
+        // per request from session.<name> properties and validated against a
+        // closed allowed-value set before becoming a Calcite literal.
+        for (MondrianDef.QueryParameter xmlQueryParameter : xmlQueryParameters)
+        {
+            final String qpName = xmlQueryParameter.name;
+            if (schema.mapNameToQueryParameter.containsKey(qpName)) {
+                throw new mondrian.olap.MondrianException(
+                    "Duplicate <QueryParameter> name '" + qpName + "'.");
+            }
+            final java.util.List<String> allowed = new java.util.ArrayList<>();
+            if (xmlQueryParameter.values != null) {
+                for (MondrianDef.QueryParameterValue v
+                    : xmlQueryParameter.values)
+                {
+                    allowed.add(v.cdata);
+                }
+            }
+            final RolapQueryParameterDef qpDef =
+                RolapQueryParameterDef.create(
+                    qpName,
+                    xmlQueryParameter.type,
+                    xmlQueryParameter.defaultValue,
+                    allowed);
+            schema.mapNameToQueryParameter.put(qpName, qpDef);
         }
 
         // Create cubes.
@@ -3813,6 +3843,25 @@ public class RolapSchemaLoader {
         final RolapSchema.PhysRelation relation =
             last(
                 sourceRelation, xmlAttribute.table, xmlAttribute, "table");
+
+        // #108: native <Tier> / <Duration> attributes desugar to a
+        // synthesized computed column (CASE / date-diff). When present,
+        // they supply the key, name, caption and order-by in place of the
+        // ordinary keyColumn/<Key>/<Name>/<OrderBy> resolution below.
+        final MondrianDef.Tier xmlTier = xmlAttribute.getTier();
+        final MondrianDef.Duration xmlDuration = xmlAttribute.getDuration();
+        if (xmlTier != null && xmlDuration != null) {
+            getHandler().error(
+                "Attribute must not declare both <Tier> and <Duration>",
+                xmlAttribute,
+                null);
+            return null;
+        }
+        if (xmlTier != null || xmlDuration != null) {
+            return createComputedAttribute(
+                dimension, xmlAttribute, relation, xmlTier, xmlDuration);
+        }
+
         final List<RolapSchema.PhysColumn> keyList =
             createColumnList(
                 xmlAttribute,
@@ -3921,6 +3970,94 @@ public class RolapSchemaLoader {
         } else {
             caption = xmlAttribute.caption;
         }
+        final RolapAttribute attribute =
+            new RolapAttributeImpl(
+                xmlAttribute.name,
+                toBoolean(xmlAttribute.visible, true),
+                keyList,
+                nameExpr,
+                captionExpr,
+                orderByList,
+                makeMemberFormatter(xmlAttribute),
+                levelType,
+                approxRowCount,
+                createLarder(
+                    Util.makeFqName(dimension, xmlAttribute.name)
+                        + ".attribute",
+                    xmlAttribute.getAnnotations(),
+                    xmlAttribute.name,
+                    caption,
+                    xmlAttribute.description).build())
+            {
+                public RolapDimension getDimension() {
+                    return dimension;
+                }
+            };
+
+        validator.putXml(attribute, xmlAttribute);
+        return attribute;
+    }
+
+    /**
+     * #108: build a {@link RolapAttribute} for a native {@code <Tier>} or
+     * {@code <Duration>} attribute. Exactly one of {@code xmlTier} /
+     * {@code xmlDuration} is non-null. The key is a synthesized
+     * {@link RolapSchema.PhysComputedColumn}; the order-by is a numeric
+     * column so members sort by boundary (tier) or value (duration), not
+     * lexically.
+     */
+    private RolapAttribute createComputedAttribute(
+        final RolapDimension dimension,
+        final MondrianDef.Attribute xmlAttribute,
+        final RolapSchema.PhysRelation relation,
+        final MondrianDef.Tier xmlTier,
+        final MondrianDef.Duration xmlDuration)
+    {
+        final RolapComputedColumnFactory factory =
+            new RolapComputedColumnFactory(this, schema.getDialect());
+
+        final RolapSchema.PhysComputedColumn keyColumn;
+        final List<RolapSchema.PhysColumn> orderByList;
+        if (xmlTier != null) {
+            keyColumn =
+                factory.createTierKey(xmlAttribute, xmlTier, relation);
+            final RolapSchema.PhysComputedColumn orderBy =
+                factory.createTierOrderBy(xmlAttribute, xmlTier, relation);
+            if (keyColumn == null || orderBy == null) {
+                return null;
+            }
+            orderByList = Collections.<RolapSchema.PhysColumn>singletonList(
+                orderBy);
+        } else {
+            keyColumn =
+                factory.createDurationKey(
+                    xmlAttribute, xmlDuration, relation);
+            if (keyColumn == null) {
+                return null;
+            }
+            // Duration members are numeric: sort by the value itself.
+            orderByList = Collections.<RolapSchema.PhysColumn>singletonList(
+                keyColumn);
+        }
+
+        final List<RolapSchema.PhysColumn> keyList =
+            Collections.<RolapSchema.PhysColumn>singletonList(keyColumn);
+        // Member name and caption are the binned label / interval value.
+        final RolapSchema.PhysColumn nameExpr = keyColumn;
+        final RolapSchema.PhysColumn captionExpr = keyColumn;
+
+        final int approxRowCount =
+            loadApproxRowCount(xmlAttribute.approxRowCount);
+        final org.olap4j.metadata.Level.Type levelType =
+            stringToLevelType(xmlAttribute.levelType);
+
+        final String caption;
+        if (xmlAttribute.caption == null) {
+            caption = dimension.getName() + " - " + xmlAttribute.name;
+        } else {
+            caption = xmlAttribute.caption;
+        }
+
         final RolapAttribute attribute =
             new RolapAttributeImpl(
                 xmlAttribute.name,
@@ -4920,10 +5057,93 @@ public class RolapSchemaLoader {
                             getAccess(memberGrant.access, memberAllowed));
                     }
                 }
+                // #106: predicate-based row-security grants. Validated here
+                // (boundary) so a misconfigured schema fails loudly at load
+                // time, never silently at query time.
+                if (cubeGrant.predicateGrants != null) {
+                    for (MondrianDef.PredicateGrant predicateGrant
+                        : cubeGrant.predicateGrants)
+                    {
+                        grantPredicate(role, cube, predicateGrant);
+                    }
+                }
             }
         }
         role.makeImmutable();
         return new RolapSchema.ConstantRoleFactory(role);
+    }
+
+    /**
+     * #106: validates and registers a single {@code <PredicateGrant>} on the
+     * role. Enforces, at load time:
+     * <ul>
+     *   <li>the named measure group exists in the cube;</li>
+     *   <li>the column is a {@link RolapSchema.PhysRealColumn} on that measure
+     *       group's FACT relation (rejecting dimension / snowflake columns so
+     *       the predicate stays on the fact grain, pre-aggregation);</li>
+     *   <li>the operator parses ({@code eq} | {@code in});</li>
+     *   <li>the bound parameter is a declared {@code <QueryParameter>}.</li>
+     * </ul>
+     */
+    private void grantPredicate(
+        RoleImpl role,
+        RolapCube cube,
+        MondrianDef.PredicateGrant predicateGrant)
+    {
+        final String mgName = predicateGrant.measureGroup;
+        RolapMeasureGroup measureGroup = null;
+        for (RolapMeasureGroup mg : cube.getMeasureGroups()) {
+            if (mg.getName().equals(mgName)) {
+                measureGroup = mg;
+                break;
+            }
+        }
+        if (measureGroup == null) {
+            throw Util.newError(
+                "<PredicateGrant> references unknown measure group '"
+                + mgName + "' in cube '" + cube.getName() + "'");
+        }
+
+        // Column must be a real physical column on the FACT relation — not a
+        // dimension/snowflake column — so the predicate filters fact rows at
+        // the grain, before aggregation.
+        final String colName = predicateGrant.column;
+        RolapSchema.PhysRelation factRelation = measureGroup.getFactRelation();
+        RolapSchema.PhysColumn physColumn =
+            factRelation.getColumn(colName, false);
+        if (!(physColumn instanceof RolapSchema.PhysRealColumn)) {
+            throw Util.newError(
+                "<PredicateGrant> column '" + colName + "' is not a real "
+                + "column on the fact relation of measure group '" + mgName
+                + "' in cube '" + cube.getName() + "'; predicate grants must "
+                + "filter a real fact column at the fact grain.");
+        }
+
+        final PredicateGrant.Operator operator =
+            PredicateGrant.Operator.parse(predicateGrant.operator);
+
+        final String paramName = predicateGrant.parameter;
+        if (!schema.getQueryParameterDefs().containsKey(paramName)) {
+            throw Util.newError(
+                "<PredicateGrant> references undeclared query parameter '"
+                + paramName + "'; declare a <QueryParameter name='" + paramName
+                + "'> in the schema.");
+        }
+
+        role.grant(
+            predicateGrantKey(cube.getName(), mgName),
+            new PredicateGrant(mgName, colName, operator, paramName));
+    }
+
+    /**
+     * #106: the fully-qualified measure-group identity used to key predicate
+     * grants — {@code cubeName + '.' + measureGroupName}. Must match the key
+     * the injection chokepoint
+     * ({@code CalcitePlannerAdapters.predicateGrantKey}) computes from a live
+     * {@link RolapMeasureGroup}.
+     */
+    static String predicateGrantKey(String cubeName, String measureGroupName) {
+        return cubeName + "." + measureGroupName;
     }
 
     private RolapSchema.RoleFactory createUnionRole(

@@ -110,6 +110,15 @@ public final class M4YamlToXml {
                 }
             }
         }
+        // #105: bounded, typed query-context parameters.
+        Object queryParameters = root.get("parameters");
+        if (queryParameters instanceof List) {
+            for (Object qp : (List<?>) queryParameters) {
+                if (qp instanceof Map) {
+                    children.add(buildQueryParameter((Map<?, ?>) qp));
+                }
+            }
+        }
         if (!children.isEmpty()) {
             schema.childArray =
                 children.toArray(new MondrianDef.SchemaElement[0]);
@@ -137,6 +146,33 @@ public final class M4YamlToXml {
     }
 
     // ---- role builders ----
+
+    // ---- #105 query-parameter build helper ----
+
+    private static MondrianDef.QueryParameter buildQueryParameter(Map<?, ?> qp)
+    {
+        MondrianDef.QueryParameter out = new MondrianDef.QueryParameter();
+        out.name = str(qp.get("name"));
+        out.description = str(qp.get("description"));
+        Object type = qp.get("type");
+        if (type != null) {
+            out.type = str(type);
+        }
+        out.defaultValue = str(qp.get("default_value"));
+        Object allowed = qp.get("allowed_values");
+        if (allowed instanceof List && !((List<?>) allowed).isEmpty()) {
+            List<MondrianDef.QueryParameterValue> values = new ArrayList<>();
+            for (Object v : (List<?>) allowed) {
+                MondrianDef.QueryParameterValue qpv =
+                    new MondrianDef.QueryParameterValue();
+                qpv.cdata = str(v);
+                values.add(qpv);
+            }
+            out.values =
+                values.toArray(new MondrianDef.QueryParameterValue[0]);
+        }
+        return out;
+    }
 
     private static MondrianDef.Role buildRole(Map<?, ?> r) {
         MondrianDef.Role role = new MondrianDef.Role();
@@ -198,6 +234,27 @@ public final class M4YamlToXml {
             }
             grant.hierarchyGrants = list.toArray(new MondrianDef.HierarchyGrant[0]);
         }
+        // #106: predicate-based row-security grants.
+        Object preds = cg.get("predicate_grants");
+        if (preds instanceof List && !((List<?>) preds).isEmpty()) {
+            List<MondrianDef.PredicateGrant> list = new ArrayList<>();
+            for (Object p : (List<?>) preds) {
+                if (p instanceof Map) {
+                    list.add(buildPredicateGrant((Map<?, ?>) p));
+                }
+            }
+            grant.predicateGrants =
+                list.toArray(new MondrianDef.PredicateGrant[0]);
+        }
+        return grant;
+    }
+
+    private static MondrianDef.PredicateGrant buildPredicateGrant(Map<?, ?> pg) {
+        MondrianDef.PredicateGrant grant = new MondrianDef.PredicateGrant();
+        grant.measureGroup = str(pg.get("measure_group"));
+        grant.column = str(pg.get("column"));
+        grant.operator = str(pg.get("operator"));
+        grant.parameter = str(pg.get("parameter"));
         return grant;
     }
 
@@ -320,6 +377,15 @@ public final class M4YamlToXml {
         Object nameColumns = m.get("name_columns");
         if (nameColumns instanceof List && !((List<?>) nameColumns).isEmpty()) {
             kids.add(buildName((List<?>) nameColumns));
+        }
+        // #108: native tier / duration child elements.
+        Object tier = m.get("tier");
+        if (tier instanceof Map) {
+            kids.add(buildTier((Map<?, ?>) tier));
+        }
+        Object duration = m.get("duration");
+        if (duration instanceof Map) {
+            kids.add(buildDuration((Map<?, ?>) duration));
         }
         Object props = m.get("properties");
         if (props instanceof List) {
@@ -633,6 +699,38 @@ public final class M4YamlToXml {
             }
         }
         return col;
+    }
+
+    /** #108: rebuild a {@code <Tier>} child from its YAML map. */
+    private static MondrianDef.Tier buildTier(Map<?, ?> m) {
+        MondrianDef.Tier tier = new MondrianDef.Tier();
+        tier.column = str(m.get("column"));
+        tier.table = str(m.get("table"));
+        Object bins = m.get("bins");
+        List<MondrianDef.Bin> list = new ArrayList<>();
+        if (bins instanceof List) {
+            for (Object o : (List<?>) bins) {
+                if (o instanceof Map) {
+                    Map<?, ?> b = (Map<?, ?>) o;
+                    MondrianDef.Bin bin = new MondrianDef.Bin();
+                    bin.boundary = str(b.get("boundary"));
+                    bin.label = str(b.get("label"));
+                    list.add(bin);
+                }
+            }
+        }
+        tier.bins = list.toArray(new MondrianDef.Bin[0]);
+        return tier;
+    }
+
+    /** #108: rebuild a {@code <Duration>} child from its YAML map. */
+    private static MondrianDef.Duration buildDuration(Map<?, ?> m) {
+        MondrianDef.Duration d = new MondrianDef.Duration();
+        d.startColumn = str(m.get("start_column"));
+        d.endColumn = str(m.get("end_column"));
+        d.table = str(m.get("table"));
+        d.unit = str(m.get("unit"));
+        return d;
     }
 
     static String str(Object o) {

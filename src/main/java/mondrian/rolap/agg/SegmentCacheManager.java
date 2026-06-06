@@ -1450,9 +1450,14 @@ public class SegmentCacheManager {
                         star.getFactTable().getAlias(),
                         request.getConstrainedColumnsBitKey(),
                         request.getMappedCellValues(),
-                        AggregationKey.getCompoundPredicateStringList(
-                            star,
-                            key.getCompoundPredicateList()));
+                        // #106: include the predicate-grant security key so a
+                        // cache lookup for one user's bound value never matches
+                        // another user's (or an unsecured) cached segment.
+                        withPredicateSecurityKey(
+                            AggregationKey.getCompoundPredicateStringList(
+                                star,
+                                key.getCompoundPredicateList()),
+                            measure, star));
 
             final Map<SegmentHeader, Future<SegmentBody>> headerMap =
                 new HashMap<SegmentHeader, Future<SegmentBody>>();
@@ -1480,6 +1485,30 @@ public class SegmentCacheManager {
         public Locus getLocus() {
             return locus;
         }
+    }
+
+    /**
+     * #106: returns a compound-predicate list with the predicate-grant
+     * security key appended (when the active role secures the measure group),
+     * so a cache lookup is keyed to the requesting user's bound value. Mirrors
+     * the write-side append in {@link SegmentBuilder#toHeader}. Returns the
+     * input list unchanged when the load is unsecured.
+     */
+    public static List<String> withPredicateSecurityKey(
+        List<String> compoundPredicates,
+        RolapStar.Measure measure,
+        RolapStar star)
+    {
+        final String securityKey =
+            mondrian.calcite.CalcitePlannerAdapters
+                .predicateSecurityCacheKey(measure, star);
+        if (securityKey.isEmpty()) {
+            return compoundPredicates;
+        }
+        final List<String> out =
+            new ArrayList<String>(compoundPredicates);
+        out.add(securityKey);
+        return out;
     }
 
     private static class PeekResponse {

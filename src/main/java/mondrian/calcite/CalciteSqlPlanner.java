@@ -775,7 +775,7 @@ public final class CalciteSqlPlanner {
             b.filter(b.literal(false));
         } else {
             for (PlannerRequest.Filter f : req.filters) {
-                b.filter(filterRex(b, f));
+                b.filter(filterRex(b, f, req.paramContext));
             }
             for (PlannerRequest.TupleFilter tf : req.tupleFilters) {
                 b.filter(tupleFilterRex(b, tf));
@@ -957,11 +957,27 @@ public final class CalciteSqlPlanner {
                 b.push(wrapped);
             }
         } else {
+            // #108: project via fieldRef so a computed column (tier /
+            // duration) renders as its structured expression, aliased to
+            // the request column name. Pure-column projections keep their
+            // existing single-field shape.
             List<RexNode> projs = new ArrayList<>();
+            List<String> projAliases = new ArrayList<>();
+            boolean anyComputed = false;
             for (PlannerRequest.Column c : req.projections) {
-                projs.add(b.field(c.name));
+                if (c.expr != null) {
+                    projs.add(b.alias(fieldRef(b, c), c.name));
+                    anyComputed = true;
+                } else {
+                    projs.add(b.field(c.name));
+                }
+                projAliases.add(c.name);
             }
-            b.project(projs);
+            if (anyComputed) {
+                b.project(projs, projAliases);
+            } else {
+                b.project(projs);
+            }
             if (req.distinct) {
                 b.distinct();
             }
@@ -998,16 +1014,132 @@ public final class CalciteSqlPlanner {
     private static RexNode fieldRef(
         RelBuilder b, PlannerRequest.Column c)
     {
+        // #108: a computed column (tier / duration) renders as a structured
+        // expression over its embedded source columns, not a plain field.
+        if (c.expr != null) {
+            return computedRex(b, c.expr);
+        }
         if (c.table == null) {
             return b.field(c.name);
         }
         return b.field(c.table, c.name);
     }
 
+    /** #108: build the Rex for a structured computed-column expression — a
+     *  multi-branch tier CASE or a duration {@code TIMESTAMP_DIFF}. */
+    static RexNode computedRex(RelBuilder b, PlannerRequest.ComputedExpr e) {
+        if (e instanceof PlannerRequest.TierExpr) {
+            return tierRex(b, (PlannerRequest.TierExpr) e);
+        }
+        if (e instanceof PlannerRequest.DurationExpr) {
+            return durationRex(b, (PlannerRequest.DurationExpr) e);
+        }
+        throw new IllegalStateException(
+            "unhandled computed expr: " + e.getClass().getName());
+    }
+
+    /** #108: nested CASE for a tier —
+     *  {@code CASE WHEN col < b0 THEN l0 WHEN col < b1 THEN l1 …
+     *  ELSE lLast END}. RelBuilder's CASE takes
+     *  (cond0, then0, cond1, then1, …, else). */
+    private static RexNode tierRex(
+        RelBuilder b, PlannerRequest.TierExpr t)
+    {
+        RexNode col = fieldRef(b, t.column);
+        List<RexNode> args = new ArrayList<>();
+        RexNode elseValue = null;
+        for (PlannerRequest.TierBranch branch : t.branches) {
+            if (branch.boundary == null) {
+                elseValue = b.literal(branch.label);
+                continue;
+            }
+            args.add(
+                b.call(
+                    org.apache.calcite.sql.fun.SqlStdOperatorTable
+                        .LESS_THAN,
+                    col,
+                    b.literal(branch.boundary)));
+            args.add(b.literal(branch.label));
+        }
+        // Defensive: a tier with no open-ended bin still needs an ELSE.
+        args.add(elseValue == null ? b.literal(null) : elseValue);
+        return b.call(
+            org.apache.calcite.sql.fun.SqlStdOperatorTable.CASE, args);
+    }
+
+    /** #108: {@code TIMESTAMPDIFF(unit, start, end)} via Calcite's
+     *  {@code TIMESTAMP_DIFF}, whose RelToSqlConverter unparses correctly
+     *  per dialect. The interval qualifier carries the time unit. */
+    private static RexNode durationRex(
+        RelBuilder b, PlannerRequest.DurationExpr d)
+    {
+        RexNode start = fieldRef(b, d.startColumn);
+        RexNode end = fieldRef(b, d.endColumn);
+        // TIMESTAMPDIFF(unit, start, end) — Calcite's TIMESTAMP_DIFF takes
+        // the time unit as a SYMBOL flag (TimeUnitRange); RelToSqlConverter
+        // unparses it as TIMESTAMPDIFF(<UNIT>, start, end) per dialect.
+        RexNode unitFlag =
+            b.getRexBuilder().makeFlag(timeUnitOf(d.unit));
+        return b.call(
+            org.apache.calcite.sql.fun.SqlStdOperatorTable.TIMESTAMP_DIFF,
+            unitFlag, start, end);
+    }
+
+    private static org.apache.calcite.avatica.util.TimeUnit timeUnitOf(
+        PlannerRequest.DurationUnit unit)
+    {
+        switch (unit) {
+        case DAY:
+            return org.apache.calcite.avatica.util.TimeUnit.DAY;
+        case WEEK:
+            return org.apache.calcite.avatica.util.TimeUnit.WEEK;
+        case MONTH:
+            return org.apache.calcite.avatica.util.TimeUnit.MONTH;
+        case QUARTER:
+            return org.apache.calcite.avatica.util.TimeUnit.QUARTER;
+        case YEAR:
+            return org.apache.calcite.avatica.util.TimeUnit.YEAR;
+        case HOUR:
+            return org.apache.calcite.avatica.util.TimeUnit.HOUR;
+        case MINUTE:
+            return org.apache.calcite.avatica.util.TimeUnit.MINUTE;
+        case SECOND:
+            return org.apache.calcite.avatica.util.TimeUnit.SECOND;
+        default:
+            throw new IllegalStateException("unhandled unit: " + unit);
+        }
+    }
+
     private static RexNode filterRex(
-        RelBuilder b, PlannerRequest.Filter f)
+        RelBuilder b, PlannerRequest.Filter f,
+        QueryParameterContext paramContext)
     {
         RexNode col = fieldRef(b, f.column);
+        // #105: SINGLE substitution seam. A parameter-bound filter resolves
+        // its predicate value from the validated, typed query-parameter
+        // context here — the value never reaches a Calcite literal until it
+        // has passed type + allowed-value checks at context-build time. A
+        // future Phase-2 `?` bind-variable swap is local to this branch.
+        if (f.isParamBound()) {
+            // #106: an IN predicate grant binds to a comma-separated
+            // multi-value parameter. Resolve+validate each token through the
+            // #105 sandbox; an empty membership set fails closed (no row can
+            // match) rather than degenerating to an unrestricted scan.
+            if (f.op == PlannerRequest.Operator.IN) {
+                java.util.List<Object> values =
+                    paramContext.resolveList(f.paramRef);
+                if (values.isEmpty()) {
+                    return b.literal(false);
+                }
+                List<RexNode> ors = new ArrayList<>(values.size());
+                for (Object v : values) {
+                    ors.add(eqOrIsNull(b, col, v));
+                }
+                return ors.size() == 1 ? ors.get(0) : b.or(ors);
+            }
+            Object value = paramContext.resolve(f.paramRef);
+            return eqOrIsNull(b, col, value);
+        }
         if (f.literals.size() == 1) {
             return eqOrIsNull(b, col, f.literals.get(0));
         }

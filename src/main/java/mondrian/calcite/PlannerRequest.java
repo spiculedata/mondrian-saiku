@@ -31,9 +31,71 @@ public final class PlannerRequest {
         /** Optional table qualifier; null when unambiguous. */
         public final String table;
         public final String name;
+        /** #108: when non-null, this column projects a structured computed
+         *  expression (a {@link TierExpr} or {@link DurationExpr}) rather
+         *  than a plain table column. The renderer builds the Rex from this
+         *  instead of {@code b.field(name)}; {@link #name} is still the
+         *  result alias. Null for ordinary columns. */
+        public final ComputedExpr expr;
         public Column(String table, String name) {
+            this(table, name, null);
+        }
+        public Column(String table, String name, ComputedExpr expr) {
             this.table = table;
             this.name = name;
+            this.expr = expr;
+        }
+    }
+
+    /** #108: marker for a structured computed-column expression carried by
+     *  a {@link Column} on the group-by / projection path. */
+    public abstract static class ComputedExpr {
+    }
+
+    /** #108: one branch of a {@link TierExpr}: rows whose {@code column}
+     *  value is strictly less than {@code boundary} take {@code label};
+     *  a branch with a null boundary is the open-ended ELSE. */
+    public static final class TierBranch {
+        public final Number boundary;
+        public final String label;
+        public TierBranch(Number boundary, String label) {
+            this.boundary = boundary;
+            this.label = label;
+        }
+    }
+
+    /** #108: a multi-branch tier CASE over {@code column}. Branches are in
+     *  ascending boundary order; the final branch is the open-ended ELSE
+     *  (null boundary). Rendered as a nested Calcite CASE. */
+    public static final class TierExpr extends ComputedExpr {
+        public final Column column;
+        public final List<TierBranch> branches;
+        public TierExpr(Column column, List<TierBranch> branches) {
+            this.column = column;
+            this.branches = List.copyOf(branches);
+        }
+    }
+
+    /** #108: time units a {@link DurationExpr} is expressed in. Matches the
+     *  Calcite {@code TimeUnit} names used to build the interval qualifier
+     *  passed to {@code TIMESTAMP_DIFF}. */
+    public enum DurationUnit {
+        DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, SECOND
+    }
+
+    /** #108: a date-diff of {@code endColumn − startColumn} in
+     *  {@code unit}. Rendered via Calcite {@code TIMESTAMP_DIFF} so each
+     *  dialect's unparse is correct. */
+    public static final class DurationExpr extends ComputedExpr {
+        public final Column startColumn;
+        public final Column endColumn;
+        public final DurationUnit unit;
+        public DurationExpr(
+            Column startColumn, Column endColumn, DurationUnit unit)
+        {
+            this.startColumn = startColumn;
+            this.endColumn = endColumn;
+            this.unit = unit;
         }
     }
 
@@ -245,12 +307,26 @@ public final class PlannerRequest {
         public final Column column;
         public final Operator op;
         public final List<Object> literals;
+        /** #105: when non-null, this is a parameter-bound EQ filter — the
+         *  predicate value is NOT one of {@link #literals} but the validated,
+         *  typed value of the named query parameter resolved at render time
+         *  from the request's {@link PlannerRequest#paramContext}. This is the
+         *  single Phase-2 isolation seam: a future {@code ?} bind-variable
+         *  swap touches only the render site, not this model. The
+         *  {@link #literals} list holds a sentinel ({@link #PARAM_PLACEHOLDER})
+         *  so the EQ single-literal invariant still holds. */
+        public final String paramRef;
         /** Back-compat shortcut: single-literal EQ filter. */
         public Filter(Column column, Object literal) {
             this(column, Operator.EQ,
                 java.util.Collections.singletonList(literal));
         }
         public Filter(Column column, Operator op, List<Object> literals) {
+            this(column, op, literals, null);
+        }
+        private Filter(
+            Column column, Operator op, List<Object> literals, String paramRef)
+        {
             this.column = column;
             this.op = op;
             // Defensive copy that tolerates null elements — a null
@@ -258,15 +334,52 @@ public final class PlannerRequest {
             // downstream). List.copyOf / List.of reject nulls.
             this.literals = java.util.Collections.unmodifiableList(
                 new java.util.ArrayList<>(literals));
-            if (op == Operator.EQ && this.literals.size() != 1) {
-                throw new IllegalArgumentException(
-                    "EQ filter requires exactly one literal; got "
-                    + this.literals.size());
+            this.paramRef = paramRef;
+            // A parameter-bound filter holds a single placeholder regardless
+            // of op (EQ or IN); the real value(s) are resolved at render
+            // time. So bypass the literal-count invariants when paramRef set.
+            if (paramRef == null) {
+                if (op == Operator.EQ && this.literals.size() != 1) {
+                    throw new IllegalArgumentException(
+                        "EQ filter requires exactly one literal; got "
+                        + this.literals.size());
+                }
+                if (op == Operator.IN && this.literals.isEmpty()) {
+                    throw new IllegalArgumentException(
+                        "IN filter requires at least one literal");
+                }
             }
-            if (op == Operator.IN && this.literals.isEmpty()) {
-                throw new IllegalArgumentException(
-                    "IN filter requires at least one literal");
+        }
+        /** #105: sentinel literal held by a parameter-bound filter so the
+         *  EQ invariant holds; the real value is resolved at render time. */
+        public static final Object PARAM_PLACEHOLDER = new Object();
+        /** #105: build an EQ filter whose value is bound to a declared query
+         *  parameter, resolved+validated at render time. */
+        public static Filter boundToParam(Column column, String paramRef) {
+            if (paramRef == null || paramRef.isEmpty()) {
+                throw new IllegalArgumentException("paramRef required");
             }
+            return new Filter(
+                column, Operator.EQ,
+                java.util.Collections.singletonList(PARAM_PLACEHOLDER),
+                paramRef);
+        }
+        /** #106: build an IN filter whose membership set is bound to a declared
+         *  query parameter (a comma-separated session value), each token
+         *  coerced+validated at render time. The single placeholder keeps the
+         *  literals list non-empty; the real set is resolved off the
+         *  request's {@link PlannerRequest#paramContext}. */
+        public static Filter boundToParamIn(Column column, String paramRef) {
+            if (paramRef == null || paramRef.isEmpty()) {
+                throw new IllegalArgumentException("paramRef required");
+            }
+            return new Filter(
+                column, Operator.IN,
+                java.util.Collections.singletonList(PARAM_PLACEHOLDER),
+                paramRef);
+        }
+        public boolean isParamBound() {
+            return paramRef != null;
         }
         /** Back-compat accessor: EQ filter's single literal. */
         public Object literal() {
@@ -507,6 +620,12 @@ public final class PlannerRequest {
      *  bridges roll up additively and never set this. */
     public final Column symmetricGrainColumn;
 
+    /** #105: per-request resolved query-parameter context. Carries the
+     *  validated, typed values that parameter-bound filters substitute at
+     *  the single render seam. Never null — defaults to
+     *  {@link QueryParameterContext#EMPTY}. */
+    public final QueryParameterContext paramContext;
+
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
         this.factPhysName = b.factPhysName;
@@ -524,6 +643,8 @@ public final class PlannerRequest {
         this.limit = b.limit;
         this.unionArms = List.copyOf(b.unionArms);
         this.symmetricGrainColumn = b.symmetricGrainColumn;
+        this.paramContext = b.paramContext == null
+            ? QueryParameterContext.EMPTY : b.paramContext;
         if (this.distinct
             && (!this.measures.isEmpty() || !this.groupBy.isEmpty()))
         {
@@ -575,6 +696,7 @@ public final class PlannerRequest {
         private int limit;
         private final List<PlannerRequest> unionArms = new ArrayList<>();
         private Column symmetricGrainColumn;
+        private QueryParameterContext paramContext;
 
         private Builder(String factTable) {
             if (factTable == null || factTable.isEmpty()) {
@@ -596,6 +718,12 @@ public final class PlannerRequest {
          *  grain key — see {@link PlannerRequest#symmetricGrainColumn}. */
         public Builder symmetricGrainColumn(Column c) {
             this.symmetricGrainColumn = c;
+            return this;
+        }
+        /** #105: attach the resolved query-parameter context that
+         *  parameter-bound filters substitute at render time. */
+        public Builder paramContext(QueryParameterContext ctx) {
+            this.paramContext = ctx;
             return this;
         }
         public Builder addProjection(Column c) {

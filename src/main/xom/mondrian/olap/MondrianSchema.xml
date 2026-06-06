@@ -301,7 +301,7 @@ version 3.x schemas.</p>
             <Doc>
                 Child elements of this Schema. PhysicalSchema (at most once),
                 Dimension, Cube, Role, NamedSet, UserDefinedFunction, Parameter,
-                Annotations (at most once), in any order.
+                QueryParameter, Annotations (at most once), in any order.
             </Doc>
         </Array>
         <Code>
@@ -317,6 +317,7 @@ version 3.x schemas.</p>
                     NamedSet.class,
                     UserDefinedFunction.class,
                     Parameter.class,
+                    QueryParameter.class,
                     PhysicalSchema.class,
                     Annotations.class)
                 {
@@ -344,6 +345,9 @@ version 3.x schemas.</p>
             }
             public NamedList<Parameter> getParameters() {
                 return children.filterNamed(Parameter.class);
+            }
+            public NamedList<QueryParameter> getQueryParameters() {
+                return children.filterNamed(QueryParameter.class);
             }
             public PhysicalSchema getPhysicalSchema() {
                 return children.singleton(PhysicalSchema.class);
@@ -1214,6 +1218,8 @@ version 3.x schemas.</p>
                     Name.class,
                     OrderBy.class,
                     Caption.class,
+                    Tier.class,
+                    Duration.class,
                     Property.class,
                     MemberFormatter.class,
                     Annotations.class)
@@ -1225,6 +1231,14 @@ version 3.x schemas.</p>
                         childArray = ts;
                     }
                 };
+            /** #108: native tier (binning) child, or null. */
+            public Tier getTier() {
+                return children.singleton(Tier.class);
+            }
+            /** #108: native duration (date-diff) child, or null. */
+            public Duration getDuration() {
+                return children.singleton(Duration.class);
+            }
             public NamedList<Property> getProperties() {
                 return children.filterNamed(Property.class);
             }
@@ -2873,6 +2887,96 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
         </Code>
     </Element>
 
+    <Element type="Tier" class="AttributeElement">
+        <Doc>
+            #108: declares a native <em>tier</em> (binning) attribute. The
+            attribute's member for a row is the label of the first bin whose
+            upper boundary the source column value is strictly less than;
+            rows at or above every boundary fall into the open-ended final
+            bin. Desugars to a CASE expression rendered per-dialect via
+            Calcite. Members sort by boundary order, not lexically.
+        </Doc>
+        <Attribute name="column" required="true">
+            <Doc>
+                Name of the source column whose value is binned.
+            </Doc>
+        </Attribute>
+        <Attribute name="table" required="false">
+            <Doc>
+                Table that holds the source column. Defaults to the
+                attribute's (or dimension's) table.
+            </Doc>
+        </Attribute>
+        <Array name="bins" type="Bin">
+            <Doc>
+                Ordered list of bins, by ascending boundary. Each bin except
+                the last carries a numeric <code>boundary</code>; the final
+                bin omits it (open-ended top bin).
+            </Doc>
+        </Array>
+    </Element>
+
+    <Element type="Bin">
+        <Doc>
+            #108: one bin of a Tier. A row whose source column value is
+            strictly less than <code>boundary</code> (and not matched by an
+            earlier bin) takes this bin's <code>label</code>. The final bin
+            in a Tier omits <code>boundary</code> to capture all remaining
+            rows.
+        </Doc>
+        <Attribute name="boundary" required="false">
+            <Doc>
+                Exclusive upper boundary of this bin. Omit on the final bin
+                to make it open-ended.
+            </Doc>
+        </Attribute>
+        <Attribute name="label" required="true">
+            <Doc>
+                Member name/caption for rows that fall into this bin.
+            </Doc>
+        </Attribute>
+    </Element>
+
+    <Element type="Duration" class="AttributeElement">
+        <Doc>
+            #108: declares a native <em>duration</em> attribute — a numeric
+            interval between two date/timestamp columns, in a fixed unit.
+            Desugars to a date-diff expression rendered per-dialect via
+            Calcite. Members are numeric and sort numerically.
+        </Doc>
+        <Attribute name="startColumn" required="true">
+            <Doc>
+                Name of the column holding the interval start
+                (date/timestamp).
+            </Doc>
+        </Attribute>
+        <Attribute name="endColumn" required="true">
+            <Doc>
+                Name of the column holding the interval end
+                (date/timestamp).
+            </Doc>
+        </Attribute>
+        <Attribute name="table" required="false">
+            <Doc>
+                Table that holds the start/end columns. Defaults to the
+                attribute's (or dimension's) table.
+            </Doc>
+        </Attribute>
+        <Attribute name="unit" required="true" default="DAY">
+            <Doc>
+                Time unit of the computed interval.
+            </Doc>
+            <Value>DAY</Value>
+            <Value>WEEK</Value>
+            <Value>MONTH</Value>
+            <Value>QUARTER</Value>
+            <Value>YEAR</Value>
+            <Value>HOUR</Value>
+            <Value>MINUTE</Value>
+            <Value>SECOND</Value>
+        </Attribute>
+    </Element>
+
     <Element type="ForeignKey" class="Columns">
         <Doc>
             Column(s) that hold the foreign key from a measure group's
@@ -3041,6 +3145,38 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
         </Attribute>
         <Array name="dimensionGrants" type="DimensionGrant"/>
         <Array name="hierarchyGrants" type="HierarchyGrant"/>
+        <Array name="predicateGrants" type="PredicateGrant"/>
+    </Element>
+
+    <Element type="PredicateGrant">
+        <Doc>
+            #106: Predicate-based row security. Restricts the fact rows of a
+            measure group to those whose real fact column matches the value of
+            a bounded query-context parameter (a #105 &lt;QueryParameter&gt;,
+            fed via a <code>session.&lt;name&gt;</code> connection property).
+            The Calcite adapter injects this as a filter on every segment load
+            touching the measure group, pre-aggregation, so totals are
+            correctly restricted. Bounds: equality / IN on a REAL fact column
+            only, value = a bound parameter. No arbitrary SQL.
+        </Doc>
+        <Attribute name="measureGroup" required="true">
+            <Doc>Name of the measure group whose fact rows are restricted.</Doc>
+        </Attribute>
+        <Attribute name="column" required="true">
+            <Doc>Real fact column (on the measure group's fact relation) the
+            predicate is applied to. Must be a physical real column on the
+            fact grain; dimension/snowflake columns are rejected.</Doc>
+        </Attribute>
+        <Attribute name="operator" required="false" default="eq">
+            <Doc>Comparison operator: "eq" (equality) or "in" (membership in a
+            comma-separated parameter value).</Doc>
+            <Value>eq</Value>
+            <Value>in</Value>
+        </Attribute>
+        <Attribute name="parameter" required="true">
+            <Doc>Name of the bound #105 query-context parameter supplying the
+            predicate value.</Doc>
+        </Attribute>
     </Element>
 
     <Element class="Grant" type="DimensionGrant">
@@ -3244,6 +3380,63 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 public String getNameAttribute() { return name; }
             ]]>
         </Code>
+    </Element>
+
+    <Element type="QueryParameter" class="NamedElement,SchemaElement">
+        <Doc>
+            #105: A <code>QueryParameter</code> declares a bounded, typed
+            query-context parameter. Unlike <code>Parameter</code> (an MDX
+            ParamRef whose default is an MDX expression), a QueryParameter's
+            value is supplied per request through a connection
+            <code>session.&lt;name&gt;</code> property, coerced to the declared
+            type and checked against an optional closed allowed-value set
+            BEFORE it ever becomes a SQL literal. It is NOT free-form SQL
+            templating: the no-injection guarantee comes from strict typing +
+            enumeration, not from a JDBC placeholder. Requires the Calcite
+            backend; the legacy SQL generator ignores query parameters.
+        </Doc>
+        <Attribute name="name" required="true">
+            <Doc>Name of this query parameter. Referenced from a use-site and
+                bound from the connection's <code>session.&lt;name&gt;</code>
+                property.</Doc>
+        </Attribute>
+        <Attribute name="description" required="false">
+            <Doc>Description of this query parameter.</Doc>
+        </Attribute>
+        <Attribute name="type" default="String" required="true">
+            <Doc>Declared type of the parameter value:
+                String, Numeric, Date, or Member. The supplied value is
+                coerced to this type and rejected if it cannot be.</Doc>
+            <Value>String</Value>
+            <Value>Numeric</Value>
+            <Value>Date</Value>
+            <Value>Member</Value>
+        </Attribute>
+        <Attribute name="defaultValue" type="String" required="false">
+            <Doc>Default value (a LITERAL, not an MDX expression) used when no
+                <code>session.&lt;name&gt;</code> value is supplied. Must
+                itself satisfy the type and (if present) the allowed-value
+                set.</Doc>
+        </Attribute>
+        <Array name="values" type="QueryParameterValue">
+            <Doc>Optional closed enumeration of allowed values. When present,
+                a supplied or default value outside this set is rejected with
+                a clear error.</Doc>
+        </Array>
+        <Code>
+            <![CDATA[
+                public String getNameAttribute() { return name; }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="QueryParameterValue">
+        <Doc>
+            #105: One allowed value in a <code>QueryParameter</code>'s closed
+            enumeration. The CDATA holds the literal value (coerced to the
+            parameter's declared type).
+        </Doc>
+        <CData/>
     </Element>
 
     <Element type="Annotations" class="Holder,SchemaElement,CubeElement,DimensionElement,HierarchyElement,LevelElement,AttributeElement,MeasureElement,QueryElement,CalculatedMemberElement,RoleElement,PropertyElement">

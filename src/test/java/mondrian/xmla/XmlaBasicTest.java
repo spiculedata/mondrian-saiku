@@ -932,6 +932,16 @@ public class XmlaBasicTest extends XmlaBaseTestCase {
                     return Access.ALL;
                 }
             }
+
+            public java.util.List<mondrian.olap.PredicateGrant>
+                getPredicateGrants(String measureGroupKey)
+            {
+                return java.util.Collections.emptyList();
+            }
+
+            public boolean hasPredicateGrants() {
+                return false;
+            }
         }
 
         Role role = new RR();

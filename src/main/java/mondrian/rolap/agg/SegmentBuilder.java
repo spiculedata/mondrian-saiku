@@ -769,6 +769,16 @@ public class SegmentBuilder {
             compoundPredicate.toSql(segment.star.getSqlQueryDialect(), buf);
             cp.add(buf.toString());
         }
+        // #106 cache isolation: fold the active role's resolved predicate-grant
+        // value into the cache identity so a segment built for one user's bound
+        // value is never served to another user with a different value. Empty
+        // string for unsecured loads keeps existing cache keys byte-identical.
+        final String securityKey =
+            mondrian.calcite.CalcitePlannerAdapters.predicateSecurityCacheKey(
+                segment.measure, segment.star);
+        if (!securityKey.isEmpty()) {
+            cp.add(securityKey);
+        }
         final RolapSchema schema = segment.star.getSchema();
         return new SegmentHeader(
             schema.getName(),

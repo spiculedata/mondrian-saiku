@@ -1,0 +1,308 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package mondrian.lookml.transpile;
+
+import mondrian.lookml.model.Classification;
+import mondrian.lookml.parse.LookmlNode;
+import mondrian.lookml.parse.LookmlParser;
+import mondrian.olap.Axis;
+import mondrian.olap.Connection;
+import mondrian.olap.DriverManager;
+import mondrian.olap.Position;
+import mondrian.olap.Query;
+import mondrian.olap.Result;
+import mondrian.olap.Util;
+import mondrian.rolap.RolapConnectionProperties;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import java.sql.Statement;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Issue #101: end-to-end proof of the LookML&rarr;Mondrian-M4 transpiler
+ * (clean-port path). A small LookML model is parsed, transpiled to an M4 YAML
+ * schema, loaded through the existing {@code M4YamlToXml} converter, and run
+ * against an in-memory H2 warehouse — asserting the numbers come out right.
+ *
+ * <p>Modelled on {@code mondrian.calcite.PercentileH2EndToEndTest}: an H2
+ * star (orders fact left-joined many_to_one to users), so a {@code sum} by a
+ * conformed-dimension attribute can be checked against hand-computed totals.
+ */
+public class LookmlTranspilerTest {
+
+  /** orders: 5 rows; users: 3 rows in 2 countries.
+   * <pre>
+   *   order   user  amount  status      country (via user)
+   *   1       10    100     complete    GB
+   *   2       10    200     complete    GB
+   *   3       20    50      cancelled   GB
+   *   4       30    400     complete    US
+   *   5       30    250     cancelled   US
+   * </pre>
+   * total_amount by country: GB=350, US=650; complete-only: GB=300, US=400. */
+  private static final String[] DDL = {
+    "DROP TABLE IF EXISTS \"orders\"",
+    "DROP TABLE IF EXISTS \"users\"",
+    "CREATE TABLE \"users\" (\"user_id\" INTEGER, \"country\" VARCHAR(8))",
+    "CREATE TABLE \"orders\" (\"order_id\" INTEGER, \"user_id\" INTEGER,"
+        + " \"amount\" INTEGER, \"status\" VARCHAR(16))",
+    "INSERT INTO \"users\" VALUES (10,'GB'),(20,'GB'),(30,'US')",
+    "INSERT INTO \"orders\" VALUES"
+        + " (1,10,100,'complete'),(2,10,200,'complete'),"
+        + " (3,20,50,'cancelled'),(4,30,400,'complete'),"
+        + " (5,30,250,'cancelled')",
+  };
+
+  /** The core fixture: single-base star, two clean measures + a filtered
+   * measure, two dimensions (one on the joined view with value_format/label). */
+  private static final String CORE_LOOKML =
+      "view: orders {\n"
+      + "  sql_table_name: orders ;;\n"
+      + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+      + "  measure: total_amount { type: sum sql: ${TABLE}.amount ;;"
+      + "    value_format_name: usd label: \"Total Amount\" }\n"
+      + "  measure: order_count { type: count }\n"
+      + "  measure: complete_amount { type: sum sql: ${TABLE}.amount ;;\n"
+      + "    filters: [status: \"complete\"] }\n"
+      + "}\n"
+      + "view: users {\n"
+      + "  sql_table_name: users ;;\n"
+      + "  dimension: country { type: string sql: ${TABLE}.country ;;\n"
+      + "    value_format: \"0.00\" label: \"User Country\""
+      + "    description: \"Country of the user\" }\n"
+      + "}\n"
+      + "explore: orders {\n"
+      + "  join: users { type: left_outer relationship: many_to_one\n"
+      + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+      + "}\n";
+
+  private static final String H2_URL =
+      "jdbc:h2:mem:lookml_e2e;DB_CLOSE_DELAY=-1";
+
+  @BeforeAll
+  public static void boot() throws Exception {
+    // Same classloader/server warmup the other H2 query tests use.
+    mondrian.test.FoodMartHsqldbBootstrap.ensureExtracted();
+    Class.forName("org.h2.Driver");
+    try (java.sql.Connection c =
+             java.sql.DriverManager.getConnection(H2_URL, "sa", "");
+         Statement st = c.createStatement()) {
+      for (String sql : DDL) {
+        st.execute(sql);
+      }
+    }
+  }
+
+  @AfterAll
+  public static void close() {
+    // H2 mem DB closed by DB_CLOSE_DELAY=-1 lifecycle with the JVM.
+  }
+
+  private static TranspileResult transpile(String lookml) {
+    final LookmlNode doc = LookmlParser.parse(lookml);
+    return new LookmlTranspiler().transpile(doc);
+  }
+
+  private static Connection connect(String catalogXml) {
+    Util.PropertyList props = new Util.PropertyList();
+    props.put("Provider", "mondrian");
+    props.put(RolapConnectionProperties.Jdbc.name(), H2_URL);
+    props.put(RolapConnectionProperties.JdbcDrivers.name(), "org.h2.Driver");
+    props.put(RolapConnectionProperties.JdbcUser.name(), "sa");
+    props.put(RolapConnectionProperties.JdbcPassword.name(), "");
+    props.put("UseSchemaPool", "false");
+    props.put(RolapConnectionProperties.CatalogContent.name(), catalogXml);
+    return DriverManager.getConnection(props, null, null);
+  }
+
+  /** "row|col" → value. */
+  private Map<String, Double> grid(Connection conn, String mdx) {
+    Query q = conn.parseQuery(mdx);
+    Result r = conn.execute(q);
+    Map<String, Double> out = new LinkedHashMap<>();
+    Axis cols = r.getAxes()[0];
+    Axis rows = r.getAxes()[1];
+    int ri = 0;
+    for (Position rp : rows.getPositions()) {
+      int ci = 0;
+      for (Position cp : cols.getPositions()) {
+        Object v = r.getCell(new int[]{ci, ri}).getValue();
+        out.put(rp.get(0).getName() + "|" + cp.get(0).getName(),
+            v == null ? null : ((Number) v).doubleValue());
+        ci++;
+      }
+      ri++;
+    }
+    r.close();
+    return out;
+  }
+
+  // --- Test 1: end-to-end star (the must-pass acceptance test) ------------
+
+  @Test
+  public void endToEndStarTotalAmountByCountry() {
+    TranspileResult result = transpile(CORE_LOOKML);
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[total_amount]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders]");
+      assertEquals(350.0, g.get("GB|total_amount"), 0.001);
+      assertEquals(650.0, g.get("US|total_amount"), 0.001);
+    } finally {
+      conn.close();
+    }
+  }
+
+  @Test
+  public void endToEndStarOrderCount() {
+    TranspileResult result = transpile(CORE_LOOKML);
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[order_count]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders]");
+      assertEquals(3.0, g.get("GB|order_count"), 0.001);
+      assertEquals(2.0, g.get("US|order_count"), 0.001);
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- Test 2: aggregator mapping -----------------------------------------
+
+  @Test
+  public void aggregatorMapping() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: m_sum { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "  measure: m_min { type: min sql: ${TABLE}.amount ;; }\n"
+        + "  measure: m_max { type: max sql: ${TABLE}.amount ;; }\n"
+        + "  measure: m_avg { type: average sql: ${TABLE}.amount ;; }\n"
+        + "  measure: m_cd { type: count_distinct sql: ${TABLE}.user_id ;; }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    assertTrue(yaml.contains("aggregator: \"sum\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"min\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"max\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"avg\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"distinct-count\""), yaml);
+  }
+
+  // --- Test 3: filtered measure → calculated member -----------------------
+
+  @Test
+  public void filteredMeasureReturnsFilteredTotal() {
+    TranspileResult result = transpile(CORE_LOOKML);
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[complete_amount]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders]");
+      // complete-only amounts: GB = 100+200 = 300; US = 400.
+      assertEquals(300.0, g.get("GB|complete_amount"), 0.001);
+      assertEquals(400.0, g.get("US|complete_amount"), 0.001);
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- Test 4: provenance --------------------------------------------------
+
+  @Test
+  public void provenanceLinksLookmlToM4() {
+    TranspileResult result = transpile(CORE_LOOKML);
+    ProvenanceMap prov = result.provenance();
+    assertTrue(prov.m4Path("orders.total_amount").isPresent(),
+        "missing provenance for orders.total_amount: " + prov);
+    assertTrue(prov.m4Path("orders.total_amount").get().contains("total_amount"),
+        prov.toString());
+    assertTrue(prov.m4Path("users.country").isPresent(),
+        "missing provenance for users.country: " + prov);
+    assertTrue(prov.m4Path("explore:orders").isPresent(),
+        "missing provenance for the explore cube: " + prov);
+  }
+
+  // --- Test 5: REFUSE skipped ---------------------------------------------
+
+  @Test
+  public void refusedMeasureIsNotEmitted() {
+    // A fan-out sum: orders explore fans out across one_to_many to items,
+    // so the additive sum on orders is REFUSED by the classifier.
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+        + "  measure: top_amount { type: max sql: ${TABLE}.amount ;; }\n"
+        + "  measure: fanned_sum { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: items {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: items { type: left_outer relationship: one_to_many\n"
+        + "    sql_on: ${orders.order_id} = ${items.user_id} ;; }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    // The classifier refused fanned_sum (additive sum fanned out one_to_many).
+    assertTrue(result.classification().withClassification(Classification.REFUSE)
+        .stream().anyMatch(r -> r.qualifiedName().equals("orders.fanned_sum")),
+        result.classification().toString());
+    // The emitted schema must not contain the refused measure...
+    assertFalse(result.yaml().contains("fanned_sum"), result.yaml());
+    // ...and nothing was recorded in provenance for it.
+    assertTrue(result.provenance().m4Path("orders.fanned_sum").isEmpty(),
+        result.provenance().toString());
+    // The non-additive max measure (fan-out-safe, CLEAN) is still emitted.
+    assertTrue(result.yaml().contains("top_amount"), result.yaml());
+  }
+
+  // --- Test 6: golden-compare the core YAML (stable shape) ----------------
+
+  @Test
+  public void coreYamlGoldenShape() {
+    TranspileResult result = transpile(CORE_LOOKML);
+    String yaml = result.yaml();
+    // Structural anchors — not a byte-for-byte snapshot, but the stable
+    // shape the #102 report and downstream tooling depend on.
+    assertTrue(yaml.contains("physical_schema:"), yaml);
+    assertTrue(yaml.contains("name: \"orders\""), yaml);
+    assertTrue(yaml.contains("name: \"users\""), yaml);
+    assertTrue(yaml.contains("cubes:"), yaml);
+    assertTrue(yaml.contains("measure_groups:"), yaml);
+    assertTrue(yaml.contains("type: \"foreign_key\""), yaml);
+    assertTrue(yaml.contains("dimension: \"users\""), yaml);
+    assertTrue(yaml.contains("calculated_members:"), yaml);
+    // value_format → format_string; label → caption.
+    assertTrue(yaml.contains("format_string:"), yaml);
+    assertTrue(yaml.contains("caption: \"User Country\""), yaml);
+  }
+}
+
+// End LookmlTranspilerTest.java
