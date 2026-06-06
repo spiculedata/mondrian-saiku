@@ -1156,17 +1156,28 @@ public final class CalciteSqlPlanner {
         // Literal-valued measure: aggregate the literal directly
         // (SUM(0), SUM(NULL), etc.) instead of a column reference.
         // CASE-valued measure: build a RexCase from the descriptor.
+        RexNode ref;
         if (m.caseExpr != null) {
-            return caseRex(b, m.caseExpr);
+            ref = caseRex(b, m.caseExpr);
         } else if (m.arithExpr != null) {
-            return arithRex(b, m.arithExpr);
+            ref = arithRex(b, m.arithExpr);
         } else if (m.literal != null) {
-            return m.literal == PlannerRequest.Measure.NULL_LITERAL
+            ref = m.literal == PlannerRequest.Measure.NULL_LITERAL
                 ? b.literal(null)
                 : b.literal(m.literal);
         } else {
-            return b.field(m.column.name);
+            ref = b.field(m.column.name);
         }
+        // #107 weighted bridge: scale the operand by the bridge weight,
+        // whatever its shape — SUM(operand × weight). Applied here so the
+        // normal aggregate and the symmetric de-dup path both honour it
+        // (the symmetric path is full-count only and never sets a weight).
+        if (m.weightColumn != null) {
+            ref = b.call(
+                org.apache.calcite.sql.fun.SqlStdOperatorTable.MULTIPLY,
+                ref, fieldRef(b, m.weightColumn));
+        }
+        return ref;
     }
 
     private static RelBuilder.AggCall aggCall(

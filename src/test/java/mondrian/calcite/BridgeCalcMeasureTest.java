@@ -115,28 +115,35 @@ public class BridgeCalcMeasureTest {
         + "      </Hierarchy>\n"
         + "    </Hierarchies>\n"
         + "  </Dimension>\n"
-        + "  <Cube name='Accounts'>\n"
-        + "    <Dimensions>\n"
-        + "      <Dimension source='Customer'/>\n"
-        + "    </Dimensions>\n"
-        + "    <MeasureGroups>\n"
-        + "      <MeasureGroup name='Balances' table='cm_fact'>\n"
-        + "        <Measures>\n"
-        + "          <Measure name='Balance' column='balance'"
-        + " aggregator='sum'/>\n"
-        + "          <Measure name='Net' column='net' aggregator='sum'/>\n"
-        + "        </Measures>\n"
-        + "        <DimensionLinks>\n"
-        + "          <BridgeLink dimension='Customer'"
-        + " bridgeTable='cm_owner'"
-        + " factForeignKeyColumn='account_id'"
-        + " bridgeFactKeyColumn='account_id'"
-        + " bridgeDimensionKeyColumn='customer_id'/>\n"
-        + "        </DimensionLinks>\n"
-        + "      </MeasureGroup>\n"
-        + "    </MeasureGroups>\n"
-        + "  </Cube>\n"
+        + cube("Accounts", "")
+        + cube("AccountsWeighted",
+               " aggregation='weighted' weightColumn='weight'")
         + "</Schema>\n";
+
+    private static String cube(String name, String bridgeAggAttrs) {
+        return "  <Cube name='" + name + "'>\n"
+            + "    <Dimensions>\n"
+            + "      <Dimension source='Customer'/>\n"
+            + "    </Dimensions>\n"
+            + "    <MeasureGroups>\n"
+            + "      <MeasureGroup name='Balances' table='cm_fact'>\n"
+            + "        <Measures>\n"
+            + "          <Measure name='Balance' column='balance'"
+            + " aggregator='sum'/>\n"
+            + "          <Measure name='Net' column='net' aggregator='sum'/>\n"
+            + "        </Measures>\n"
+            + "        <DimensionLinks>\n"
+            + "          <BridgeLink dimension='Customer'"
+            + " bridgeTable='cm_owner'"
+            + " factForeignKeyColumn='account_id'"
+            + " bridgeFactKeyColumn='account_id'"
+            + " bridgeDimensionKeyColumn='customer_id'"
+            + bridgeAggAttrs + "/>\n"
+            + "        </DimensionLinks>\n"
+            + "      </MeasureGroup>\n"
+            + "    </MeasureGroups>\n"
+            + "  </Cube>\n";
+    }
 
     private static Connection conn;
 
@@ -220,5 +227,31 @@ public class BridgeCalcMeasureTest {
         assertEquals(1170.0, g.get("Alice|Net"), 0.001);
         assertEquals(1350.0, g.get("Bob|Net"), 0.001);
         assertEquals(270.0, g.get("Carol|Net"), 0.001);
+    }
+
+    /** Weighted allocation over a calc-column measure: each account's
+     *  net is split by the owner's weight — SUM((balance - cost) × weight). */
+    @Test
+    public void weightedCalcMeasureByCustomer() {
+        Map<String, Double> g = grid(
+            "SELECT {[Measures].[Net]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[By Segment].[Customer].Members ON ROWS\n"
+            + "FROM [AccountsWeighted]");
+        // acct1 net 900 (alice .5 / bob .5), acct2 net 450 (bob 1),
+        // acct3 net 270 (alice .25 / carol .75).
+        assertEquals(517.5, g.get("Alice|Net"), 0.001);  // 450 + 67.5
+        assertEquals(900.0, g.get("Bob|Net"), 0.001);    // 450 + 450
+        assertEquals(202.5, g.get("Carol|Net"), 0.001);  // 270 × 0.75
+    }
+
+    /** Weighted calc measure rolled up to Segment (additive, no dedup). */
+    @Test
+    public void weightedCalcMeasureBySegment() {
+        Map<String, Double> g = grid(
+            "SELECT {[Measures].[Net]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
+            + "FROM [AccountsWeighted]");
+        assertEquals(1417.5, g.get("Premium|Net"), 0.001); // 450+450+450+67.5
+        assertEquals(202.5, g.get("Standard|Net"), 0.001);
     }
 }

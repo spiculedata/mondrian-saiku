@@ -3357,6 +3357,18 @@ public final class CalcitePlannerAdapters {
                         ((RolapSchema.PhysRealColumn) grain).name));
             }
         }
+        // #107 weighted bridge: scale every measure's operand by this
+        // bridge weight column — SUM(operand × weight) — whatever the
+        // measure's shape (real column, CASE, arithmetic, literal). Null for
+        // full-count bridges and non-bridge loads. Resolved once here, then
+        // attached to each base measure below via Measure.weighted(...).
+        PlannerRequest.Column weightCol = null;
+        if (bridgeWeight instanceof RolapSchema.PhysRealColumn) {
+            RolapSchema.PhysRealColumn wc =
+                (RolapSchema.PhysRealColumn) bridgeWeight;
+            weightCol = new PlannerRequest.Column(
+                wc.relation.getAlias(), wc.name);
+        }
         // Map from RolapStar.Measure → its alias in the request, used
         // when resolving a pushable calc's base-measure references below.
         java.util.Map<RolapStar.Measure, String> starMeasureAliases =
@@ -3372,119 +3384,77 @@ public final class CalcitePlannerAdapters {
             RolapSchema.PhysColumn mexpr = unwrapToRealColumn(rawExpr);
             String alias = "m" + i;
             AggOp op = mapAggregator(m.getAggregator());
-            // Synthetic/null-expression measure → emit SUM(NULL).
+
+            // Build the base measure in its natural shape; weighting (if
+            // any) is applied uniformly afterwards so calc-column measures
+            // weight just like plain ones.
+            PlannerRequest.Measure base;
             if (rawExpr == null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        PlannerRequest.Measure.NULL_LITERAL));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            if (mexpr instanceof RolapSchema.PhysRealColumn) {
+                // Synthetic/null-expression measure → SUM(NULL).
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, PlannerRequest.Measure.NULL_LITERAL);
+            } else if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
-                if (bridgeWeight instanceof RolapSchema.PhysRealColumn) {
-                    // Weighted bridge: SUM(measure × weight). The weight
-                    // lives on the bridge table (already joined); the
-                    // measure on the fact.
-                    RolapSchema.PhysRealColumn wc =
-                        (RolapSchema.PhysRealColumn) bridgeWeight;
-                    b.addMeasure(
-                        new PlannerRequest.Measure(
-                            op.fn,
-                            new PlannerRequest.Column(
-                                factTable.getAlias(), alias),
-                            alias,
-                            op.distinct,
-                            null,
-                            null,
-                            new PlannerRequest.ArithExpr(
-                                new PlannerRequest.Column(
-                                    factTable.getAlias(), mcol),
-                                PlannerRequest.ArithOp.TIMES,
-                                new PlannerRequest.Column(
-                                    wc.relation.getAlias(), wc.name))));
-                } else {
-                    b.addMeasure(
-                        new PlannerRequest.Measure(
-                            op.fn,
-                            new PlannerRequest.Column(
-                                factTable.getAlias(), mcol),
-                            alias,
-                            op.distinct));
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), mcol),
+                    alias, op.distinct);
+            } else if (literalCalcValue(m.getExpression())
+                != UNRESOLVED_LITERAL)
+            {
+                // Calc-column that's a pure literal (e.g.
+                // <CalculatedColumnDef><SQL>0</SQL>).
+                Object lit = literalCalcValue(m.getExpression());
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct,
+                    lit == null
+                        ? PlannerRequest.Measure.NULL_LITERAL : lit);
+            } else if (caseExprFromCalc(
+                m.getExpression(), factTable.getAlias()) != null)
+            {
+                // Calc-column shaped like FoodMart Promotion Sales:
+                // case when COL = LIT then LIT else COL end.
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, null,
+                    caseExprFromCalc(
+                        m.getExpression(), factTable.getAlias()));
+            } else if (arithExprFromCalc(
+                m.getExpression(), factTable.getAlias()) != null)
+            {
+                // Calc-column shaped like warehouse_profit: lhs <op> rhs.
+                base = new PlannerRequest.Measure(
+                    op.fn,
+                    new PlannerRequest.Column(factTable.getAlias(), alias),
+                    alias, op.distinct, null, null,
+                    arithExprFromCalc(
+                        m.getExpression(), factTable.getAlias()));
+            } else {
+                String shape = "";
+                if (m.getExpression()
+                    instanceof RolapSchema.PhysCalcColumn)
+                {
+                    try {
+                        shape = " [sql=" + m.getExpression().toSql() + "]";
+                    } catch (RuntimeException ignored) {
+                        // best-effort
+                    }
                 }
-                starMeasureAliases.put(m, alias);
-                continue;
+                throw new UnsupportedTranslation(
+                    "fromSegmentLoad: non-real measure expression "
+                    + mexpr + shape);
             }
-            // Calc-column that's a pure literal (e.g.
-            // <CalculatedColumnDef><SQL>0</SQL>) — aggregate the literal
-            // directly. SUM(0)=0*N, SUM(NULL)=NULL, etc.
-            Object lit = literalCalcValue(m.getExpression());
-            if (lit != UNRESOLVED_LITERAL) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        lit == null
-                            ? PlannerRequest.Measure.NULL_LITERAL
-                            : lit));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            // Calc-column shaped like the canonical FoodMart Promotion
-            // Sales: case when COL = LIT then LIT else COL end. Match
-            // the PhysCalcColumn list and emit a structured CaseExpr.
-            PlannerRequest.CaseExpr caseExpr =
-                caseExprFromCalc(m.getExpression(), factTable.getAlias());
-            if (caseExpr != null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        null,
-                        caseExpr));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            // Calc-column shaped like the warehouse_profit binary
-            // arithmetic: lhsCol <op> rhsCol.
-            PlannerRequest.ArithExpr arithExpr =
-                arithExprFromCalc(m.getExpression(), factTable.getAlias());
-            if (arithExpr != null) {
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), alias),
-                        alias,
-                        op.distinct,
-                        null,
-                        null,
-                        arithExpr));
-                starMeasureAliases.put(m, alias);
-                continue;
-            }
-            String shape = "";
-            if (m.getExpression() instanceof RolapSchema.PhysCalcColumn) {
-                try {
-                    shape = " [sql=" + m.getExpression().toSql() + "]";
-                } catch (RuntimeException ignored) {
-                    // best-effort
-                }
-            }
-            throw new UnsupportedTranslation(
-                "fromSegmentLoad: non-real measure expression "
-                + mexpr + shape);
+
+            b.addMeasure(
+                weightCol != null
+                    ? PlannerRequest.Measure.weighted(base, weightCol)
+                    : base);
+            starMeasureAliases.put(m, alias);
         }
 
         // 3) Computed (calc) measures from the per-query registry. For

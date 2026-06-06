@@ -66,6 +66,12 @@ public final class PlannerRequest {
          *  ({@code warehouse_sales - warehouse_cost}). Mutually
          *  exclusive with {@link #literal} and {@link #caseExpr}. */
         public final ArithExpr arithExpr;
+        /** #107 weighted bridge: when non-null, the measure's operand
+         *  (whatever its shape — column / CASE / arithmetic / literal) is
+         *  multiplied by this bridge weight column before aggregating, i.e.
+         *  {@code SUM(operand × weight)}. Orthogonal to the other operand
+         *  fields. Only set for weighted bridges. */
+        public final Column weightColumn;
         /** Sentinel value used in {@link #literal} to represent SQL NULL,
          *  distinguishing it from the field being unset (which is also
          *  Java null). */
@@ -94,6 +100,14 @@ public final class PlannerRequest {
             AggFn fn, Column column, String alias, boolean distinct,
             Object literal, CaseExpr caseExpr, ArithExpr arithExpr)
         {
+            this(fn, column, alias, distinct, literal, caseExpr, arithExpr,
+                null);
+        }
+        public Measure(
+            AggFn fn, Column column, String alias, boolean distinct,
+            Object literal, CaseExpr caseExpr, ArithExpr arithExpr,
+            Column weightColumn)
+        {
             this.fn = fn;
             this.column = column;
             this.alias = alias;
@@ -101,6 +115,16 @@ public final class PlannerRequest {
             this.literal = literal;
             this.caseExpr = caseExpr;
             this.arithExpr = arithExpr;
+            this.weightColumn = weightColumn;
+        }
+
+        /** Copy of {@code base} that multiplies its operand by
+         *  {@code weightColumn} when aggregating — the weighted-bridge form
+         *  of any measure shape (#107). */
+        public static Measure weighted(Measure base, Column weightColumn) {
+            return new Measure(
+                base.fn, base.column, base.alias, base.distinct,
+                base.literal, base.caseExpr, base.arithExpr, weightColumn);
         }
     }
 
