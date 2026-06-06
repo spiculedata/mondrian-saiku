@@ -65,6 +65,21 @@ public class NonAdditiveAggregatorTest {
     }
 
     @Test
+    public void medianIsExcludedFromInMemoryRollup() {
+        // The in-memory segment rollup proposal (FastBatchingCellReader)
+        // requires BOTH isRollupable() and supportsFastAggregates(). Both
+        // are false here, so median/percentile are never rolled up from a
+        // cached finer-grain segment — they reload at the exact grain.
+        assertFalse(RolapAggregator.Median.isRollupable());
+        assertFalse(
+            RolapAggregator.Median.supportsFastAggregates(
+                mondrian.spi.Dialect.Datatype.Numeric));
+        assertFalse(
+            RolapAggregator.Percentile.supportsFastAggregates(
+                mondrian.spi.Dialect.Datatype.Numeric));
+    }
+
+    @Test
     public void percentileAggregatorEmitsOrderedSetSql() {
         RolapAggregator p90 =
             new RolapAggregator.PercentileAggregator("percentile", 99, 0.9);
