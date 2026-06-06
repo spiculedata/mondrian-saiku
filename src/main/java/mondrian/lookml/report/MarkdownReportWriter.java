@@ -39,16 +39,40 @@ public final class MarkdownReportWriter {
   private static final String NL = "\n";
   private static final String NONE = "—";
 
-  /** Renders the report to a Markdown string. */
+  /** Renders the report to a Markdown string (no ingest diagnostics). */
   public String write(CoverageReport report) {
+    return write(report, IngestDiagnostics.none());
+  }
+
+  /** Renders the report to a Markdown string, including any per-file ingest
+   * diagnostics (unparseable / skipped files) for directory-mode reports. */
+  public String write(CoverageReport report, IngestDiagnostics diagnostics) {
     requireNonNull(report, "report");
+    requireNonNull(diagnostics, "diagnostics");
     final StringBuilder sb = new StringBuilder();
     sb.append(TITLE).append(NL).append(NL);
     appendSummary(sb, report);
     appendSection(sb, "Clean", report.rows(Classification.CLEAN));
     appendSection(sb, "Degrade", report.rows(Classification.DEGRADE));
     appendSection(sb, "Refuse", report.rows(Classification.REFUSE));
+    appendDiagnostics(sb, "Unparseable files", diagnostics.unparseable());
+    appendDiagnostics(sb, "Skipped files", diagnostics.skipped());
     return sb.toString();
+  }
+
+  /** Appends a diagnostics section (count + bullet list) when non-empty. */
+  private void appendDiagnostics(StringBuilder sb, String name,
+      List<IngestDiagnostics.Entry> entries) {
+    if (entries.isEmpty()) {
+      return;
+    }
+    sb.append("## ").append(name).append(" (").append(entries.size())
+        .append(')').append(NL).append(NL);
+    for (IngestDiagnostics.Entry e : entries) {
+      sb.append("- `").append(e.file()).append("` — ").append(e.reason())
+          .append(NL);
+    }
+    sb.append(NL);
   }
 
   private void appendSummary(StringBuilder sb, CoverageReport report) {

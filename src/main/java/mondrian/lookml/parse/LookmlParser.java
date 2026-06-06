@@ -65,8 +65,14 @@ public final class LookmlParser {
           "sql_foreign_key",
           "sql_step",
           "expression_custom_filter",
-          "html",
-          "default_value");
+          "html");
+  // NOTE (issue #98, finding #4): "default_value" was previously listed here,
+  // but in LookML it is a STRING-valued key (parameters/filters), never a
+  // ;;-terminated code block. Treating it as code made the IN_CODE lexer run
+  // past the unterminated quoted string and swallow subsequent properties up to
+  // the next ;;, which surfaced far downstream as a spurious <EOF> parse error.
+  // A sweep of the validation corpus found 90 default_value occurrences, none
+  // with ;;. See LookmlParserTest#defaultValueIsStringNotCodeAndDoesNotSwallow*.
 
   /** Default tab size assumed when computing column positions. */
   private static final int DEFAULT_TAB_SIZE = 1;
