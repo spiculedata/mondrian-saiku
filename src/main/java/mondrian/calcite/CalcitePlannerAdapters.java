@@ -3997,29 +3997,21 @@ public final class CalcitePlannerAdapters {
             return;
         }
         for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
-            if (!mg.hasFullCountBridge()) {
-                continue;
-            }
-            for (RolapCubeDimension bridgeDim : fullCountBridgeDimensions(mg)) {
+            // Process every measure group that has ANY bridge — full-count OR
+            // weighted. A weighted bridge under a member grant leaks just as a
+            // full-count one does: a hidden-only owner's full value still
+            // reaches the weighted [All] (shares sum to 1 per account), so the
+            // same visible-member IN-filter must constrain the fan-out.
+            for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+                RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+                if (info == null) {
+                    continue;
+                }
                 applyBridgeMemberGrant(
-                    b, mg, bridgeDim, role, reader, factTable, joinedAliases);
+                    b, mg, bridgeDim, info.weighted, role, reader,
+                    factTable, joinedAliases);
             }
         }
-    }
-
-    /** #107: the cube dimensions reached through a full-count (non-weighted)
-     *  {@code <BridgeLink>} on this measure group. */
-    private static java.util.List<RolapCubeDimension>
-        fullCountBridgeDimensions(RolapMeasureGroup mg)
-    {
-        java.util.List<RolapCubeDimension> out = new java.util.ArrayList<>();
-        for (RolapCubeDimension dim : mg.getBridgeDimensions()) {
-            RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(dim);
-            if (info != null && !info.weighted) {
-                out.add(dim);
-            }
-        }
-        return out;
     }
 
     /**
@@ -4028,13 +4020,22 @@ public final class CalcitePlannerAdapters {
      * <p>Resolves the role's visible member-key values on the bridge
      * dimension's key level. ALL access → no constraint. CUSTOM/restricted →
      * an IN-list on the bridge dimension key column (joining the bridge if the
-     * load does not already group by it, and pinning the fan-out grain so the
-     * de-dup runs). No visible members → fail closed (zero rows).
+     * load does not already group by it). No visible members → fail closed
+     * (zero rows).
+     *
+     * <p>For a <b>full-count</b> bridge the fan-out grain is also pinned so the
+     * symmetric DISTINCT de-dup runs over the visible-owner bridge rows. A
+     * <b>weighted</b> bridge rolls up additively (SUM of measure × weight, with
+     * shares summing to 1 per account) and has no DISTINCT de-dup, so the grain
+     * is NOT pinned for weighted — only the visible-member IN-filter applies.
+     * Either way a hidden-only-owner account is fully excluded and a joint
+     * account contributes only its visible owners' rows/shares.
      */
     private static void applyBridgeMemberGrant(
         PlannerRequest.Builder b,
         RolapMeasureGroup mg,
         RolapCubeDimension bridgeDim,
+        boolean weighted,
         mondrian.olap.Role role,
         mondrian.olap.SchemaReader reader,
         RolapStar.Table factTable,
@@ -4111,16 +4112,46 @@ public final class CalcitePlannerAdapters {
         }
 
         // Pin the fan-out grain (the fact-side key of the one-to-many hop) so
-        // the symmetric de-dup runs over the visible-owner bridge rows. If a
+        // the symmetric DISTINCT de-dup runs over the visible-owner bridge
+        // rows. Only full-count bridges de-dup; a weighted bridge rolls up
+        // additively (no DISTINCT), so it must NOT pin the grain — doing so
+        // would wrongly collapse a fact's per-owner weighted shares. If a
         // grouping column already pinned it (the bridge is on an axis), leave
         // it; the de-dup target is identical.
-        if (!b.hasSymmetricGrainColumn()) {
+        if (!weighted && !b.hasSymmetricGrainColumn()) {
             RolapSchema.PhysColumn grain = bridgeFanoutGrainFor(keyStarCol);
             if (grain instanceof RolapSchema.PhysRealColumn) {
                 b.symmetricGrainColumn(
                     new PlannerRequest.Column(
                         grain.relation.getAlias(),
                         ((RolapSchema.PhysRealColumn) grain).name));
+            }
+        }
+
+        // For a WEIGHTED bridge, forcing the fan-out join into scope (the
+        // [All]/no-group case) means the measures were built un-weighted —
+        // findBridgeWeightColumn only weights loads that already group by the
+        // bridge dimension. Without the weight, the forced fan-out would
+        // multiply each fact by its owner count instead of allocating by
+        // share. Apply the bridge weight here so the visible-owner fan-out
+        // sums SUM(measure × weight). When the load already groups by the
+        // bridge dimension the measures are already weighted and this is a
+        // no-op (idempotent).
+        if (weighted && !b.hasWeightedMeasure()) {
+            RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+            if (info != null
+                && info.weightColumn instanceof RolapSchema.PhysRealColumn)
+            {
+                RolapSchema.PhysRealColumn wc =
+                    (RolapSchema.PhysRealColumn) info.weightColumn;
+                b.weightMeasures(
+                    new PlannerRequest.Column(
+                        wc.relation.getAlias(), wc.name));
+            } else {
+                // Weighted bridge with an unresolvable weight column → cannot
+                // safely allocate the forced fan-out. Fail closed.
+                b.universalFalse(true);
+                return;
             }
         }
 

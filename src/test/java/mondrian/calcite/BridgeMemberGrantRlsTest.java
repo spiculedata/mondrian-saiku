@@ -213,6 +213,9 @@ public class BridgeMemberGrantRlsTest extends AbstractDualFormSchemaTest {
         + "  </Role>\n";
 
     private static Map<String, Connection> conns;
+    /** Unsecured (no-role) connections, used to prove the restricted weighted
+     *  [All] EXCLUDES what the unsecured weighted [All] includes. */
+    private static Map<String, Connection> noRoleConns;
 
     @BeforeAll
     public static void boot() throws Exception {
@@ -230,11 +233,14 @@ public class BridgeMemberGrantRlsTest extends AbstractDualFormSchemaTest {
             }
         }
         mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        String yamlSchema = mondrian.schema.yaml.m4.M4YamlToXml.toXml(
+            mondrian.schema.yaml.m4.M4XmlToYaml.toYaml(SCHEMA));
         conns = new LinkedHashMap<>();
         conns.put("xml", roleConn(SCHEMA));
-        conns.put("yaml", roleConn(
-            mondrian.schema.yaml.m4.M4YamlToXml.toXml(
-                mondrian.schema.yaml.m4.M4XmlToYaml.toYaml(SCHEMA))));
+        conns.put("yaml", roleConn(yamlSchema));
+        noRoleConns = new LinkedHashMap<>();
+        noRoleConns.put("xml", noRoleConn(SCHEMA));
+        noRoleConns.put("yaml", noRoleConn(yamlSchema));
     }
 
     @AfterEach
@@ -262,6 +268,31 @@ public class BridgeMemberGrantRlsTest extends AbstractDualFormSchemaTest {
         props.put(RolapConnectionProperties.Role.name(), "AliceBob");
         props.remove(RolapConnectionProperties.Catalog.name());
         return DriverManager.getConnection(props, null, null);
+    }
+
+    /** An unsecured (no-role) connection — the baseline the restricted
+     *  weighted [All] is compared against. Built from the catalog with NO role
+     *  defined (a structurally distinct schema → its own RolapStar/segment
+     *  cache), so it cannot share a role-constrained segment with the role
+     *  connection (row-security is applied below the aggregate, outside the
+     *  segment cache key). This models "no-role = no constraint" cleanly. */
+    private static Connection noRoleConn(String catalog) {
+        Util.PropertyList props =
+            Util.parseConnectString(TestContext.getDefaultConnectString());
+        props.put("UseSchemaPool", "false");
+        props.put(RolapConnectionProperties.CatalogContent.name(), catalog);
+        props.remove(RolapConnectionProperties.Role.name());
+        props.remove(RolapConnectionProperties.Catalog.name());
+        return DriverManager.getConnection(props, null, null);
+    }
+
+    private Double allScalarNoRole(String form, String mdx) {
+        Connection conn = noRoleConns.get(form);
+        Query q = conn.parseQuery(mdx);
+        Result r = conn.execute(q);
+        Object v = r.getCell(new int[]{0}).getValue();
+        r.close();
+        return v == null ? null : ((Number) v).doubleValue();
     }
 
     // ---- helpers (role connections; rebuilds per call w/ clean cache) ----
@@ -359,5 +390,63 @@ public class BridgeMemberGrantRlsTest extends AbstractDualFormSchemaTest {
         assertNull(m.get("Private"), "Private segment (Carol) hidden");
         assertEquals(1800.0, m.get("Retail"), 0.001,
             "Retail rollup de-dups visible-owner accounts (acct4 excluded)");
+    }
+
+    // ---- 4) WEIGHTED bridge: hidden-only-owner account excluded ----------
+
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBridgeHiddenOnlyOwnerExcludedFromAll(String form) {
+        // Weighted [All] = SUM(balance * weight) over the bridge fan-out.
+        //   acct1 1000: Alice .5 + Bob .5   -> 500 + 500
+        //   acct2  500: Bob 1.0             -> 500
+        //   acct3  300: Alice .5 + Carol .5 -> 150 + 150
+        //   acct4  700: Carol 1.0           -> 700
+        // Unsecured weighted [All] = 500+500+500+150+150+700 = 2500.
+        Double unsecured = allScalarNoRole(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS"
+            + " FROM [AccountsWeighted]");
+        assertEquals(2500.0, unsecured, 0.001,
+            "unsecured weighted [All] includes Carol's shares (acct3,acct4)");
+
+        // Under role AliceBob, Carol is hidden: her bridge rows (acct3 .5,
+        // acct4 1.0 = 150+700 = 850) must be excluded from the fan-out.
+        // Restricted weighted [All] = 2500 - 850 = 1650.
+        Double restricted = allScalar(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS"
+            + " FROM [AccountsWeighted]");
+        assertEquals(1650.0, restricted, 0.001,
+            "restricted weighted [All] excludes Carol's weighted shares;"
+            + " acct4 (Carol-only) fully gone");
+        // It must be strictly less than the unsecured total (the leak closed).
+        org.junit.jupiter.api.Assertions.assertTrue(restricted < unsecured,
+            "restricted weighted [All] must exclude hidden owners' shares");
+    }
+
+    // ---- 5) WEIGHTED bridge: joint account contributes only visible share -
+
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBridgeJointAccountContributesOnlyVisibleShare(
+        String form)
+    {
+        // acct3 (300) is joint Alice .5 (visible) + Carol .5 (hidden). Under
+        // the grant it must contribute only Alice's 0.5*300 = 150 — NOT the
+        // full 300, and NOT Carol's 150.
+        // Alice's weighted cell = acct1 .5*1000 + acct3 .5*300 = 500+150 = 650.
+        Map<String, Double> m = custMap(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " {[Customer].[Customers].[Retail].[Alice]} ON ROWS\n"
+            + "FROM [AccountsWeighted]");
+        assertEquals(650.0, m.get("Alice"), 0.001,
+            "Alice's weighted total = her shares only (acct1 .5 + acct3 .5)");
+
+        // [All] excludes Carol entirely: acct3 contributes only Alice's 150,
+        // acct4 (Carol-only) contributes nothing.
+        Double restricted = allScalar(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS"
+            + " FROM [AccountsWeighted]");
+        assertEquals(1650.0, restricted, 0.001,
+            "joint acct3 contributes only Alice's 0.5 share to weighted [All]");
     }
 }
