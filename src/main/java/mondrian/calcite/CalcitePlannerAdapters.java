@@ -2762,6 +2762,18 @@ public final class CalcitePlannerAdapters {
         // throw with the SQL shape attached so we can grow coverage.
         RolapSchema.PhysColumn effective = unwrapToRealColumn(col);
         if (!(effective instanceof RolapSchema.PhysRealColumn)) {
+            // #108: a native tier / duration computed column renders as a
+            // structured CASE / date-diff on the projection (group-by)
+            // path. Try that before bailing — but only after the
+            // unwrap-first attempt above, so single-real-column calc
+            // wrappers (e.g. FoodMart fullname) still collapse to a plain
+            // column and do not regress.
+            if (col instanceof RolapSchema.PhysComputedColumn) {
+                PlannerRequest.ComputedExpr ce =
+                    computedExprOf(
+                        (RolapSchema.PhysComputedColumn) col, tableAlias);
+                return new PlannerRequest.Column(tableAlias, col.name, ce);
+            }
             String shape = "";
             if (col instanceof RolapSchema.PhysCalcColumn) {
                 try {
@@ -3158,6 +3170,63 @@ public final class CalcitePlannerAdapters {
             // fall through
         }
         return UNRESOLVED_LITERAL;
+    }
+
+    /**
+     * #108: translate a {@link RolapSchema.PhysComputedColumn}'s structured
+     * spec into a {@link PlannerRequest.ComputedExpr} the renderer can turn
+     * into dialect-correct Rex. Embedded source columns are resolved to
+     * {@code tableAlias}-qualified {@link PlannerRequest.Column}s.
+     *
+     * @throws UnsupportedTranslation if an embedded column lives on a
+     *     different relation than {@code tableAlias} (the renderer assumes
+     *     a single-relation reference, as the projection path does).
+     */
+    private static PlannerRequest.ComputedExpr computedExprOf(
+        RolapSchema.PhysComputedColumn col, String tableAlias)
+    {
+        RolapSchema.ComputedSpec spec = col.spec;
+        if (spec instanceof RolapSchema.TierSpec) {
+            RolapSchema.TierSpec t = (RolapSchema.TierSpec) spec;
+            PlannerRequest.Column source =
+                computedSourceColumn(t.column, tableAlias);
+            List<PlannerRequest.TierBranch> branches =
+                new java.util.ArrayList<PlannerRequest.TierBranch>(
+                    t.bins.size());
+            for (RolapSchema.TierBin bin : t.bins) {
+                branches.add(
+                    new PlannerRequest.TierBranch(bin.boundary, bin.label));
+            }
+            return new PlannerRequest.TierExpr(source, branches);
+        }
+        if (spec instanceof RolapSchema.DurationSpec) {
+            RolapSchema.DurationSpec d = (RolapSchema.DurationSpec) spec;
+            return new PlannerRequest.DurationExpr(
+                computedSourceColumn(d.startColumn, tableAlias),
+                computedSourceColumn(d.endColumn, tableAlias),
+                PlannerRequest.DurationUnit.valueOf(d.unit.name()));
+        }
+        throw new UnsupportedTranslation(
+            "fromTupleRead: unknown computed spec "
+            + spec.getClass().getName());
+    }
+
+    /** Resolve an embedded computed-column source to a qualified
+     *  {@link PlannerRequest.Column}, verifying it lives on the expected
+     *  relation. */
+    private static PlannerRequest.Column computedSourceColumn(
+        RolapSchema.PhysColumn col, String tableAlias)
+    {
+        if (col.relation == null
+            || !tableAlias.equals(col.relation.getAlias()))
+        {
+            throw new UnsupportedTranslation(
+                "fromTupleRead: computed-column source on different relation "
+                + "(expected alias=" + tableAlias + ", got "
+                + (col.relation == null ? "null" : col.relation.getAlias())
+                + ")");
+        }
+        return new PlannerRequest.Column(tableAlias, col.name);
     }
 
     private static RolapSchema.PhysColumn unwrapToRealColumn(

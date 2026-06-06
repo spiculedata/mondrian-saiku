@@ -357,6 +357,15 @@ public final class M4YamlToXml {
         if (nameColumns instanceof List && !((List<?>) nameColumns).isEmpty()) {
             kids.add(buildName((List<?>) nameColumns));
         }
+        // #108: native tier / duration child elements.
+        Object tier = m.get("tier");
+        if (tier instanceof Map) {
+            kids.add(buildTier((Map<?, ?>) tier));
+        }
+        Object duration = m.get("duration");
+        if (duration instanceof Map) {
+            kids.add(buildDuration((Map<?, ?>) duration));
+        }
         Object props = m.get("properties");
         if (props instanceof List) {
             for (Object p : (List<?>) props) {
@@ -669,6 +678,38 @@ public final class M4YamlToXml {
             }
         }
         return col;
+    }
+
+    /** #108: rebuild a {@code <Tier>} child from its YAML map. */
+    private static MondrianDef.Tier buildTier(Map<?, ?> m) {
+        MondrianDef.Tier tier = new MondrianDef.Tier();
+        tier.column = str(m.get("column"));
+        tier.table = str(m.get("table"));
+        Object bins = m.get("bins");
+        List<MondrianDef.Bin> list = new ArrayList<>();
+        if (bins instanceof List) {
+            for (Object o : (List<?>) bins) {
+                if (o instanceof Map) {
+                    Map<?, ?> b = (Map<?, ?>) o;
+                    MondrianDef.Bin bin = new MondrianDef.Bin();
+                    bin.boundary = str(b.get("boundary"));
+                    bin.label = str(b.get("label"));
+                    list.add(bin);
+                }
+            }
+        }
+        tier.bins = list.toArray(new MondrianDef.Bin[0]);
+        return tier;
+    }
+
+    /** #108: rebuild a {@code <Duration>} child from its YAML map. */
+    private static MondrianDef.Duration buildDuration(Map<?, ?> m) {
+        MondrianDef.Duration d = new MondrianDef.Duration();
+        d.startColumn = str(m.get("start_column"));
+        d.endColumn = str(m.get("end_column"));
+        d.table = str(m.get("table"));
+        d.unit = str(m.get("unit"));
+        return d;
     }
 
     static String str(Object o) {

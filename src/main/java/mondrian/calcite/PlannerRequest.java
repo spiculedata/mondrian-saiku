@@ -31,9 +31,71 @@ public final class PlannerRequest {
         /** Optional table qualifier; null when unambiguous. */
         public final String table;
         public final String name;
+        /** #108: when non-null, this column projects a structured computed
+         *  expression (a {@link TierExpr} or {@link DurationExpr}) rather
+         *  than a plain table column. The renderer builds the Rex from this
+         *  instead of {@code b.field(name)}; {@link #name} is still the
+         *  result alias. Null for ordinary columns. */
+        public final ComputedExpr expr;
         public Column(String table, String name) {
+            this(table, name, null);
+        }
+        public Column(String table, String name, ComputedExpr expr) {
             this.table = table;
             this.name = name;
+            this.expr = expr;
+        }
+    }
+
+    /** #108: marker for a structured computed-column expression carried by
+     *  a {@link Column} on the group-by / projection path. */
+    public abstract static class ComputedExpr {
+    }
+
+    /** #108: one branch of a {@link TierExpr}: rows whose {@code column}
+     *  value is strictly less than {@code boundary} take {@code label};
+     *  a branch with a null boundary is the open-ended ELSE. */
+    public static final class TierBranch {
+        public final Number boundary;
+        public final String label;
+        public TierBranch(Number boundary, String label) {
+            this.boundary = boundary;
+            this.label = label;
+        }
+    }
+
+    /** #108: a multi-branch tier CASE over {@code column}. Branches are in
+     *  ascending boundary order; the final branch is the open-ended ELSE
+     *  (null boundary). Rendered as a nested Calcite CASE. */
+    public static final class TierExpr extends ComputedExpr {
+        public final Column column;
+        public final List<TierBranch> branches;
+        public TierExpr(Column column, List<TierBranch> branches) {
+            this.column = column;
+            this.branches = List.copyOf(branches);
+        }
+    }
+
+    /** #108: time units a {@link DurationExpr} is expressed in. Matches the
+     *  Calcite {@code TimeUnit} names used to build the interval qualifier
+     *  passed to {@code TIMESTAMP_DIFF}. */
+    public enum DurationUnit {
+        DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, SECOND
+    }
+
+    /** #108: a date-diff of {@code endColumn − startColumn} in
+     *  {@code unit}. Rendered via Calcite {@code TIMESTAMP_DIFF} so each
+     *  dialect's unparse is correct. */
+    public static final class DurationExpr extends ComputedExpr {
+        public final Column startColumn;
+        public final Column endColumn;
+        public final DurationUnit unit;
+        public DurationExpr(
+            Column startColumn, Column endColumn, DurationUnit unit)
+        {
+            this.startColumn = startColumn;
+            this.endColumn = endColumn;
+            this.unit = unit;
         }
     }
 

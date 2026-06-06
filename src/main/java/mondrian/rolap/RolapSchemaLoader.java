@@ -3843,6 +3843,25 @@ public class RolapSchemaLoader {
         final RolapSchema.PhysRelation relation =
             last(
                 sourceRelation, xmlAttribute.table, xmlAttribute, "table");
+
+        // #108: native <Tier> / <Duration> attributes desugar to a
+        // synthesized computed column (CASE / date-diff). When present,
+        // they supply the key, name, caption and order-by in place of the
+        // ordinary keyColumn/<Key>/<Name>/<OrderBy> resolution below.
+        final MondrianDef.Tier xmlTier = xmlAttribute.getTier();
+        final MondrianDef.Duration xmlDuration = xmlAttribute.getDuration();
+        if (xmlTier != null && xmlDuration != null) {
+            getHandler().error(
+                "Attribute must not declare both <Tier> and <Duration>",
+                xmlAttribute,
+                null);
+            return null;
+        }
+        if (xmlTier != null || xmlDuration != null) {
+            return createComputedAttribute(
+                dimension, xmlAttribute, relation, xmlTier, xmlDuration);
+        }
+
         final List<RolapSchema.PhysColumn> keyList =
             createColumnList(
                 xmlAttribute,
@@ -3951,6 +3970,94 @@ public class RolapSchemaLoader {
         } else {
             caption = xmlAttribute.caption;
         }
+        final RolapAttribute attribute =
+            new RolapAttributeImpl(
+                xmlAttribute.name,
+                toBoolean(xmlAttribute.visible, true),
+                keyList,
+                nameExpr,
+                captionExpr,
+                orderByList,
+                makeMemberFormatter(xmlAttribute),
+                levelType,
+                approxRowCount,
+                createLarder(
+                    Util.makeFqName(dimension, xmlAttribute.name)
+                        + ".attribute",
+                    xmlAttribute.getAnnotations(),
+                    xmlAttribute.name,
+                    caption,
+                    xmlAttribute.description).build())
+            {
+                public RolapDimension getDimension() {
+                    return dimension;
+                }
+            };
+
+        validator.putXml(attribute, xmlAttribute);
+        return attribute;
+    }
+
+    /**
+     * #108: build a {@link RolapAttribute} for a native {@code <Tier>} or
+     * {@code <Duration>} attribute. Exactly one of {@code xmlTier} /
+     * {@code xmlDuration} is non-null. The key is a synthesized
+     * {@link RolapSchema.PhysComputedColumn}; the order-by is a numeric
+     * column so members sort by boundary (tier) or value (duration), not
+     * lexically.
+     */
+    private RolapAttribute createComputedAttribute(
+        final RolapDimension dimension,
+        final MondrianDef.Attribute xmlAttribute,
+        final RolapSchema.PhysRelation relation,
+        final MondrianDef.Tier xmlTier,
+        final MondrianDef.Duration xmlDuration)
+    {
+        final RolapComputedColumnFactory factory =
+            new RolapComputedColumnFactory(this, schema.getDialect());
+
+        final RolapSchema.PhysComputedColumn keyColumn;
+        final List<RolapSchema.PhysColumn> orderByList;
+        if (xmlTier != null) {
+            keyColumn =
+                factory.createTierKey(xmlAttribute, xmlTier, relation);
+            final RolapSchema.PhysComputedColumn orderBy =
+                factory.createTierOrderBy(xmlAttribute, xmlTier, relation);
+            if (keyColumn == null || orderBy == null) {
+                return null;
+            }
+            orderByList = Collections.<RolapSchema.PhysColumn>singletonList(
+                orderBy);
+        } else {
+            keyColumn =
+                factory.createDurationKey(
+                    xmlAttribute, xmlDuration, relation);
+            if (keyColumn == null) {
+                return null;
+            }
+            // Duration members are numeric: sort by the value itself.
+            orderByList = Collections.<RolapSchema.PhysColumn>singletonList(
+                keyColumn);
+        }
+
+        final List<RolapSchema.PhysColumn> keyList =
+            Collections.<RolapSchema.PhysColumn>singletonList(keyColumn);
+        // Member name and caption are the binned label / interval value.
+        final RolapSchema.PhysColumn nameExpr = keyColumn;
+        final RolapSchema.PhysColumn captionExpr = keyColumn;
+
+        final int approxRowCount =
+            loadApproxRowCount(xmlAttribute.approxRowCount);
+        final org.olap4j.metadata.Level.Type levelType =
+            stringToLevelType(xmlAttribute.levelType);
+
+        final String caption;
+        if (xmlAttribute.caption == null) {
+            caption = dimension.getName() + " - " + xmlAttribute.name;
+        } else {
+            caption = xmlAttribute.caption;
+        }
+
         final RolapAttribute attribute =
             new RolapAttributeImpl(
                 xmlAttribute.name,

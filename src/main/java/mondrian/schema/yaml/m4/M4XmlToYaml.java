@@ -454,6 +454,15 @@ public final class M4XmlToYaml {
         if (a.orderByColumn != null) {
             out.put("order_by_column", a.orderByColumn);
         }
+        // #108: native tier / duration child elements.
+        MondrianDef.Tier tier = findTierChild(a.childArray);
+        if (tier != null) {
+            out.put("tier", tier(tier));
+        }
+        MondrianDef.Duration duration = findDurationChild(a.childArray);
+        if (duration != null) {
+            out.put("duration", duration(duration));
+        }
         // Skip XOM default "Regular" for levelType
         if (a.levelType != null && !"Regular".equals(a.levelType)) {
             out.put("level_type", a.levelType);
@@ -524,6 +533,71 @@ public final class M4XmlToYaml {
             }
         }
         return null;
+    }
+
+    private static MondrianDef.Tier findTierChild(
+        MondrianDef.AttributeElement[] kids)
+    {
+        if (kids == null) {
+            return null;
+        }
+        for (MondrianDef.AttributeElement ae : kids) {
+            if (ae instanceof MondrianDef.Tier) {
+                return (MondrianDef.Tier) ae;
+            }
+        }
+        return null;
+    }
+
+    private static MondrianDef.Duration findDurationChild(
+        MondrianDef.AttributeElement[] kids)
+    {
+        if (kids == null) {
+            return null;
+        }
+        for (MondrianDef.AttributeElement ae : kids) {
+            if (ae instanceof MondrianDef.Duration) {
+                return (MondrianDef.Duration) ae;
+            }
+        }
+        return null;
+    }
+
+    /** #108: serialize a {@code <Tier>} child to its YAML map. */
+    private static Map<String, Object> tier(MondrianDef.Tier t) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("column", t.column);
+        if (t.table != null) {
+            out.put("table", t.table);
+        }
+        List<Map<String, Object>> bins = new ArrayList<>();
+        if (t.bins != null) {
+            for (MondrianDef.Bin b : t.bins) {
+                Map<String, Object> bin = new LinkedHashMap<>();
+                if (b.boundary != null) {
+                    bin.put("boundary", b.boundary);
+                }
+                bin.put("label", b.label);
+                bins.add(bin);
+            }
+        }
+        out.put("bins", bins);
+        return out;
+    }
+
+    /** #108: serialize a {@code <Duration>} child to its YAML map. */
+    private static Map<String, Object> duration(MondrianDef.Duration d) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("start_column", d.startColumn);
+        out.put("end_column", d.endColumn);
+        if (d.table != null) {
+            out.put("table", d.table);
+        }
+        // Skip XOM default "DAY" for unit.
+        if (d.unit != null && !"DAY".equals(d.unit)) {
+            out.put("unit", d.unit);
+        }
+        return out;
     }
 
     private static Map<String, Object> hierarchy(MondrianDef.Hierarchy h) {

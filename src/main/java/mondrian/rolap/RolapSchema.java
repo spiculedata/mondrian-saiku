@@ -2423,7 +2423,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
     }
 
-    public static final class PhysCalcColumn extends PhysColumn {
+    public static class PhysCalcColumn extends PhysColumn {
         private RolapSchemaLoader loader; // cleared once compute succeeds
         private NodeDef xmlNode; // cleared once compute succeeds
         final List<RolapSchema.PhysExpr> list;
@@ -2500,6 +2500,129 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         public List<PhysExpr> getList() {
             return list;
+        }
+    }
+
+    /**
+     * #108: a {@link PhysCalcColumn} synthesized from a native
+     * {@code <Tier>} or {@code <Duration>} attribute declaration. The
+     * inherited {@code list} renders standard SQL ({@code CASE} /
+     * {@code TIMESTAMPDIFF}) for the legacy (non-Calcite) path; the
+     * structured {@link #spec} lets the Calcite adapter emit a
+     * dialect-correct Rex expression instead. Immutable once built.
+     */
+    public static final class PhysComputedColumn extends PhysCalcColumn {
+        public final ComputedSpec spec;
+
+        PhysComputedColumn(
+            RolapSchemaLoader loader,
+            NodeDef xmlNode,
+            PhysRelation table,
+            String name,
+            Dialect.Datatype datatype,
+            SqlStatement.Type internalType,
+            List<PhysExpr> list,
+            ComputedSpec spec)
+        {
+            super(loader, xmlNode, table, name, datatype, internalType, list);
+            assert spec != null;
+            this.spec = spec;
+        }
+
+        /**
+         * Re-bind this computed column (and the columns embedded in its SQL
+         * {@code list} and its {@link #spec}) onto {@code newRelation},
+         * which is a re-aliased clone of this column's relation. Without
+         * this, dimension re-aliasing would leave the computed column's
+         * embedded refs pointing at the original relation, breaking the
+         * star-schema path resolution.
+         */
+        @Override
+        PhysColumn cloneWithAlias(PhysRelation newRelation) {
+            final List<PhysExpr> reboundList =
+                new java.util.ArrayList<PhysExpr>(list.size());
+            for (PhysExpr e : list) {
+                reboundList.add(rebind(e, newRelation));
+            }
+            return new PhysComputedColumn(
+                null, null, newRelation, name, datatype, internalType,
+                reboundList, spec.withRelation(newRelation));
+        }
+
+        private static PhysExpr rebind(PhysExpr e, PhysRelation newRelation) {
+            if (e instanceof PhysColumn) {
+                return newRelation.getColumn(((PhysColumn) e).name, true);
+            }
+            return e;
+        }
+    }
+
+    /** #108: marker base for the structured descriptor carried by a
+     *  {@link PhysComputedColumn}. */
+    public abstract static class ComputedSpec {
+        /** Return a copy of this spec with every embedded column re-bound
+         *  to {@code newRelation} (used when a dimension relation is
+         *  re-aliased). Immutable: returns a new instance. */
+        abstract ComputedSpec withRelation(PhysRelation newRelation);
+    }
+
+    /** #108: one bin of a {@link TierSpec}. {@link #boundary} is the
+     *  exclusive upper bound (a row's value {@code <} boundary takes this
+     *  bin), or null for the open-ended final bin. */
+    public static final class TierBin {
+        public final Number boundary;
+        public final String label;
+        public TierBin(Number boundary, String label) {
+            this.label = label;
+            this.boundary = boundary;
+        }
+    }
+
+    /** #108: a tier (binning) descriptor: bin a {@link #column} into the
+     *  first {@link TierBin} whose boundary the value is strictly less
+     *  than. {@link #bins} is in ascending boundary order; the last bin is
+     *  open-ended (null boundary). */
+    public static final class TierSpec extends ComputedSpec {
+        public final PhysColumn column;
+        public final List<TierBin> bins;
+        public TierSpec(PhysColumn column, List<TierBin> bins) {
+            this.column = column;
+            this.bins = java.util.Collections.unmodifiableList(
+                new java.util.ArrayList<TierBin>(bins));
+        }
+        @Override
+        ComputedSpec withRelation(PhysRelation newRelation) {
+            return new TierSpec(
+                newRelation.getColumn(column.name, true), bins);
+        }
+    }
+
+    /** #108: time units a {@link DurationSpec} can be expressed in. */
+    public enum DurationUnit {
+        DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, SECOND
+    }
+
+    /** #108: a duration descriptor: the interval from {@link #startColumn}
+     *  to {@link #endColumn} in {@link #unit}. */
+    public static final class DurationSpec extends ComputedSpec {
+        public final PhysColumn startColumn;
+        public final PhysColumn endColumn;
+        public final DurationUnit unit;
+        public DurationSpec(
+            PhysColumn startColumn,
+            PhysColumn endColumn,
+            DurationUnit unit)
+        {
+            this.startColumn = startColumn;
+            this.endColumn = endColumn;
+            this.unit = unit;
+        }
+        @Override
+        ComputedSpec withRelation(PhysRelation newRelation) {
+            return new DurationSpec(
+                newRelation.getColumn(startColumn.name, true),
+                newRelation.getColumn(endColumn.name, true),
+                unit);
         }
     }
 

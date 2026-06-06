@@ -1218,6 +1218,8 @@ version 3.x schemas.</p>
                     Name.class,
                     OrderBy.class,
                     Caption.class,
+                    Tier.class,
+                    Duration.class,
                     Property.class,
                     MemberFormatter.class,
                     Annotations.class)
@@ -1229,6 +1231,14 @@ version 3.x schemas.</p>
                         childArray = ts;
                     }
                 };
+            /** #108: native tier (binning) child, or null. */
+            public Tier getTier() {
+                return children.singleton(Tier.class);
+            }
+            /** #108: native duration (date-diff) child, or null. */
+            public Duration getDuration() {
+                return children.singleton(Duration.class);
+            }
             public NamedList<Property> getProperties() {
                 return children.filterNamed(Property.class);
             }
@@ -2875,6 +2885,96 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
             }
             ]]>
         </Code>
+    </Element>
+
+    <Element type="Tier" class="AttributeElement">
+        <Doc>
+            #108: declares a native <em>tier</em> (binning) attribute. The
+            attribute's member for a row is the label of the first bin whose
+            upper boundary the source column value is strictly less than;
+            rows at or above every boundary fall into the open-ended final
+            bin. Desugars to a CASE expression rendered per-dialect via
+            Calcite. Members sort by boundary order, not lexically.
+        </Doc>
+        <Attribute name="column" required="true">
+            <Doc>
+                Name of the source column whose value is binned.
+            </Doc>
+        </Attribute>
+        <Attribute name="table" required="false">
+            <Doc>
+                Table that holds the source column. Defaults to the
+                attribute's (or dimension's) table.
+            </Doc>
+        </Attribute>
+        <Array name="bins" type="Bin">
+            <Doc>
+                Ordered list of bins, by ascending boundary. Each bin except
+                the last carries a numeric <code>boundary</code>; the final
+                bin omits it (open-ended top bin).
+            </Doc>
+        </Array>
+    </Element>
+
+    <Element type="Bin">
+        <Doc>
+            #108: one bin of a Tier. A row whose source column value is
+            strictly less than <code>boundary</code> (and not matched by an
+            earlier bin) takes this bin's <code>label</code>. The final bin
+            in a Tier omits <code>boundary</code> to capture all remaining
+            rows.
+        </Doc>
+        <Attribute name="boundary" required="false">
+            <Doc>
+                Exclusive upper boundary of this bin. Omit on the final bin
+                to make it open-ended.
+            </Doc>
+        </Attribute>
+        <Attribute name="label" required="true">
+            <Doc>
+                Member name/caption for rows that fall into this bin.
+            </Doc>
+        </Attribute>
+    </Element>
+
+    <Element type="Duration" class="AttributeElement">
+        <Doc>
+            #108: declares a native <em>duration</em> attribute — a numeric
+            interval between two date/timestamp columns, in a fixed unit.
+            Desugars to a date-diff expression rendered per-dialect via
+            Calcite. Members are numeric and sort numerically.
+        </Doc>
+        <Attribute name="startColumn" required="true">
+            <Doc>
+                Name of the column holding the interval start
+                (date/timestamp).
+            </Doc>
+        </Attribute>
+        <Attribute name="endColumn" required="true">
+            <Doc>
+                Name of the column holding the interval end
+                (date/timestamp).
+            </Doc>
+        </Attribute>
+        <Attribute name="table" required="false">
+            <Doc>
+                Table that holds the start/end columns. Defaults to the
+                attribute's (or dimension's) table.
+            </Doc>
+        </Attribute>
+        <Attribute name="unit" required="true" default="DAY">
+            <Doc>
+                Time unit of the computed interval.
+            </Doc>
+            <Value>DAY</Value>
+            <Value>WEEK</Value>
+            <Value>MONTH</Value>
+            <Value>QUARTER</Value>
+            <Value>YEAR</Value>
+            <Value>HOUR</Value>
+            <Value>MINUTE</Value>
+            <Value>SECOND</Value>
+        </Attribute>
     </Element>
 
     <Element type="ForeignKey" class="Columns">

@@ -160,4 +160,70 @@ public class M4ConverterFidelityTest {
             back.toLowerCase().contains("select c.customerkey"));
         assertEquals(yaml, M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml)));
     }
+
+    // ---- #108: native <Tier> + <Duration> attribute child elements ----
+
+    private static final String TIER_DURATION_XML =
+        "<Schema name='TierDur' metamodelVersion='4.0'>"
+        + "<PhysicalSchema>"
+        + "<Table name='f'><Key><Column name='id'/></Key></Table>"
+        + "<Table name='d'/>"
+        + "</PhysicalSchema>"
+        + "<Dimension name='Dim' table='d' key='K'>"
+        + "<Attributes>"
+        + "<Attribute name='K' column='k'/>"
+        + "<Attribute name='Size Tier'>"
+        + "<Tier column='units'>"
+        + "<Bin boundary='10' label='Small'/>"
+        + "<Bin boundary='100' label='Medium'/>"
+        + "<Bin label='Large'/>"
+        + "</Tier>"
+        + "</Attribute>"
+        + "<Attribute name='Lead'>"
+        + "<Duration startColumn='order_date' endColumn='ship_date'"
+        + " unit='MONTH'/>"
+        + "</Attribute>"
+        + "</Attributes>"
+        + "</Dimension>"
+        + "<Cube name='C'>"
+        + "<Dimensions><Dimension source='Dim'/></Dimensions>"
+        + "<MeasureGroups><MeasureGroup name='C' table='f'>"
+        + "<Measures>"
+        + "<Measure name='M' column='m' aggregator='sum'/></Measures>"
+        + "<DimensionLinks>"
+        + "<ForeignKeyLink dimension='Dim' foreignKeyColumn='dk'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "</Cube></Schema>";
+
+    @Test
+    public void tierAndDurationSurvive() {
+        String yaml = M4XmlToYaml.toYaml(TIER_DURATION_XML);
+        // YAML carries the structured tier / duration.
+        assertTrue(yaml, yaml.contains("tier"));
+        assertTrue(yaml, yaml.contains("Small"));
+        assertTrue(yaml, yaml.contains("Medium"));
+        assertTrue(yaml, yaml.contains("Large"));
+        assertTrue(yaml, yaml.contains("duration"));
+        assertTrue(yaml, yaml.contains("order_date"));
+        assertTrue(yaml, yaml.contains("ship_date"));
+
+        String back = M4YamlToXml.toXml(yaml);
+        // Tier child + all three bins (two bounded, one open-ended).
+        assertTrue(back, back.contains("<Tier"));
+        assertTrue(back, back.contains("column=\"units\""));
+        assertTrue(back, back.contains("boundary=\"10\""));
+        assertTrue(back, back.contains("boundary=\"100\""));
+        assertTrue(back, back.contains("label=\"Small\""));
+        assertTrue(back, back.contains("label=\"Medium\""));
+        assertTrue(back, back.contains("label=\"Large\""));
+        // Duration child with its unit.
+        assertTrue(back, back.contains("<Duration"));
+        assertTrue(back, back.contains("startColumn=\"order_date\""));
+        assertTrue(back, back.contains("endColumn=\"ship_date\""));
+        assertTrue(back, back.contains("unit=\"MONTH\""));
+
+        // Idempotent round-trip: YAML → XML → YAML is stable.
+        assertEquals(yaml, M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml)));
+    }
 }

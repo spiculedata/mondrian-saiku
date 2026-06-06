@@ -118,6 +118,66 @@ public class CalciteSqlPlannerTest {
 
     /** #104: a percentile measure on a backend without PERCENTILE_CONT
      *  (HSQLDB) is REFUSED with a clear error, not silently mis-emitted. */
+    /** #108: a multi-branch tier projection renders a nested CASE over the
+     *  source column, in boundary order. */
+    @Test
+    public void tierProjectionEmitsNestedCase() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest.Column source =
+            new PlannerRequest.Column("sales_fact_1997", "unit_sales");
+        PlannerRequest.TierExpr tier =
+            new PlannerRequest.TierExpr(
+                source,
+                java.util.List.of(
+                    new PlannerRequest.TierBranch(10, "Small"),
+                    new PlannerRequest.TierBranch(100, "Medium"),
+                    new PlannerRequest.TierBranch(null, "Large")));
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addProjection(
+                new PlannerRequest.Column(null, "size_tier", tier))
+            .build();
+        String sql = planner.plan(req);
+        assertNotNull(sql);
+        String lower = sql.toLowerCase();
+        assertTrue("expected CASE in: " + sql, lower.contains("case when"));
+        assertTrue("expected first boundary 10 in: " + sql,
+            lower.contains("< 10"));
+        assertTrue("expected second boundary 100 in: " + sql,
+            lower.contains("< 100"));
+        assertTrue("expected Small label in: " + sql,
+            sql.contains("'Small'"));
+        assertTrue("expected Medium label in: " + sql,
+            sql.contains("'Medium'"));
+        assertTrue("expected Large (else) label in: " + sql,
+            sql.contains("'Large'"));
+        // Boundary order: the Small branch must precede the Medium branch.
+        assertTrue("expected Small before Medium in: " + sql,
+            sql.indexOf("'Small'") < sql.indexOf("'Medium'"));
+    }
+
+    /** #108: a duration projection renders a TIMESTAMPDIFF over the two
+     *  date columns, carrying the unit. */
+    @Test
+    public void durationProjectionEmitsTimestampDiff() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest.DurationExpr dur =
+            new PlannerRequest.DurationExpr(
+                new PlannerRequest.Column("time_by_day", "the_date"),
+                new PlannerRequest.Column("time_by_day", "the_date"),
+                PlannerRequest.DurationUnit.DAY);
+        PlannerRequest req = PlannerRequest.builder("time_by_day")
+            .addProjection(
+                new PlannerRequest.Column(null, "lead_days", dur))
+            .build();
+        String sql = planner.plan(req);
+        assertNotNull(sql);
+        String lower = sql.toLowerCase();
+        assertTrue("expected TIMESTAMPDIFF in: " + sql,
+            lower.contains("timestampdiff"));
+        assertTrue("expected DAY unit in: " + sql,
+            lower.contains("day"));
+    }
+
     @Test
     public void percentileRefusedOnUnsupportedDialect() {
         CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
