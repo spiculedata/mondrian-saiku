@@ -79,6 +79,27 @@ public class NonAdditiveAggregatorTest {
                 mondrian.spi.Dialect.Datatype.Numeric));
     }
 
+    /**
+     * #104 edge: a median/percentile measure must also be excluded from
+     * agg-table substitution. Agg-table substitution is currently dead (no agg
+     * stars are registered), but the {@code AggregationManager} guard keys off
+     * the SAME {@link RolapAggregator#isRollupable()} signal as the in-memory
+     * rollup guard — a precomputed aggregate cannot serve a non-rollupable
+     * leaf aggregator (no percentile-of-percentiles). This pins the signal the
+     * agg-table guard relies on, so a future re-enable cannot silently bypass
+     * #104.
+     */
+    @Test
+    public void percentileExcludedFromAggTables() {
+        assertFalse(RolapAggregator.Median.isRollupable(),
+            "median is non-rollupable → agg-table guard refuses substitution");
+        assertFalse(RolapAggregator.Percentile.isRollupable(),
+            "percentile is non-rollupable → agg-table guard refuses it");
+        // An additive measure is NOT excluded (the dead fast path stays
+        // available to it if re-enabled).
+        assertTrue(RolapAggregator.Sum.isRollupable());
+    }
+
     @Test
     public void percentileAggregatorEmitsOrderedSetSql() {
         RolapAggregator p90 =

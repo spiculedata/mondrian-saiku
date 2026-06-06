@@ -714,11 +714,47 @@ public final class PlannerRequest {
         public Builder addJoin(Join j) { joins.add(j); return this; }
         public Builder addGroupBy(Column c) { groupBy.add(c); return this; }
         public Builder addMeasure(Measure m) { measures.add(m); return this; }
+        /** #107 weighted bridge: multiply every (not-already-weighted) measure
+         *  operand by {@code weightColumn} — {@code SUM(operand × weight)}.
+         *  Used when a weighted-bridge member grant forces the fan-out join
+         *  into scope for a load that does not group by the bridge dimension
+         *  (e.g. a bare {@code [All]}), where the weight was not resolved at
+         *  measure-build time. Idempotent: a measure already carrying a weight
+         *  (the load groups by the bridge dimension) is left unchanged. */
+        public Builder weightMeasures(Column weightColumn) {
+            if (weightColumn == null) {
+                return this;
+            }
+            for (int i = 0; i < measures.size(); i++) {
+                Measure m = measures.get(i);
+                if (m.weightColumn == null
+                    && m.percentileFraction == null)
+                {
+                    measures.set(i, Measure.weighted(m, weightColumn));
+                }
+            }
+            return this;
+        }
+        /** #107: whether any measure already carries a bridge weight (the load
+         *  groups by a weighted bridge dimension, so weighting is in scope). */
+        public boolean hasWeightedMeasure() {
+            for (Measure m : measures) {
+                if (m.weightColumn != null) {
+                    return true;
+                }
+            }
+            return false;
+        }
         /** #103: mark this aggregation as fan-out-safe over the given fact
          *  grain key — see {@link PlannerRequest#symmetricGrainColumn}. */
         public Builder symmetricGrainColumn(Column c) {
             this.symmetricGrainColumn = c;
             return this;
+        }
+        /** #107: whether a fan-out grain key has already been pinned (so a
+         *  later row-security injection does not clobber it). */
+        public boolean hasSymmetricGrainColumn() {
+            return this.symmetricGrainColumn != null;
         }
         /** #105: attach the resolved query-parameter context that
          *  parameter-bound filters substitute at render time. */

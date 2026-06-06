@@ -195,4 +195,167 @@ public class SymmetricAggregateSqlTest {
         assertEquals(
             1000L, balanceFor("Bob", true), "Bob = 1000*0.5 + 500*1.0");
     }
+
+    // ---- edge cases from the #107 audit (SQL-level semantics) ----------
+
+    /**
+     * Weighted weights that do NOT sum to 1.0 are applied literally — there is
+     * no implicit normalization. Account 1 is split 0.3 / 0.3 (sum 0.6), so
+     * its All-level weighted total is 1000*0.6 = 600, NOT the full 1000.
+     */
+    @Test
+    public void weightedWeightsNotSummingToOne() throws Exception {
+        try (Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE acct2 (account_id INTEGER,"
+                + " balance INTEGER)");
+            st.execute("CREATE TABLE own2 (account_id INTEGER,"
+                + " customer VARCHAR(32), weight DECIMAL(5,4))");
+            st.execute("INSERT INTO acct2 VALUES (1, 1000)");
+            st.execute("INSERT INTO own2 VALUES (1, 'Alice', 0.3)");
+            st.execute("INSERT INTO own2 VALUES (1, 'Bob', 0.3)");
+        }
+        long allWeighted = Math.round(scalarDouble(
+            "SELECT SUM(a.balance * o.weight) FROM acct2 a"
+            + " JOIN own2 o ON a.account_id = o.account_id"));
+        assertEquals(600L, allWeighted,
+            "0.3 + 0.3 applied literally (no normalization to 1.0)");
+    }
+
+    /**
+     * Full-count with THREE owners on one account still de-duplicates to the
+     * single account balance at the All level (counted once, not thrice).
+     */
+    @Test
+    public void fullCountThreeOwnersDedup() throws Exception {
+        try (Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE acct3 (account_id INTEGER,"
+                + " balance INTEGER)");
+            st.execute("CREATE TABLE own3 (account_id INTEGER,"
+                + " customer VARCHAR(32))");
+            st.execute("INSERT INTO acct3 VALUES (1, 1000)");
+            st.execute("INSERT INTO own3 VALUES (1, 'Alice')");
+            st.execute("INSERT INTO own3 VALUES (1, 'Bob')");
+            st.execute("INSERT INTO own3 VALUES (1, 'Carol')");
+        }
+        long all = scalar(
+            "SELECT SUM(balance) FROM ("
+            + "  SELECT DISTINCT a.account_id, a.balance"
+            + "  FROM acct3 a JOIN own3 o"
+            + "    ON a.account_id = o.account_id) t");
+        assertEquals(1000L, all,
+            "3 owners → deduped to one account balance, not 3000");
+    }
+
+    /**
+     * Defined behaviour for a NULL weight and a NULL bridge key, rather than a
+     * silent miscount. A NULL weight makes {@code balance * weight} NULL (that
+     * row contributes nothing to the weighted SUM); a NULL bridge key never
+     * matches the inner join, so its account drops out entirely.
+     */
+    @Test
+    public void nullWeightAndNullBridgeKey() throws Exception {
+        try (Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE acctN (account_id INTEGER,"
+                + " balance INTEGER)");
+            st.execute("CREATE TABLE ownN (account_id INTEGER,"
+                + " customer VARCHAR(32), weight DECIMAL(5,4))");
+            st.execute("INSERT INTO acctN VALUES (1, 1000)");
+            st.execute("INSERT INTO acctN VALUES (2, 500)");
+            // account 1: NULL weight; account 2: NULL bridge key.
+            st.execute("INSERT INTO ownN VALUES (1, 'Alice', NULL)");
+            st.execute("INSERT INTO ownN VALUES (NULL, 'Bob', 1.0)");
+        }
+        // Weighted SUM: account 1 contributes balance*NULL = NULL (ignored);
+        // account 2 never joins (NULL key) → total weighted is NULL/empty.
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                 "SELECT SUM(a.balance * o.weight) FROM acctN a"
+                 + " JOIN ownN o ON a.account_id = o.account_id"))
+        {
+            rs.next();
+            rs.getDouble(1);
+            assertEquals(true, rs.wasNull(),
+                "NULL weight + NULL key leave no contributing rows → NULL");
+        }
+        // Full-count: only account 1 has a (non-null-key) owner row.
+        long fc = scalar(
+            "SELECT SUM(balance) FROM ("
+            + "  SELECT DISTINCT a.account_id, a.balance"
+            + "  FROM acctN a JOIN ownN o"
+            + "    ON a.account_id = o.account_id) t");
+        assertEquals(1000L, fc,
+            "account 2 (NULL bridge key) drops from the inner join");
+    }
+
+    /** An empty bridge table yields an all-NULL (empty) result, not zero rows
+     *  miscounted as a value. */
+    @Test
+    public void emptyBridgeTableYieldsAllNull() throws Exception {
+        try (Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE acctE (account_id INTEGER,"
+                + " balance INTEGER)");
+            st.execute("CREATE TABLE ownE (account_id INTEGER,"
+                + " customer VARCHAR(32))");
+            st.execute("INSERT INTO acctE VALUES (1, 1000)");
+            // ownE intentionally empty.
+        }
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                 "SELECT SUM(balance) FROM ("
+                 + "  SELECT DISTINCT a.account_id, a.balance"
+                 + "  FROM acctE a JOIN ownE o"
+                 + "    ON a.account_id = o.account_id) t"))
+        {
+            rs.next();
+            rs.getDouble(1);
+            assertEquals(true, rs.wasNull(),
+                "no bridge rows → empty join → NULL total (not 0, not 1000)");
+        }
+    }
+
+    /**
+     * A fan-out SUM and a NON-fan-out additive measure in the SAME query: only
+     * the fan-out measure must be de-duplicated (DISTINCT on the fact grain),
+     * while the additive line-item count aggregates normally over the join.
+     * Revenue = 150 (deduped), item count = 4 (all line items).
+     */
+    @Test
+    public void symmetricWithNormalAdditiveMeasureSameQuery() throws Exception {
+        long revenue = scalar(
+            "SELECT SUM(total) FROM ("
+            + "  SELECT DISTINCT o.order_id, o.total"
+            + "  FROM orders o JOIN line_items li"
+            + "    ON o.order_id = li.order_id) t");
+        long items = scalar(
+            "SELECT COUNT(*) FROM orders o JOIN line_items li"
+            + " ON o.order_id = li.order_id");
+        assertEquals(150L, revenue, "fan-out revenue deduped to 150");
+        assertEquals(4L, items,
+            "additive line-item count is NOT deduped (all 4 over the join)");
+    }
+
+    /**
+     * An empty grain-column list (no grouping columns) falls back gracefully:
+     * DISTINCT on the fact PK alone still collapses the fan-out to the true
+     * total (150) rather than the naive double-counted SUM (350).
+     */
+    @Test
+    public void symmetricGrainColumnNull() throws Exception {
+        long total = scalar(
+            "SELECT SUM(total) FROM ("
+            + "  SELECT DISTINCT o.order_id, o.total"
+            + "  FROM orders o JOIN line_items li"
+            + "    ON o.order_id = li.order_id) t");
+        assertEquals(150L, total,
+            "no group columns → DISTINCT on PK still dedupes (not 350)");
+    }
+
+    private double scalarDouble(String sql) throws Exception {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql))
+        {
+            rs.next();
+            return rs.getDouble(1);
+        }
+    }
 }

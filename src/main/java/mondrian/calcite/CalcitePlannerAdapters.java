@@ -3630,6 +3630,17 @@ public final class CalcitePlannerAdapters {
         // fails closed (zero rows) rather than scanning unrestricted.
         injectPredicateGrants(b, segments, star);
 
+        // #107 Vector 2b: member/hierarchy row-security on a BRIDGE
+        // (many-to-many) dimension must constrain the bridge fan-out FACT
+        // aggregation — not merely the member axis read. Without this, a
+        // full-count bridge leaks fact totals over accounts owned only by
+        // hidden members ([All]/rollups reflect hidden owners). Injected at
+        // the same chokepoint as the predicate grants, after the functional
+        // joins/filters are in place; fails closed (zero rows) if access
+        // cannot be resolved.
+        injectBridgeMemberGrants(
+            b, segments, star, factTable, joinedAliases);
+
         return b.build();
     }
 
@@ -3709,7 +3720,7 @@ public final class CalcitePlannerAdapters {
         RolapStar.Measure measure, RolapStar star)
     {
         mondrian.olap.Role role = activeRole();
-        if (role == null || !role.hasPredicateGrants() || measure == null) {
+        if (role == null || measure == null) {
             return "";
         }
         String cubeName = measure.getCubeName();
@@ -3723,20 +3734,119 @@ public final class CalcitePlannerAdapters {
         mondrian.calcite.QueryParameterContext paramContext =
             activeParamContext();
         StringBuilder sb = new StringBuilder();
+        final boolean hasPredicateGrants = role.hasPredicateGrants();
         for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
             if (!measureGroupOwnsMeasure(mg, measure)) {
                 continue;
             }
-            String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
-            for (mondrian.olap.PredicateGrant grant
-                : role.getPredicateGrants(key))
-            {
-                sb.append("|pg:").append(grant.getColumn())
-                    .append(':').append(grant.getOperator()).append('=');
-                appendResolvedGrantValue(sb, grant, paramContext);
+            if (hasPredicateGrants) {
+                String key =
+                    predicateGrantKey(mg.getCube().getName(), mg.getName());
+                for (mondrian.olap.PredicateGrant grant
+                    : role.getPredicateGrants(key))
+                {
+                    sb.append("|pg:").append(grant.getColumn())
+                        .append(':').append(grant.getOperator()).append('=');
+                    appendResolvedGrantValue(sb, grant, paramContext);
+                }
             }
+            // #107: fold the active role's bridge member-grant constraint for
+            // this measure group into the SAME key, so a bridge [All]/aggregate
+            // whose VALUE depends on the role's visible-member set is never
+            // cross-served to a role with a different visible set (cross-role
+            // bleed). The #107 SQL fix (applyBridgeMemberGrant) constrains the
+            // fan-out below the aggregate but does NOT touch cache identity;
+            // this closes that residual. Contributes nothing when the role
+            // grants ALL access (or the MG has no bridge), keeping unsecured
+            // keys byte-identical.
+            appendBridgeMemberGrantKey(sb, mg, role);
         }
         return sb.toString();
+    }
+
+    /**
+     * #107 cache isolation: append a DETERMINISTIC representation of the active
+     * role's visible bridge-member-key SET (per restricted bridge dimension on
+     * {@code mg}) to the security cache key. Mirrors EXACTLY the decision logic
+     * of {@link #applyBridgeMemberGrant} so cache identity tracks the segment
+     * VALUE the SQL constraint produces:
+     *
+     * <ul>
+     *   <li><b>ALL access</b> (or no bridge): contributes nothing — the SQL
+     *       path applies no constraint, so the value is identical to an
+     *       unsecured load and may safely share its cache slot.</li>
+     *   <li><b>Restricted (CUSTOM)</b>: contributes a stable, SORTED list of
+     *       the role's visible member keys — two roles with the SAME visible
+     *       set share the segment; different sets get distinct identities.</li>
+     *   <li><b>None visible / deny / unresolvable</b>: a distinct
+     *       {@code <deny>} marker — the SQL path fails closed (zero rows), and
+     *       this marker keeps that fail-closed segment from ever being served
+     *       to (or from) a role with visible members.</li>
+     * </ul>
+     */
+    private static void appendBridgeMemberGrantKey(
+        StringBuilder sb,
+        RolapMeasureGroup mg,
+        mondrian.olap.Role role)
+    {
+        if (mg.getBridgeDimensions().isEmpty()) {
+            return;
+        }
+        mondrian.olap.SchemaReader reader = activeSchemaReader();
+        for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+            RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+            if (info == null) {
+                continue;
+            }
+            // Resolve the securing hierarchy exactly as applyBridgeMemberGrant.
+            mondrian.olap.Hierarchy restricted = null;
+            boolean anyNone = false;
+            for (mondrian.olap.Hierarchy h : bridgeDim.getHierarchies()) {
+                mondrian.olap.Access a = role.getAccess(h);
+                if (a == mondrian.olap.Access.NONE) {
+                    anyNone = true;
+                } else if (a != mondrian.olap.Access.ALL) {
+                    restricted = h;
+                    break;
+                }
+            }
+            if (restricted == null) {
+                if (anyNone) {
+                    // Entire bridge dimension hidden → SQL fails closed.
+                    sb.append("|bmg:")
+                        .append(mg.getCube().getName()).append('.')
+                        .append(mg.getName()).append(':')
+                        .append(bridgeDim.getName()).append("=<deny>");
+                }
+                // ALL access everywhere → unsecured → contribute nothing.
+                continue;
+            }
+            // Restricted hierarchy: append the visible member-key set (or a
+            // deny marker when it cannot be resolved / is empty), matching the
+            // SQL path's fail-closed semantics.
+            sb.append("|bmg:")
+                .append(mg.getCube().getName()).append('.')
+                .append(mg.getName()).append(':')
+                .append(bridgeDim.getName()).append('=');
+            java.util.List<Object> visibleKeys = reader == null
+                ? null
+                : visibleBridgeKeyValues(restricted, role, reader);
+            if (visibleKeys == null || visibleKeys.isEmpty()) {
+                // null → unresolvable (SQL denies); empty → no visible members
+                // (SQL denies). Either way a distinct fail-closed marker.
+                sb.append("<deny>");
+                continue;
+            }
+            // Sort a stable string view of the keys for a deterministic
+            // identity independent of member enumeration order.
+            java.util.List<String> sorted =
+                new java.util.ArrayList<String>(visibleKeys.size());
+            for (Object k : visibleKeys) {
+                sorted.add(String.valueOf(k));
+            }
+            java.util.Collections.sort(sorted);
+            sb.append(sorted);
+        }
     }
 
     /** #106: append the resolved value(s) of a predicate grant to the cache
@@ -3930,6 +4040,296 @@ public final class CalcitePlannerAdapters {
         mondrian.rolap.RolapConnection conn =
             locus.execution.getMondrianStatement().getMondrianConnection();
         return conn == null ? null : conn.getQueryParameterContext();
+    }
+
+    /**
+     * #107 Vector 2b: the active connection's {@link SchemaReader}, scoped to
+     * the live role, or {@code null} when there is no active Locus/connection.
+     * Used to enumerate the role-visible members of a bridge dimension.
+     */
+    private static mondrian.olap.SchemaReader activeSchemaReader() {
+        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        if (locus == null
+            || locus.execution == null
+            || locus.execution.getMondrianStatement() == null)
+        {
+            return null;
+        }
+        mondrian.rolap.RolapConnection conn =
+            locus.execution.getMondrianStatement().getMondrianConnection();
+        return conn == null ? null : conn.getSchemaReader();
+    }
+
+    /**
+     * #107 Vector 2b: enforce a role's member/hierarchy grant on a BRIDGE
+     * (many-to-many) dimension by constraining the bridge fan-out FACT
+     * aggregation to role-VISIBLE bridge-dimension members.
+     *
+     * <p>Decided semantics: only bridge rows linking to a member the role can
+     * access contribute to the aggregation. An account owned only by hidden
+     * members is excluded entirely (from {@code [All]}, rollups and every
+     * visible member's cell); a joint account counts once via its visible
+     * owner. The constraint is an IN-list on the bridge dimension's member-key
+     * column, placed pre-aggregation (so it lands inside the DISTINCT fan-out
+     * subquery, before the symmetric de-dup) — exactly where the #106 predicate
+     * filter sits. When the load does not already group by the bridge
+     * dimension (e.g. an {@code [All]} total), the fact→bridge→dimension join
+     * is stitched and the fan-out grain pinned so the de-dup engages.
+     *
+     * <p>No-op when there is no active role, the role grants ALL access to the
+     * bridge hierarchy, or no touched measure group has a full-count bridge.
+     * Fails closed (zero rows) when access cannot be resolved.
+     */
+    private static void injectBridgeMemberGrants(
+        PlannerRequest.Builder b,
+        List<Segment> segments,
+        RolapStar star,
+        RolapStar.Table factTable,
+        java.util.Set<String> joinedAliases)
+    {
+        mondrian.olap.Role role = activeRole();
+        if (role == null) {
+            return;
+        }
+        mondrian.olap.SchemaReader reader = activeSchemaReader();
+        if (reader == null) {
+            return;
+        }
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            // Process every measure group that has ANY bridge — full-count OR
+            // weighted. A weighted bridge under a member grant leaks just as a
+            // full-count one does: a hidden-only owner's full value still
+            // reaches the weighted [All] (shares sum to 1 per account), so the
+            // same visible-member IN-filter must constrain the fan-out.
+            for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+                RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+                if (info == null) {
+                    continue;
+                }
+                applyBridgeMemberGrant(
+                    b, mg, bridgeDim, info.weighted, role, reader,
+                    factTable, joinedAliases);
+            }
+        }
+    }
+
+    /**
+     * #107 Vector 2b: apply a single bridge dimension's member grant.
+     *
+     * <p>Resolves the role's visible member-key values on the bridge
+     * dimension's key level. ALL access → no constraint. CUSTOM/restricted →
+     * an IN-list on the bridge dimension key column (joining the bridge if the
+     * load does not already group by it). No visible members → fail closed
+     * (zero rows).
+     *
+     * <p>For a <b>full-count</b> bridge the fan-out grain is also pinned so the
+     * symmetric DISTINCT de-dup runs over the visible-owner bridge rows. A
+     * <b>weighted</b> bridge rolls up additively (SUM of measure × weight, with
+     * shares summing to 1 per account) and has no DISTINCT de-dup, so the grain
+     * is NOT pinned for weighted — only the visible-member IN-filter applies.
+     * Either way a hidden-only-owner account is fully excluded and a joint
+     * account contributes only its visible owners' rows/shares.
+     */
+    private static void applyBridgeMemberGrant(
+        PlannerRequest.Builder b,
+        RolapMeasureGroup mg,
+        RolapCubeDimension bridgeDim,
+        boolean weighted,
+        mondrian.olap.Role role,
+        mondrian.olap.SchemaReader reader,
+        RolapStar.Table factTable,
+        java.util.Set<String> joinedAliases)
+    {
+        // A bridge dimension may expose several hierarchies (an explicit one
+        // plus auto attribute hierarchies). Find the hierarchy whose access
+        // the role restricts; if the role grants ALL to every hierarchy this
+        // dimension is unsecured for this user → no constraint.
+        mondrian.olap.Hierarchy restricted = null;
+        boolean anyNone = false;
+        for (mondrian.olap.Hierarchy h : bridgeDim.getHierarchies()) {
+            mondrian.olap.Access a = role.getAccess(h);
+            if (a == mondrian.olap.Access.NONE) {
+                anyNone = true;
+            } else if (a != mondrian.olap.Access.ALL) {
+                // CUSTOM (or otherwise partial) — the securing hierarchy.
+                restricted = h;
+                break;
+            }
+        }
+        if (restricted == null) {
+            if (anyNone) {
+                // The bridge dimension is entirely hidden → no fact row
+                // qualifies. Fail closed.
+                b.universalFalse(true);
+            }
+            // Otherwise: ALL access everywhere → unsecured, no constraint.
+            return;
+        }
+
+        // The bridge dimension's member key column (the column the fan-out
+        // join reaches through the one-to-many hop — e.g. customer_id).
+        RolapAttribute keyAttr = bridgeDim.getKeyAttribute();
+        if (keyAttr == null || keyAttr.getKeyList().size() != 1) {
+            b.universalFalse(true);
+            return;
+        }
+        RolapSchema.PhysColumn keyCol = keyAttr.getKeyList().get(0);
+        if (!(keyCol instanceof RolapSchema.PhysRealColumn)) {
+            b.universalFalse(true);
+            return;
+        }
+        RolapStar.Column keyStarCol =
+            mg.getRolapStarColumn(bridgeDim, keyCol);
+        if (keyStarCol == null) {
+            b.universalFalse(true);
+            return;
+        }
+
+        // Resolve the role-visible member-key values on the key level of the
+        // securing hierarchy.
+        java.util.List<Object> visibleKeys =
+            visibleBridgeKeyValues(restricted, role, reader);
+        if (visibleKeys == null) {
+            // Could not resolve the visible set → deny.
+            b.universalFalse(true);
+            return;
+        }
+        if (visibleKeys.isEmpty()) {
+            // The role can see no bridge members → no fact row qualifies.
+            b.universalFalse(true);
+            return;
+        }
+
+        // Ensure the bridge→dimension chain is joined so the key column is in
+        // scope (the [All]/no-group case must force the fan-out join). When
+        // the load already groups by the bridge dimension this is a no-op.
+        RolapStar.Table keyTable = keyStarCol.getTable();
+        if (keyTable != factTable
+            && !joinedAliases.contains(keyTable.getAlias()))
+        {
+            ensureJoinedChain(b, factTable, keyTable, joinedAliases);
+        }
+
+        // Pin the fan-out grain (the fact-side key of the one-to-many hop) so
+        // the symmetric DISTINCT de-dup runs over the visible-owner bridge
+        // rows. Only full-count bridges de-dup; a weighted bridge rolls up
+        // additively (no DISTINCT), so it must NOT pin the grain — doing so
+        // would wrongly collapse a fact's per-owner weighted shares. If a
+        // grouping column already pinned it (the bridge is on an axis), leave
+        // it; the de-dup target is identical.
+        if (!weighted && !b.hasSymmetricGrainColumn()) {
+            RolapSchema.PhysColumn grain = bridgeFanoutGrainFor(keyStarCol);
+            if (grain instanceof RolapSchema.PhysRealColumn) {
+                b.symmetricGrainColumn(
+                    new PlannerRequest.Column(
+                        grain.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) grain).name));
+            }
+        }
+
+        // For a WEIGHTED bridge, forcing the fan-out join into scope (the
+        // [All]/no-group case) means the measures were built un-weighted —
+        // findBridgeWeightColumn only weights loads that already group by the
+        // bridge dimension. Without the weight, the forced fan-out would
+        // multiply each fact by its owner count instead of allocating by
+        // share. Apply the bridge weight here so the visible-owner fan-out
+        // sums SUM(measure × weight). When the load already groups by the
+        // bridge dimension the measures are already weighted and this is a
+        // no-op (idempotent).
+        if (weighted && !b.hasWeightedMeasure()) {
+            RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+            if (info != null
+                && info.weightColumn instanceof RolapSchema.PhysRealColumn)
+            {
+                RolapSchema.PhysRealColumn wc =
+                    (RolapSchema.PhysRealColumn) info.weightColumn;
+                b.weightMeasures(
+                    new PlannerRequest.Column(
+                        wc.relation.getAlias(), wc.name));
+            } else {
+                // Weighted bridge with an unresolvable weight column → cannot
+                // safely allocate the forced fan-out. Fail closed.
+                b.universalFalse(true);
+                return;
+            }
+        }
+
+        // The IN-list constraint on the bridge dimension key — only bridge
+        // rows linking to a visible member contribute to the fan-out.
+        PlannerRequest.Column filterCol = new PlannerRequest.Column(
+            keyTable.getAlias(),
+            ((RolapSchema.PhysRealColumn) keyCol).name);
+        b.addFilter(
+            new PlannerRequest.Filter(
+                filterCol, PlannerRequest.Operator.IN, visibleKeys));
+    }
+
+    /**
+     * #107: the fact-side fan-out grain key reached on the way to
+     * {@code keyStarCol} — the fact-side column of the one-to-many bridge
+     * link, mirroring {@link #findBridgeFanoutGrain}.
+     */
+    private static RolapSchema.PhysColumn bridgeFanoutGrainFor(
+        RolapStar.Column keyStarCol)
+    {
+        for (RolapSchema.PhysHop hop : keyStarCol.getTable().getPath().hopList) {
+            if (hop.link != null && hop.link.oneToMany) {
+                List<RolapSchema.PhysColumn> cl = hop.link.getColumnList();
+                if (!cl.isEmpty()) {
+                    return cl.get(0);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * #107 Vector 2b: the role-visible member-key values on the bridge
+     * dimension's bottom (key) level. Enumerates the level's members through
+     * the role-scoped {@link SchemaReader} and keeps those the role can access
+     * ({@code getAccess != NONE}). Returns {@code null} if the level/members
+     * cannot be resolved (caller fails closed).
+     */
+    private static java.util.List<Object> visibleBridgeKeyValues(
+        mondrian.olap.Hierarchy hier,
+        mondrian.olap.Role role,
+        mondrian.olap.SchemaReader reader)
+    {
+        if (hier == null) {
+            return null;
+        }
+        mondrian.olap.Level[] levels = hier.getLevels();
+        if (levels == null || levels.length == 0) {
+            return null;
+        }
+        // The key level is the deepest level (the member-key grain). A bridge
+        // dimension's key attribute drives the fan-out join key.
+        mondrian.olap.Level keyLevel = levels[levels.length - 1];
+        java.util.List<mondrian.olap.Member> members;
+        try {
+            members = reader.getLevelMembers(keyLevel, false);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+        if (members == null) {
+            return null;
+        }
+        java.util.List<Object> keys = new java.util.ArrayList<>();
+        for (mondrian.olap.Member m : members) {
+            if (m.isAll() || m.isCalculated()) {
+                continue;
+            }
+            if (role.getAccess(m) == mondrian.olap.Access.NONE) {
+                continue;
+            }
+            if (!(m instanceof mondrian.rolap.RolapMember)) {
+                // Cannot extract a stable key → deny (fail closed).
+                return null;
+            }
+            Object key = ((mondrian.rolap.RolapMember) m).getKey();
+            keys.add(key);
+        }
+        return keys;
     }
 
     /**

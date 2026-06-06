@@ -40,11 +40,16 @@ import static java.util.Objects.requireNonNull;
  * <p>The two "killer" detections are purely metadata-driven:
  * <ul>
  *   <li><b>Non-star topology</b> &mdash; per explore, {@link ExploreGraph}
- *   builds the join graph; a {@code full_outer}/{@code cross} join or an
- *   unbridged {@code many_to_many} refuses the whole explore.</li>
+ *   builds the join graph; any join whose type is not {@code left_outer}
+ *   ({@code inner}/{@code right_outer}/{@code full_outer}/{@code cross}), an
+ *   unbridged {@code many_to_many}, or a chained-many topology (a
+ *   {@code one_to_many} reached through another {@code one_to_many}) refuses
+ *   the whole explore.</li>
  *   <li><b>Symmetric-aggregate fan-out</b> &mdash; an additive aggregate
  *   ({@code sum}/{@code average}/{@code count}) on the "one" side of a
- *   {@code one_to_many} an explore fans out is refused per-measure; this is the
+ *   {@code one_to_many} an explore fans out is refused per-measure. Fan-out is
+ *   detected for <em>every</em> view on a "one" side (the upstream view its
+ *   {@code sql_on} references), not just the explore's base view; this is the
  *   silently-wrong case the gate exists to catch.</li>
  * </ul>
  *
@@ -67,19 +72,20 @@ public final class LookmlClassifier {
     //     be confirmed bounded (it selects among declared parameters, #118).
     final Set<String> parameterNames = indexParameterNames(document);
 
-    // 1. Build every explore graph; index base view -> fan-out edge so a
-    //    measure can be tested for symmetric-aggregate dependence.
-    final Map<String, JoinEdge> fanOutByBaseView = new HashMap<>();
+    // 1. Build every explore graph; index EVERY view on the "one" side of a
+    //    one_to_many (not just the base) -> fan-out edge, so an additive
+    //    measure on any fanned-out view can be tested for symmetric-aggregate
+    //    dependence (#98).
+    final Map<String, JoinEdge> fanOutByOneSideView = new HashMap<>();
     for (LookmlNode explore : document.children(LookmlKeywords.EXPLORE)) {
       final ExploreGraph graph = ExploreGraph.from(explore);
       classifyExplore(explore, graph, dimensionKeys, out);
-      graph.firstFanOutEdge().ifPresent(edge ->
-          fanOutByBaseView.putIfAbsent(graph.baseView(), edge));
+      graph.fanOutByOneSideView().forEach(fanOutByOneSideView::putIfAbsent);
     }
 
     // 2. Classify every view's fields, consulting the fan-out index.
     for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
-      classifyView(view, fanOutByBaseView, parameterNames, out);
+      classifyView(view, fanOutByOneSideView, parameterNames, out);
     }
 
     return out.build();
@@ -200,11 +206,9 @@ public final class LookmlClassifier {
   }
 
   private String nonStarReason(ExploreGraph graph, JoinEdge edge) {
-    final String cause = edge.isUnbridgedManyToMany()
-        ? "unbridged many_to_many"
-        : edge.type();
     return "explore `" + graph.exploreName() + "` join `" + edge.joinName()
-        + "` (" + cause + ") is not a star/snowflake fact→dim left-join; "
+        + "` (" + graph.nonStarCause(edge)
+        + ") is not a star/snowflake fact→dim left-join; "
         + "it would break structurally";
   }
 
@@ -224,7 +228,7 @@ public final class LookmlClassifier {
   // --- views -------------------------------------------------------------
 
   private void classifyView(LookmlNode view,
-      Map<String, JoinEdge> fanOutByBaseView, Set<String> parameterNames,
+      Map<String, JoinEdge> fanOutByOneSideView, Set<String> parameterNames,
       ClassificationResult.Builder out) {
     final String viewName = view.name().orElse("?");
 
@@ -232,7 +236,7 @@ public final class LookmlClassifier {
 
     final FieldClassifier fields = new FieldClassifier(viewName, parameterNames);
     final Optional<JoinEdge> fanOut =
-        Optional.ofNullable(fanOutByBaseView.get(viewName));
+        Optional.ofNullable(fanOutByOneSideView.get(viewName));
     final FieldClassifier.PrimaryKey primaryKey = primaryKeyOf(view);
 
     for (LookmlNode measure : view.children(LookmlKeywords.MEASURE)) {

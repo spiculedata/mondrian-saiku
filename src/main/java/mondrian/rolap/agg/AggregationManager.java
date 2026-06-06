@@ -201,11 +201,28 @@ public class AggregationManager extends RolapAggregationManager {
         List<Exp> fields,
         final boolean countOnly)
     {
+        // No role / parameter context supplied: no predicate row-security
+        // filtering. Retained for back-compat callers (e.g. tests) that drive
+        // drill-through without a secured connection.
+        return getDrillThroughSql(
+            request, starPredicateSlicer, fields, countOnly, null, null);
+    }
+
+    public String getDrillThroughSql(
+        final DrillThroughCellRequest request,
+        final StarPredicate starPredicateSlicer,
+        List<Exp> fields,
+        final boolean countOnly,
+        final mondrian.olap.Role role,
+        final mondrian.calcite.QueryParameterContext paramContext)
+    {
         DrillThroughQuerySpec spec =
             new DrillThroughQuerySpec(
                 request,
                 starPredicateSlicer,
-                countOnly);
+                countOnly,
+                role,
+                paramContext);
         Pair<String, List<SqlStatement.Type>> pair =
             spec.generateSqlQuery("drill through");
         if (getLogger().isDebugEnabled()) {
@@ -247,6 +264,22 @@ public class AggregationManager extends RolapAggregationManager {
             // Find an aggregate table. (There aren't any registered anymore, so
             // this will never find anything.)
             AggStar aggStar = findAgg(star, levelBitKey, measureBitKey, rollup);
+
+            // #104/#107 (defence-in-depth): aggregate-table substitution is
+            // currently dead (none are registered, so findAgg never matches),
+            // but if it is ever re-enabled it would have the SAME correctness
+            // bypass as the in-memory rollup path: a precomputed aggregate
+            // cannot serve a NON-ROLLUPABLE leaf aggregator (median/percentile
+            // — there is no median-of-medians, #104) nor a FULL-COUNT bridge
+            // measure (whose fact rows fan out and must be de-duplicated, not
+            // re-summed from a coarser pre-aggregate, #107). Refuse the agg
+            // star in those cases and fall through to the fact-table SQL,
+            // mirroring the FastBatchingCellReader guards.
+            if (aggStar != null
+                && aggStarBypassesCorrectnessGuard(star, measureBitKey))
+            {
+                aggStar = null;
+            }
 
             if (aggStar != null) {
                 // Got a match, hot damn
@@ -348,6 +381,40 @@ public class AggregationManager extends RolapAggregationManager {
      *   an exact match
      * @return An aggregate, or null if none is suitable.
      */
+    /**
+     * #104/#107: whether serving any measure in {@code measureBitKey} from a
+     * pre-aggregated agg table would bypass a correctness guard — i.e. the
+     * measure uses a non-rollupable leaf aggregator (median/percentile, #104)
+     * or belongs to a full-count {@code <BridgeLink>} measure group whose fact
+     * rows fan out and must be de-duplicated rather than re-summed (#107).
+     * Returns {@code false} for ordinary additive measures, so the (currently
+     * dead) agg-table fast path is unaffected for them.
+     */
+    private static boolean aggStarBypassesCorrectnessGuard(
+        final RolapStar star, final BitKey measureBitKey)
+    {
+        final int columnCount = star.getColumnCount();
+        for (int bit : measureBitKey) {
+            if (bit < 0 || bit >= columnCount) {
+                continue;
+            }
+            final RolapStar.Column col = star.getColumn(bit);
+            if (!(col instanceof RolapStar.Measure)) {
+                continue;
+            }
+            final RolapStar.Measure measure = (RolapStar.Measure) col;
+            // #104: non-rollupable leaf aggregator (no median-of-medians).
+            if (!measure.getAggregator().isRollupable()) {
+                return true;
+            }
+            // #107: full-count bridge measure (fan-out must be de-duplicated).
+            if (RolapMeasureGroup.isFullCountBridgeMeasure(measure, star)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static AggStar findAgg(
         RolapStar star,
         final BitKey levelBitKey,

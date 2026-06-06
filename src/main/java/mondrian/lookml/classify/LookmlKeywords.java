@@ -43,6 +43,7 @@ final class LookmlKeywords {
   static final String FROM = "from";
   static final String VIEW_NAME = "view_name";
   static final String FIELD = "field";
+  static final String SQL_ON = "sql_on";
   static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
   static final String SQL_DISTINCT_KEY = "sql_distinct_key";
@@ -55,11 +56,25 @@ final class LookmlKeywords {
   static final ImmutableSet<String> PERSISTENCE_KEYS =
       ImmutableSet.of("datagroup_trigger", "persist_for", "sql_trigger_value");
 
-  // --- join "type" values that break a star ------------------------------
+  // --- join "type" values --------------------------------------------------
+  // LookML's default join type is left_outer; only left_outer preserves the
+  // fact grain (keep all fact rows, attach matching dim rows). Every other
+  // type changes which rows survive — inner/right_outer drop or invert fact
+  // rows, full_outer/cross break the star structurally — so only left_outer
+  // (and an unspecified type, which IS left_outer) is star-eligible.
+  static final String JOIN_TYPE_LEFT_OUTER = "left_outer";
   static final String JOIN_TYPE_FULL_OUTER = "full_outer";
   static final String JOIN_TYPE_CROSS = "cross";
-  static final String JOIN_TYPE_LEFT_OUTER = "left_outer";
   static final String JOIN_TYPE_INNER = "inner";
+  static final String JOIN_TYPE_RIGHT_OUTER = "right_outer";
+
+  /** The recognised grain-changing join types — all non-star. {@code inner}
+   * drops unmatched fact rows; {@code right_outer} inverts the grain; {@code
+   * full_outer} / {@code cross} break the star structurally. (Any unrecognised
+   * non-{@code left_outer} type is also treated as non-star.) */
+  static final ImmutableSet<String> NON_STAR_JOIN_TYPES = ImmutableSet.of(
+      JOIN_TYPE_INNER, JOIN_TYPE_RIGHT_OUTER, JOIN_TYPE_FULL_OUTER,
+      JOIN_TYPE_CROSS);
 
   // --- relationship cardinalities ----------------------------------------
   static final String REL_MANY_TO_ONE = "many_to_one";

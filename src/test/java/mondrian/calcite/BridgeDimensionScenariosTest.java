@@ -221,11 +221,46 @@ public class BridgeDimensionScenariosTest extends AbstractDualFormSchemaTest {
     @ParameterizedTest
     @MethodSource("forms")
     public void fullCountAllDedupesToFactTotals(String form) {
-        assertEquals(1800.0, scalar(form, 
+        assertEquals(1800.0, scalar(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsFull]"),
             0.001);
-        assertEquals(18.0, scalar(form, 
+        assertEquals(18.0, scalar(form,
             "SELECT {[Measures].[Fees]} ON COLUMNS FROM [AccountsFull]"),
+            0.001);
+    }
+
+    /**
+     * #107 (CRITICAL double-count): within ONE connection, warm the cache with
+     * the per-customer LEAF query (Alice 1300, Bob 1500, Carol 300 cached as
+     * leaf segments), THEN ask for the All level. A naive in-memory rollup
+     * would SUM the cached leaf cells (1300+1500+300 = 3100), double-counting
+     * accounts shared by several owners. The correct answer is the
+     * fact-grain de-duplicated total (1800). A full-count bridge segment must
+     * therefore be ineligible as a rollup source across the bridge dimension,
+     * forcing a fresh fact-grain SQL load (emitSymmetricAggregate).
+     *
+     * <p>This also makes {@link #fullCountAllDedupesToFactTotals} deterministic
+     * for the right reason: that test only flaked by run-order luck of cache
+     * poisoning from a prior leaf query.
+     */
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void bridgeAllLevelRollupFromCachedLeafStillDedupes(String form) {
+        // 1) Warm the cache with per-customer leaf cells. Use the full member
+        //    set WITHOUT NON EMPTY so the bridge (customer) column is cached
+        //    as a complete, wildcard-coverable leaf segment — exactly the
+        //    shape the rollup planner treats as a viable source for a coarser
+        //    (All-level) request.
+        Map<String, Double> leaf = rowMap(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " [Customer].[Customer].Members ON ROWS\n"
+            + "FROM [AccountsFull]");
+        assertEquals(1300.0, leaf.get("Alice"), 0.001);
+        assertEquals(1500.0, leaf.get("Bob"), 0.001);
+        assertEquals(300.0, leaf.get("Carol"), 0.001);
+        // 2) Now the All level — must NOT be 3100 (rolled-up sum of leaves).
+        assertEquals(1800.0, scalar(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsFull]"),
             0.001);
     }
 
@@ -467,6 +502,106 @@ public class BridgeDimensionScenariosTest extends AbstractDualFormSchemaTest {
         assertEquals(300.0, g.get("Alice|2025"), 0.001);
         assertEquals(1500.0, g.get("Bob|2024"), 0.001);
         assertEquals(300.0, g.get("Carol|2025"), 0.001);
+    }
+
+    // ---- bridge dimension + role grant + slicer (#106 / #107) ---------
+
+    /**
+     * #106/#107 interaction (previously untested): a role whose
+     * {@code <HierarchyGrant>} restricts the BRIDGE (Customer) dimension to a
+     * subset of members, combined with a slicer. The restricted user must see
+     * the bridge allocation computed only over the granted members — the grant
+     * predicate and the fan-out de-duplication must compose, not bypass each
+     * other. Here the role grants only Alice and Bob; a slicer on North then
+     * pins their North allocation, and the role must hide Carol entirely.
+     *
+     * <p>Built on a fresh, role-scoped connection (a warm member cache from
+     * the unrestricted tests above must not leak granted-away members).
+     */
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void bridgeWithRoleGrantSlicer(String form) {
+        String roleSchema = SCHEMA.replace(
+            "</Schema>",
+            "  <Role name='AliceBob'>\n"
+            + "    <SchemaGrant access='all'>\n"
+            + "      <CubeGrant cube='AccountsFull' access='all'>\n"
+            + "        <HierarchyGrant hierarchy='[Customer].[Customer]'"
+            + " access='custom'"
+            + " topLevel='[Customer].[Customer].[Customer]'>\n"
+            + "          <MemberGrant"
+            + " member='[Customer].[Customer].[Alice]' access='all'/>\n"
+            + "          <MemberGrant"
+            + " member='[Customer].[Customer].[Bob]' access='all'/>\n"
+            + "        </HierarchyGrant>\n"
+            + "      </CubeGrant>\n"
+            + "    </SchemaGrant>\n"
+            + "  </Role>\n"
+            + "</Schema>");
+        String catalog = form.equals("yaml")
+            ? mondrian.schema.yaml.m4.M4YamlToXml.toXml(
+                mondrian.schema.yaml.m4.M4XmlToYaml.toYaml(roleSchema))
+            : roleSchema;
+        Connection conn = null;
+        try {
+            Util.PropertyList props =
+                Util.parseConnectString(TestContext.getDefaultConnectString());
+            props.put("UseSchemaPool", "false");
+            props.put(RolapConnectionProperties.CatalogContent.name(), catalog);
+            props.put(RolapConnectionProperties.Role.name(), "AliceBob");
+            props.remove(RolapConnectionProperties.Catalog.name());
+            conn = DriverManager.getConnection(props, null, null);
+
+            // Restricted member list: Carol must be hidden by the grant.
+            Query members = conn.parseQuery(
+                "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+                + " [Customer].[Customer].Members ON ROWS\n"
+                + "FROM [AccountsFull]");
+            mondrian.olap.Result r = conn.execute(members);
+            java.util.Set<String> visible = new java.util.HashSet<>();
+            for (mondrian.olap.Position p
+                : r.getAxes()[1].getPositions())
+            {
+                visible.add(p.get(0).getName());
+            }
+            r.close();
+            assertTrue(visible.contains("Alice"), "Alice granted");
+            assertTrue(visible.contains("Bob"), "Bob granted");
+            assertTrue(!visible.contains("Carol"), "Carol hidden by grant");
+
+            // Slicer on North + the grant, over the explicitly-granted
+            // members (no NON EMPTY, so a granted member with a cell is always
+            // present): Alice 1300 (acct1 1000 + acct3 300, both North), Bob
+            // 1000 (acct1's North share). Full-count de-dup still applies and
+            // the grant restricts the visible set — the two compose cleanly.
+            Query q = conn.parseQuery(
+                "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+                + " {[Customer].[Customer].[Alice],"
+                + " [Customer].[Customer].[Bob]} ON ROWS\n"
+                + "FROM [AccountsFull]\n"
+                + "WHERE [Region].[Region].[North]");
+            mondrian.olap.Result r2 = conn.execute(q);
+            Map<String, Double> m = new java.util.LinkedHashMap<>();
+            int i = 0;
+            for (mondrian.olap.Position p
+                : r2.getAxes()[1].getPositions())
+            {
+                Object v = r2.getCell(new int[]{0, i}).getValue();
+                m.put(p.get(0).getName(),
+                    v == null ? null : ((Number) v).doubleValue());
+                i++;
+            }
+            r2.close();
+            assertEquals(1300.0, m.get("Alice"), 0.001,
+                "Alice North allocation (deduped) under the grant");
+            assertEquals(1000.0, m.get("Bob"), 0.001,
+                "Bob North allocation under the grant");
+        } finally {
+            if (conn != null) {
+                conn.close();
+            }
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
     }
 
     // ---- legacy backend must reject a bridge query loudly -------------

@@ -281,4 +281,92 @@ public class BridgeLinkLoadTest {
             () -> connect(schema("", bridge)).close(),
             "fullCount bridge without a fact <Key> must fail to load");
     }
+
+    /**
+     * #107 (CRITICAL double-count): the in-memory rollup guard's two decision
+     * inputs for a FULL-COUNT bridge measure group are
+     * (1) {@link RolapMeasureGroup#hasFullCountBridge()} is {@code true}, and
+     * (2) the bridge dimension's star column reports
+     * {@link RolapStar.Column#isBridgeFanoutReached()} {@code true} while a
+     * normal FK dimension's column reports {@code false}. Together these make
+     * a fanned-out leaf segment ineligible as a rollup source across the
+     * bridge dimension, so the All/intermediate query reloads from the fact
+     * and de-duplicates rather than summing the cached fan-out cells to 3100.
+     */
+    @Test
+    public void fullCountBridgeNotEligibleForInMemoryRollup() {
+        String bridge =
+            "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+            + " factForeignKeyColumn='account_id'"
+            + " bridgeFactKeyColumn='account_id'"
+            + " bridgeDimensionKeyColumn='customer_id'/>";
+        Connection conn = connect(schema(FACT_KEY, bridge));
+        try {
+            RolapMeasureGroup[] mg = new RolapMeasureGroup[1];
+            RolapCubeDimension[] dim = new RolapCubeDimension[1];
+            bridgePath(conn, mg, dim);
+
+            assertTrue(
+                mg[0].hasFullCountBridge(),
+                "full-count bridge MG is flagged for the rollup guard");
+
+            // The customer dimension column, reached through the bridge, is a
+            // fan-out grain — the rollup guard treats it as unsafe to collapse.
+            RolapStar.Column customerCol = bridgeDimColumn(mg[0], "dim_customer");
+            assertNotNull(customerCol, "customer star column resolved");
+            assertTrue(
+                customerCol.isBridgeFanoutReached(),
+                "customer column is reached through the fan-out hop");
+
+            // A normal FK dimension column (Date) is NOT fan-out — safe to
+            // roll up, so the guard must leave it alone.
+            RolapStar.Column dateCol = bridgeDimColumn(mg[0], "dim_date");
+            assertNotNull(dateCol, "date star column resolved");
+            assertFalse(
+                dateCol.isBridgeFanoutReached(),
+                "normal FK column is not fan-out — stays rollup-eligible");
+        } finally {
+            conn.close();
+        }
+    }
+
+    /**
+     * #107: a WEIGHTED bridge rolls up additively (the weight allocation sums
+     * correctly across grains), so its measure group is NOT flagged by the
+     * guard and stays eligible for in-memory rollup — only full-count is
+     * excluded.
+     */
+    @Test
+    public void weightedBridgeRemainsRollupEligible() {
+        String bridge =
+            "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+            + " factForeignKeyColumn='account_id'"
+            + " bridgeFactKeyColumn='account_id'"
+            + " bridgeDimensionKeyColumn='customer_id'"
+            + " aggregation='weighted' weightColumn='weight'/>";
+        Connection conn = connect(schema(FACT_KEY, bridge));
+        try {
+            RolapMeasureGroup[] mg = new RolapMeasureGroup[1];
+            RolapCubeDimension[] dim = new RolapCubeDimension[1];
+            bridgePath(conn, mg, dim);
+            assertFalse(
+                mg[0].hasFullCountBridge(),
+                "weighted bridge MG stays rollup-eligible (not full-count)");
+        } finally {
+            conn.close();
+        }
+    }
+
+    /** First constrained column whose star table is the given dimension table
+     *  (resolved by walking the star from the fact). */
+    private static RolapStar.Column bridgeDimColumn(
+        RolapMeasureGroup mg, String dimTableAlias)
+    {
+        RolapStar.Table t =
+            findStarTable(mg.getStar().getFactTable(), dimTableAlias);
+        if (t == null || t.getColumns().isEmpty()) {
+            return null;
+        }
+        return t.getColumns().get(0);
+    }
 }

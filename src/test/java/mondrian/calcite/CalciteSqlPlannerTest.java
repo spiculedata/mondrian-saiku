@@ -200,6 +200,41 @@ public class CalciteSqlPlannerTest {
         }
     }
 
+    /**
+     * #104 edge: a percentile measure is REFUSED on MySQL — an explicitly
+     * non-allowlisted dialect — with a clear error, not silently mis-emitted.
+     * Parameterized over the non-allowlisted dialects so the allowlist policy
+     * (refuse-unless-known-supported) is pinned for more than just HSQLDB.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("unsupportedPercentileDialects")
+    public void percentileRefusedOnMySqlExplicitly(SqlDialect dialect) {
+        CalciteSqlPlanner planner = plannerFor(dialect);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "med",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.5))
+            .build();
+        try {
+            planner.plan(req);
+            org.junit.jupiter.api.Assertions.fail(
+                "expected REFUSE on " + dialect.getClass().getSimpleName());
+        } catch (RuntimeException e) {
+            String msg = String.valueOf(e.getMessage()).toLowerCase();
+            assertTrue("expected a clear percentile message: " + e.getMessage(),
+                msg.contains("percentile_cont") || msg.contains("percentile"));
+        }
+    }
+
+    static java.util.stream.Stream<SqlDialect> unsupportedPercentileDialects() {
+        return java.util.stream.Stream.of(
+            org.apache.calcite.sql.dialect.MysqlSqlDialect.DEFAULT,
+            HsqldbSqlDialect.DEFAULT);
+    }
+
     /** A non-percentile (plain SUM) query is unaffected by the refuse on a
      *  non-supporting dialect. */
     @Test

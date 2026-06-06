@@ -15,7 +15,13 @@ package mondrian.lookml.classify;
 
 import mondrian.lookml.parse.LookmlNode;
 
+import com.google.common.collect.ImmutableSet;
+
+import java.util.LinkedHashSet;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * One edge of an explore's join graph, derived from a single {@code join:}
@@ -27,17 +33,24 @@ import java.util.Optional;
  * one_to_many} fans the fact out; {@code many_to_many} needs a bridge.
  */
 final class JoinEdge {
+  /** {@code ${view.column}} references inside a {@code sql_on} block; group 1
+   * is the referenced view name. */
+  private static final Pattern VIEW_REF =
+      Pattern.compile("\\$\\{\\s*([A-Za-z_]\\w*)\\.");
+
   private final String joinName;
   private final String joinedView;
   private final String type;
   private final String relationship;
+  private final ImmutableSet<String> referencedViews;
 
   private JoinEdge(String joinName, String joinedView, String type,
-      String relationship) {
+      String relationship, Set<String> referencedViews) {
     this.joinName = joinName;
     this.joinedView = joinedView;
     this.type = type;
     this.relationship = relationship;
+    this.referencedViews = ImmutableSet.copyOf(referencedViews);
   }
 
   /** Builds an edge from a {@code join:} node. The joined view defaults to the
@@ -51,7 +64,26 @@ final class JoinEdge {
         .orElse(LookmlKeywords.JOIN_TYPE_LEFT_OUTER);
     final String relationship =
         joinNode.stringValue(LookmlKeywords.RELATIONSHIP).orElse(null);
-    return new JoinEdge(name, view, type, relationship);
+    final Set<String> referenced = parseReferencedViews(
+        joinNode.stringValue(LookmlKeywords.SQL_ON).orElse(""), view);
+    return new JoinEdge(name, view, type, relationship, referenced);
+  }
+
+  /** The views (other than the join's own {@code joinedView}) referenced by a
+   * {@code sql_on} block's {@code ${view.column}} expressions: the upstream
+   * side(s) the join attaches to. Empty when {@code sql_on} is absent (e.g. a
+   * {@code cross} join) or only self-referential. */
+  private static Set<String> parseReferencedViews(String sqlOn,
+      String joinedView) {
+    final Set<String> views = new LinkedHashSet<>();
+    final Matcher m = VIEW_REF.matcher(sqlOn);
+    while (m.find()) {
+      final String v = m.group(1);
+      if (!v.equals(joinedView)) {
+        views.add(v);
+      }
+    }
+    return views;
   }
 
   String joinName() {
@@ -70,10 +102,36 @@ final class JoinEdge {
     return Optional.ofNullable(relationship);
   }
 
-  /** A join type that structurally breaks a star (full/cross outer). */
+  /** The upstream view(s) this join's {@code sql_on} references — the "one"
+   * side when the relationship is {@code one_to_many}. */
+  ImmutableSet<String> referencedViews() {
+    return referencedViews;
+  }
+
+  /** This join fans the upstream side out (a {@code one_to_many}): the joined
+   * view has many rows per upstream row. */
+  boolean isOneToMany() {
+    return LookmlKeywords.REL_ONE_TO_MANY.equals(relationship);
+  }
+
+  /** A join type that is not a fact-grain-preserving {@code left_outer}.
+   *
+   * <p>LookML's default join type is {@code left_outer} (so an unspecified
+   * type is already normalised to it in {@link #from}). Only {@code left_outer}
+   * keeps every fact row and attaches matching dim rows. {@code inner} silently
+   * drops fact rows whose FK does not match; {@code right_outer} inverts the
+   * grain; {@code full_outer} / {@code cross} break the star structurally. Any
+   * of these would emit a silently-wrong cube, so all are non-star. */
   boolean isNonStarType() {
-    return LookmlKeywords.JOIN_TYPE_FULL_OUTER.equals(type)
-        || LookmlKeywords.JOIN_TYPE_CROSS.equals(type);
+    return !LookmlKeywords.JOIN_TYPE_LEFT_OUTER.equals(type);
+  }
+
+  /** Whether this join's type is one of the explicitly-recognised
+   * grain-changing types ({@code inner} / {@code right_outer} / {@code
+   * full_outer} / {@code cross}). All are non-star; this only distinguishes a
+   * recognised type from an unknown one for clearer reason text. */
+  boolean isRecognisedNonStarType() {
+    return LookmlKeywords.NON_STAR_JOIN_TYPES.contains(type);
   }
 
   /** A many_to_many relationship without a declared bridge: non-star. */

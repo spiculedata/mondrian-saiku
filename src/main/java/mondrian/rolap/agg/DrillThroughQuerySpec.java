@@ -28,14 +28,30 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
     private final DrillThroughCellRequest request;
     private final List<StarPredicate> listOfStarPredicates;
     private final List<String> columnNames;
+    // #106 (SECURITY): the active role + parameter context whose predicate
+    // grants must be enforced on this drill-through. May be null (unsecured).
+    private final mondrian.olap.Role role;
+    private final mondrian.calcite.QueryParameterContext paramContext;
 
     public DrillThroughQuerySpec(
         DrillThroughCellRequest request,
         StarPredicate starPredicateSlicer,
         boolean countOnly)
     {
+        this(request, starPredicateSlicer, countOnly, null, null);
+    }
+
+    public DrillThroughQuerySpec(
+        DrillThroughCellRequest request,
+        StarPredicate starPredicateSlicer,
+        boolean countOnly,
+        mondrian.olap.Role role,
+        mondrian.calcite.QueryParameterContext paramContext)
+    {
         super(request.getMeasure().getStar(), countOnly);
         this.request = request;
+        this.role = role;
+        this.paramContext = paramContext;
         if (starPredicateSlicer != null) {
             this.listOfStarPredicates =
                 Collections.singletonList(starPredicateSlicer);
@@ -186,7 +202,30 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
     public Pair<String, List<SqlStatement.Type>> generateSqlQuery(String desc) {
         SqlQueryBuilder queryBuilder = createQueryBuilder(desc);
         nonDistinctGenerateSql(queryBuilder);
+        injectPredicateGrants(queryBuilder);
         return queryBuilder.toSqlAndTypes();
+    }
+
+    /**
+     * #106 (SECURITY): enforce the active role's predicate row-security grants
+     * on this drill-through by ANDing one fail-closed {@code WHERE} fragment per
+     * applicable grant onto the generated SQL. This is the drill-through
+     * counterpart of the Calcite segment-load injection chokepoint — without it
+     * a row-secured user's drill-through would leak raw fact rows for every
+     * tenant. A grant whose bound parameter cannot be resolved throws (the
+     * SQL is never emitted unfiltered); an empty IN set renders zero-row.
+     */
+    private void injectPredicateGrants(SqlQueryBuilder queryBuilder) {
+        for (String fragment
+            : mondrian.rolap.PredicateGrantSqlFilter.whereFragments(
+                getStar(),
+                request.getMeasure(),
+                role,
+                paramContext,
+                queryBuilder.getDialect()))
+        {
+            queryBuilder.sqlQuery.addWhere(fragment);
+        }
     }
 
     protected void addMeasure(

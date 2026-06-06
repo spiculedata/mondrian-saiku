@@ -91,12 +91,66 @@ public class RolapMeasureGroup {
         return bridgeInfoMap.get(dimension);
     }
 
+    /** #107: the cube dimensions reached through a {@code <BridgeLink>} on
+     *  this measure group (empty if none). Read by the Calcite backend to
+     *  enforce member row-security on the bridge fan-out (Vector 2b). */
+    public java.util.Set<RolapCubeDimension> getBridgeDimensions() {
+        return bridgeInfoMap.keySet();
+    }
+
     /** All bridge allocations recorded for this measure group (empty if it
      *  has no {@code <BridgeLink>}). Read by the Calcite backend to resolve
      *  the weighted-bridge allocation at segment-load time, where only the
      *  star (shared across cubes) and cube name are in hand. */
     public java.util.Collection<BridgeInfo> getBridgeInfos() {
         return bridgeInfoMap.values();
+    }
+
+    /**
+     * Whether this measure group has at least one <b>full-count</b>
+     * {@code <BridgeLink>} (a bridge with no weight column). A full-count
+     * bridge fans the fact rows out over the bridge join, so its measures
+     * must be de-duplicated on the fact grain before summing across the
+     * bridge dimension (#103/#107). Such a measure group's cached segments
+     * are therefore <em>not</em> safe to use as an in-memory rollup source
+     * across the bridge dimension. <b>Weighted</b> bridges roll up additively
+     * and stay rollup-eligible, so this returns {@code false} for them.
+     */
+    public boolean hasFullCountBridge() {
+        for (BridgeInfo info : bridgeInfoMap.values()) {
+            if (!info.weighted) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * #107: whether {@code measure}'s owning measure group is secured by a
+     * full-count {@code <BridgeLink>}. Resolves the owning cube from the
+     * measure's cube name (a star can be shared by several cubes — one
+     * full-count, one weighted), so the marker is keyed to the cube that
+     * actually issued the load, not just the shared star. Shared by the
+     * in-memory rollup guard ({@code FastBatchingCellReader}) and the
+     * agg-table substitution guard ({@code AggregationManager}).
+     */
+    public static boolean isFullCountBridgeMeasure(
+        RolapStar.Measure measure, RolapStar star)
+    {
+        final String cubeName = measure.getCubeName();
+        if (cubeName == null) {
+            return false;
+        }
+        final mondrian.olap.Cube c = star.getSchema().lookupCube(cubeName, false);
+        if (!(c instanceof RolapCube)) {
+            return false;
+        }
+        for (RolapMeasureGroup mg : ((RolapCube) c).getMeasureGroups()) {
+            if (mg.hasFullCountBridge()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

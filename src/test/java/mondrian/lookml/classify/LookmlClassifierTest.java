@@ -144,6 +144,86 @@ class LookmlClassifierTest {
         rev.reasonCode());
   }
 
+  /** Fan-out is detected for EVERY view on the "one" side of a one_to_many,
+   * not just the explore's base. Here the base is `orders`; a non-base view
+   * `users` is on the "one" side of a one_to_many to `events` (sql_on
+   * references users) and carries an additive sum with no declarable PK. The
+   * sum on `users` fans out and must REFUSE — it would be silently wrong
+   * (#98). */
+  @Test void fanOutMeasureOnSnowflakedViewStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: users {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.user_id} = ${users.id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "  join: events {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${users.id} = ${events.user_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: users {\n"
+        + "  measure: lifetime_value { type: sum sql: ${TABLE}.ltv ;; }\n"
+        + "}\n"
+        + "view: events { dimension: user_id { type: number } }\n";
+
+    final CoverageRecord rec =
+        record(classify(lookml), "users.lifetime_value");
+    assertEquals(Classification.REFUSE, rec.classification());
+    assertEquals(ReasonCode.REFUSE_FANOUT_SYMMETRIC_AGGREGATE,
+        rec.reasonCode());
+  }
+
+  /** Chained-many topology: a join reached THROUGH another join that itself
+   * fans out (orders →(one_to_many) items →(one_to_many) item_taxes). The
+   * intermediate view is on both the "many" side of one fan-out and the "one"
+   * side of another, so the explore multiplies twice: non-star, REFUSE the
+   * whole explore. */
+  @Test void chainedManyTopologyRefuses() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: items {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.id} = ${items.order_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "  join: item_taxes {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${items.id} = ${item_taxes.item_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: items { dimension: id { type: number } }\n"
+        + "view: item_taxes { dimension: item_id { type: number } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:orders");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** A measure on the "many" side of a one_to_many is safe: aggregating the
+   * leaf grain does not fan out. Regression guard against over-refusal — a
+   * count on the joined (many-side) view stays CLEAN. */
+  @Test void measureOnManySideOfOneToManyStaysClean() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: items {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.id} = ${items.order_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { dimension: id { type: number primary_key: yes } }\n"
+        + "view: items { measure: item_count { type: count } }\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "items.item_count").classification());
+  }
+
   // --- non-star topology -------------------------------------------------
 
   /** A full_outer join makes the explore non-star: REFUSE the explore. */
@@ -162,6 +242,62 @@ class LookmlClassifierTest {
     final ClassificationResult r = classify(lookml);
 
     final CoverageRecord ex = record(r, "explore:orders");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** An inner join silently drops fact rows whose FK does not match (the
+   * LookML default is left_outer); it is not a fact→dim left-join star, so the
+   * explore is REFUSED rather than emitting a silently-wrong cube (#98). */
+  @Test void innerJoinRefusesExplore() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: customers {\n"
+        + "    type: inner\n"
+        + "    sql_on: ${orders.customer_id} = ${customers.id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: customers { dimension: id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:orders");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** A right_outer join inverts the grain (keeps unmatched dim rows, drops
+   * unmatched fact rows from the left): not a star, REFUSE the explore. */
+  @Test void rightOuterJoinRefusesExplore() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: customers {\n"
+        + "    type: right_outer\n"
+        + "    sql_on: ${orders.customer_id} = ${customers.id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: customers { dimension: id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:orders");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** A cross join produces a cartesian product: non-star, REFUSE. */
+  @Test void crossJoinRefusesExplore() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: calendar {\n"
+        + "    type: cross\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: calendar { dimension: d { type: date } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:orders");
     assertEquals(Classification.REFUSE, ex.classification());
     assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
   }
@@ -626,6 +762,81 @@ class LookmlClassifierTest {
     assertEquals(Classification.DEGRADE, rec.classification());
     assertEquals(ReasonCode.DEGRADE_AGGREGATE_TABLE_NOT_CONVERTED,
         rec.reasonCode());
+  }
+
+  // --- documented v1 limitations (pinned so they cannot silently drift) ---
+
+  /** v1 limitation: the model is classified AS PARSED — {@code extends} /
+   * refinements are NOT flattened. A measure that is only additive AFTER a
+   * refinement adds {@code type: sum} is classified on its literal text here,
+   * so an additive-only-after-refinement measure with no type in its own block
+   * is NOT detected as a fan-out sum. This pins that documented behaviour: the
+   * base measure (no type) classifies CLEAN despite sitting on a fan-out view,
+   * because the classifier never sees the refinement's type. */
+  @Test void measureAdditiveOnlyAfterRefinementIsClassifiedAsParsed() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: items {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.id} = ${items.order_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders {\n"
+        // No type: in this block — a refinement (+orders) would add type: sum
+        // elsewhere. The classifier sees only this literal text.
+        + "  measure: revenue { sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: items { dimension: order_id { type: number } }\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.revenue");
+    // Classified as parsed: no type → not an additive aggregate → not a
+    // fan-out refusal. Documented v1 limitation, pinned.
+    assertEquals(Classification.CLEAN, rec.classification());
+  }
+
+  /** An access_filter targeting a JOINED view's dimension key
+   * ({@code users.country}, modelled on the users view) is still a simple
+   * modelled-dimension reference, so the explore stays CLEAN (not a
+   * PredicateGrant DEGRADE). Guards the dimension-index across views. */
+  @Test void accessFilterCleanDimensionStillCleanWithJoinedDimKey() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: users {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.user_id} = ${users.id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "  access_filter: { field: users.country user_attribute: country }\n"
+        + "}\n"
+        + "view: orders { measure: c { type: count } }\n"
+        + "view: users {\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "explore:orders").classification());
+  }
+
+  /** Liquid in a presentation-only key (here {@code label}) does NOT shape
+   * engine SQL, so a bounded user-attribute reference there DEGRADEs (the
+   * templated label is dropped) rather than refusing the whole field. Pins the
+   * resolution of the LIQUID_PRESENTATION_KEYS branch: arbitrary Liquid in a
+   * presentation-only key degrades, it does not refuse. */
+  @Test void arbitraryLiquidInPresentationKeyDegradesNotRefuses() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: rev {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "    label: \"Revenue for {% if x %}A{% else %}B{% endif %}\"\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.rev");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED, rec.reasonCode());
   }
 
   // --- multi-object document --------------------------------------------
