@@ -688,6 +688,28 @@ public class RolapStar {
             return table;
         }
 
+        /**
+         * Whether this column is reached through a fan-out (one-to-many)
+         * join hop — i.e. it sits behind a {@code <BridgeLink>} bridge
+         * table on the shared physical star, so a fact row can map to more
+         * than one value of this column (#103/#107).
+         *
+         * <p>Reused by both the Calcite SQL emitter (to emit the de-duplicated
+         * symmetric aggregate) and the in-memory rollup planner (to refuse
+         * rolling a fanned-out leaf segment up across the bridge dimension,
+         * which would double-count). Weighted bridges share this fan-out hop
+         * but roll up additively, so the rollup guard pairs this with a
+         * full-count check; do not treat this predicate alone as "unsafe".
+         */
+        public boolean isBridgeFanoutReached() {
+            for (RolapSchema.PhysHop hop : getTable().getPath().hopList) {
+                if (hop.link != null && hop.link.oneToMany) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public RolapStar.Column getParentColumn() {
             Util.deprecated(
                 "parentColumn seems to be used ONLY for AggGen; remove it and represent the information outside RolapStar?",

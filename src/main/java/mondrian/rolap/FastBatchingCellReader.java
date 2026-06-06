@@ -311,6 +311,21 @@ public class FastBatchingCellReader implements CellReader {
                     // all present in the cache.
                     continue;
                 }
+                // #107 (CRITICAL double-count, defence-in-depth): the proposal
+                // side already drops full-count-bridge sources that collapse
+                // the bridge dimension; re-check here — symmetric to the #104
+                // guard above — so a fanned-out source can never be summed
+                // into a coarser grain even if a proposal slips through. Fall
+                // through to a fresh fact-grain SQL load (emitSymmetricAggregate).
+                if (RolapMeasureGroup.isFullCountBridgeMeasure(
+                        rollup.measure, rollup.measure.getStar())
+                    && BatchLoader.collapsesBridgeFanout(
+                        new ArrayList<SegmentHeader>(map.keySet()),
+                        rollup.constrainedColumnsBitKey,
+                        rollup.measure.getStar()))
+                {
+                    continue;
+                }
 
                 final Set<String> keepColumns = new HashSet<String>();
                 for (RolapStar.Column column : rollup.constrainedColumns) {
@@ -740,11 +755,26 @@ class BatchLoader {
                                 star,
                                 key.getCompoundPredicateList()),
                             measure, star));
-            if (!rollup.isEmpty()) {
+            // #107 (CRITICAL double-count): when the measure's measure group is
+            // secured by a FULL-COUNT <BridgeLink>, a fact row fans out over
+            // the bridge join, so a leaf segment grouped by the bridge
+            // dimension already holds one cell per (fact, owner) pairing.
+            // Rolling such a segment up across the bridge dimension SUMS those
+            // fan-out cells and double-counts shared fact rows (e.g. Alice
+            // 1300 + Bob 1500 + Carol 300 = 3100 instead of the deduped 1800).
+            // Drop any candidate whose source segments collapse a fan-out
+            // column the target no longer constrains; the request then falls
+            // through to a fresh fact-grain SQL load, which de-duplicates via
+            // emitSymmetricAggregate. WEIGHTED bridges roll up additively and
+            // stay eligible (hasFullCountBridge() is false for them).
+            // Mirrors the #104 non-rollupable guard above.
+            final List<List<SegmentHeader>> safeRollup =
+                excludeFullCountBridgeRollups(rollup, request, measure, star);
+            if (!safeRollup.isEmpty()) {
                 rollups.add(
                     new RollupInfo(
                         request,
-                        rollup));
+                        safeRollup));
                 rollupBitmaps.add(request.getConstrainedColumnsBitKey());
                 converterMap.put(
                     SegmentCacheIndexImpl.makeConverterKey(request, key),
@@ -752,6 +782,75 @@ class BatchLoader {
                         measure,
                         key.getCompoundPredicateList()));
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * #107: filters out in-memory rollup candidates that would double-count a
+     * full-count {@code <BridgeLink>}. Returns {@code rollup} unchanged for
+     * any measure group without a full-count bridge (the common case — no
+     * overhead, no behaviour change), and for weighted bridges (which roll up
+     * additively). Otherwise drops every candidate source-segment set in which
+     * a source segment is constrained on a bridge fan-out column that the
+     * target request no longer constrains — i.e. the rollup collapses or
+     * coarsens the bridge dimension, which a naive SUM cannot do correctly.
+     *
+     * @param rollup  candidate source-segment sets from the rollup planner
+     * @param request the (coarser) target cell request
+     * @param measure the measure being rolled up
+     * @param star    the star owning the segments
+     * @return the safe subset of {@code rollup} (possibly empty)
+     */
+    static List<List<SegmentHeader>> excludeFullCountBridgeRollups(
+        final List<List<SegmentHeader>> rollup,
+        final CellRequest request,
+        final RolapStar.Measure measure,
+        final RolapStar star)
+    {
+        if (!RolapMeasureGroup.isFullCountBridgeMeasure(measure, star)) {
+            return rollup;
+        }
+        final BitKey targetCols = request.getConstrainedColumnsBitKey();
+        final List<List<SegmentHeader>> safe =
+            new ArrayList<List<SegmentHeader>>();
+        for (List<SegmentHeader> candidateSet : rollup) {
+            if (!collapsesBridgeFanout(candidateSet, targetCols, star)) {
+                safe.add(candidateSet);
+            }
+        }
+        return safe;
+    }
+
+    /**
+     * #107: whether any source segment in {@code candidateSet} is constrained
+     * on a bridge fan-out column ({@link RolapStar.Column#isBridgeFanoutReached})
+     * that the target rollup ({@code targetCols}) no longer constrains — i.e.
+     * the rollup would aggregate fan-out cells away and double-count.
+     */
+    static boolean collapsesBridgeFanout(
+        final List<SegmentHeader> candidateSet,
+        final BitKey targetCols,
+        final RolapStar star)
+    {
+        for (SegmentHeader source : candidateSet) {
+            final BitKey sourceCols = source.getConstrainedColumnsBitKey();
+            for (int bit : sourceCols) {
+                if (targetCols.get(bit)) {
+                    // The target still constrains this column at the same
+                    // grain — the bridge dimension is preserved, not collapsed.
+                    continue;
+                }
+                if (bit < 0 || bit >= star.getColumnCount()) {
+                    // Out-of-range bit (e.g. a measure position) — not a
+                    // constrained dimension column; cannot be a fan-out grain.
+                    continue;
+                }
+                final RolapStar.Column col = star.getColumn(bit);
+                if (col != null && col.isBridgeFanoutReached()) {
+                    return true;
+                }
             }
         }
         return false;

@@ -174,6 +174,34 @@ public class BridgeMultiLevelTest extends AbstractDualFormSchemaTest {
         assertEquals(300.0, m.get("Carol"), 0.001);
     }
 
+    /**
+     * #107 (CRITICAL double-count): within ONE connection, warm the cache with
+     * the per-customer LEAF query, THEN roll up to the Segment level. A naive
+     * in-memory rollup of the cached leaf cells would give Premium 2800
+     * (Alice 1300 + Bob 1500, both Premium) instead of the de-duplicated 1800.
+     * The full-count bridge segment must be excluded as a rollup source so the
+     * Segment level loads fresh from the fact via the symmetric aggregate.
+     */
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void bridgeSegmentRollupAfterLeafLoad(String form) {
+        // 1) Warm the cache with per-customer leaf cells.
+        Map<String, Double> leaf = rowMap(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[By Segment].[Customer].Members ON ROWS\n"
+            + "FROM [AccountsFull]");
+        assertEquals(1300.0, leaf.get("Alice"), 0.001);
+        assertEquals(1500.0, leaf.get("Bob"), 0.001);
+        // 2) Now the Segment level — must be 1800, NOT the 2800 rolled-up sum.
+        Map<String, Double> m = rowMap(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
+            + "FROM [AccountsFull]");
+        assertEquals(1800.0, m.get("Premium"), 0.001,
+            "Premium must de-dup acct1, not sum cached leaves to 2800");
+        assertEquals(300.0, m.get("Standard"), 0.001);
+    }
+
     /** weighted rolls up additively — no dedup needed, but must stay right. */
     @ParameterizedTest
     @MethodSource("forms")

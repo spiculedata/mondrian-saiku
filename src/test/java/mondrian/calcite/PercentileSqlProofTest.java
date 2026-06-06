@@ -101,4 +101,40 @@ public class PercentileSqlProofTest {
         assertEquals(28.0, m.get("North"), 0.001);
         assertEquals(32.0, m.get("South"), 0.001);
     }
+
+    /**
+     * #104 edge: percentile at the extremes (0 and 100) reduces to MIN and MAX
+     * across both even-row (South, 4 rows) and odd-row (North, 3 rows) groups,
+     * and NULL values are ignored by the ordered-set aggregate (not treated as
+     * zero). North gets an extra NULL row; its MIN/MAX/median are unchanged.
+     */
+    @Test
+    public void percentileZeroAndHundredEvenAndOddRows() throws Exception {
+        try (Statement st = conn.createStatement()) {
+            // North: 3 real rows (odd) + 1 NULL (must be ignored).
+            st.execute("INSERT INTO \"sales\" VALUES ('North', NULL)");
+        }
+        try {
+            Map<String, Double> p0 = byRegion(
+                "PERCENTILE_CONT(0.0) WITHIN GROUP (ORDER BY \"amount\")");
+            Map<String, Double> p100 = byRegion(
+                "PERCENTILE_CONT(1.0) WITHIN GROUP (ORDER BY \"amount\")");
+            Map<String, Double> p50 = byRegion(
+                "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY \"amount\")");
+            // North (odd, NULL ignored): {10,20,30}
+            assertEquals(10.0, p0.get("North"), 0.001, "p0 = MIN (NULL ignored)");
+            assertEquals(30.0, p100.get("North"), 0.001, "p100 = MAX");
+            assertEquals(20.0, p50.get("North"), 0.001, "median unaffected");
+            // South (even): {5,15,25,35}
+            assertEquals(5.0, p0.get("South"), 0.001);
+            assertEquals(35.0, p100.get("South"), 0.001);
+            assertEquals(20.0, p50.get("South"), 0.001,
+                "even-row median = average of the two middles (15,25)");
+        } finally {
+            try (Statement st = conn.createStatement()) {
+                st.execute(
+                    "DELETE FROM \"sales\" WHERE \"amount\" IS NULL");
+            }
+        }
+    }
 }
