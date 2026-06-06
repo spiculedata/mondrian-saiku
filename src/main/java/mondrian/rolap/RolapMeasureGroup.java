@@ -91,6 +91,13 @@ public class RolapMeasureGroup {
         return bridgeInfoMap.get(dimension);
     }
 
+    /** #107: the cube dimensions reached through a {@code <BridgeLink>} on
+     *  this measure group (empty if none). Read by the Calcite backend to
+     *  enforce member row-security on the bridge fan-out (Vector 2b). */
+    public java.util.Set<RolapCubeDimension> getBridgeDimensions() {
+        return bridgeInfoMap.keySet();
+    }
+
     /** All bridge allocations recorded for this measure group (empty if it
      *  has no {@code <BridgeLink>}). Read by the Calcite backend to resolve
      *  the weighted-bridge allocation at segment-load time, where only the

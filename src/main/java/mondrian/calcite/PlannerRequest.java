@@ -720,6 +720,11 @@ public final class PlannerRequest {
             this.symmetricGrainColumn = c;
             return this;
         }
+        /** #107: whether a fan-out grain key has already been pinned (so a
+         *  later row-security injection does not clobber it). */
+        public boolean hasSymmetricGrainColumn() {
+            return this.symmetricGrainColumn != null;
+        }
         /** #105: attach the resolved query-parameter context that
          *  parameter-bound filters substitute at render time. */
         public Builder paramContext(QueryParameterContext ctx) {
