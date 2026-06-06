@@ -85,6 +85,7 @@ public final class M4XmlToYaml {
             Map<String, Object> sharedDims = null;
             Map<String, Object> cubes = null;
             List<Object> roles = null;
+            List<Object> queryParameters = null;
             for (MondrianDef.SchemaElement el : schema.childArray) {
                 if (el instanceof MondrianDef.Annotations) {
                     Map<String, Object> ann =
@@ -118,6 +119,12 @@ public final class M4XmlToYaml {
                         roles = new ArrayList<>();
                     }
                     roles.add(role((MondrianDef.Role) el));
+                } else if (el instanceof MondrianDef.QueryParameter) {
+                    if (queryParameters == null) {
+                        queryParameters = new ArrayList<>();
+                    }
+                    queryParameters.add(
+                        queryParameter((MondrianDef.QueryParameter) el));
                 }
             }
             if (sharedDims != null && !sharedDims.isEmpty()) {
@@ -128,6 +135,9 @@ public final class M4XmlToYaml {
             }
             if (roles != null && !roles.isEmpty()) {
                 root.put("roles", roles);
+            }
+            if (queryParameters != null && !queryParameters.isEmpty()) {
+                root.put("parameters", queryParameters);
             }
         }
         try {
@@ -626,6 +636,32 @@ public final class M4XmlToYaml {
             out.put(a.name, a.cdata == null ? "" : a.cdata);
         }
         return out.isEmpty() ? null : out;
+    }
+
+    // ---- #105 query-parameter ingest helper ----
+
+    private static Map<String, Object> queryParameter(
+        MondrianDef.QueryParameter qp)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", qp.name);
+        if (qp.description != null) {
+            out.put("description", qp.description);
+        }
+        if (qp.type != null) {
+            out.put("type", qp.type);
+        }
+        if (qp.defaultValue != null) {
+            out.put("default_value", qp.defaultValue);
+        }
+        if (qp.values != null && qp.values.length > 0) {
+            List<Object> allowed = new ArrayList<>();
+            for (MondrianDef.QueryParameterValue v : qp.values) {
+                allowed.add(v.cdata);
+            }
+            out.put("allowed_values", allowed);
+        }
+        return out;
     }
 
     // ---- role ingest helpers ----

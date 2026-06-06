@@ -775,7 +775,7 @@ public final class CalciteSqlPlanner {
             b.filter(b.literal(false));
         } else {
             for (PlannerRequest.Filter f : req.filters) {
-                b.filter(filterRex(b, f));
+                b.filter(filterRex(b, f, req.paramContext));
             }
             for (PlannerRequest.TupleFilter tf : req.tupleFilters) {
                 b.filter(tupleFilterRex(b, tf));
@@ -1005,9 +1005,19 @@ public final class CalciteSqlPlanner {
     }
 
     private static RexNode filterRex(
-        RelBuilder b, PlannerRequest.Filter f)
+        RelBuilder b, PlannerRequest.Filter f,
+        QueryParameterContext paramContext)
     {
         RexNode col = fieldRef(b, f.column);
+        // #105: SINGLE substitution seam. A parameter-bound filter resolves
+        // its predicate value from the validated, typed query-parameter
+        // context here — the value never reaches a Calcite literal until it
+        // has passed type + allowed-value checks at context-build time. A
+        // future Phase-2 `?` bind-variable swap is local to this branch.
+        if (f.isParamBound()) {
+            Object value = paramContext.resolve(f.paramRef);
+            return eqOrIsNull(b, col, value);
+        }
         if (f.literals.size() == 1) {
             return eqOrIsNull(b, col, f.literals.get(0));
         }

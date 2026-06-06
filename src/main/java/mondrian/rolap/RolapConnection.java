@@ -70,6 +70,10 @@ public class RolapConnection extends ConnectionBase {
     private final RolapSchema schema;
     private SchemaReader schemaReader;
     protected Role role;
+    /** #105: per-connection resolved query-parameter context, harvested from
+     *  the same {@code session.<name>} channel as dynamic roles. Never null. */
+    private mondrian.calcite.QueryParameterContext queryParameterContext =
+        mondrian.calcite.QueryParameterContext.EMPTY;
     private Locale locale = Locale.getDefault();
     private Scenario scenario;
     private boolean closed = false;
@@ -281,6 +285,21 @@ public class RolapConnection extends ConnectionBase {
         }
         Role role = roleFactory.create(context);
         setRole(role);
+
+        // #105: resolve the bounded query-parameter context from the same
+        // session.<name> values, coercing and validating against each
+        // declared <QueryParameter>. Out-of-set / wrong-type / required-but-
+        // absent values fail loudly here, at connect time.
+        final Map<String, String> sessionStrings =
+            new HashMap<String, String>();
+        for (Map.Entry<String, Object> e : context.entrySet()) {
+            if (e.getValue() != null) {
+                sessionStrings.put(e.getKey(), e.getValue().toString());
+            }
+        }
+        this.queryParameterContext =
+            mondrian.calcite.QueryParameterContext.resolveAll(
+                schema.getQueryParameterDefs(), sessionStrings);
     }
 
     private RolapSchema.RoleFactory getRoleFactory(
@@ -365,6 +384,17 @@ public class RolapConnection extends ConnectionBase {
 
     public Util.PropertyList getConnectInfo() {
         return connectInfo;
+    }
+
+    /**
+     * #105: the resolved, validated query-parameter context for this
+     * connection (never null). Rides down to the Calcite PlannerRequest-build
+     * sites so parameter-bound filters can substitute their typed values.
+     * This is the connection-reachable resolver concurrent issue #106
+     * (predicate row-security) consumes.
+     */
+    public mondrian.calcite.QueryParameterContext getQueryParameterContext() {
+        return queryParameterContext;
     }
 
     public void close() {

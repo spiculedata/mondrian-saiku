@@ -110,6 +110,15 @@ public final class M4YamlToXml {
                 }
             }
         }
+        // #105: bounded, typed query-context parameters.
+        Object queryParameters = root.get("parameters");
+        if (queryParameters instanceof List) {
+            for (Object qp : (List<?>) queryParameters) {
+                if (qp instanceof Map) {
+                    children.add(buildQueryParameter((Map<?, ?>) qp));
+                }
+            }
+        }
         if (!children.isEmpty()) {
             schema.childArray =
                 children.toArray(new MondrianDef.SchemaElement[0]);
@@ -137,6 +146,33 @@ public final class M4YamlToXml {
     }
 
     // ---- role builders ----
+
+    // ---- #105 query-parameter build helper ----
+
+    private static MondrianDef.QueryParameter buildQueryParameter(Map<?, ?> qp)
+    {
+        MondrianDef.QueryParameter out = new MondrianDef.QueryParameter();
+        out.name = str(qp.get("name"));
+        out.description = str(qp.get("description"));
+        Object type = qp.get("type");
+        if (type != null) {
+            out.type = str(type);
+        }
+        out.defaultValue = str(qp.get("default_value"));
+        Object allowed = qp.get("allowed_values");
+        if (allowed instanceof List && !((List<?>) allowed).isEmpty()) {
+            List<MondrianDef.QueryParameterValue> values = new ArrayList<>();
+            for (Object v : (List<?>) allowed) {
+                MondrianDef.QueryParameterValue qpv =
+                    new MondrianDef.QueryParameterValue();
+                qpv.cdata = str(v);
+                values.add(qpv);
+            }
+            out.values =
+                values.toArray(new MondrianDef.QueryParameterValue[0]);
+        }
+        return out;
+    }
 
     private static MondrianDef.Role buildRole(Map<?, ?> r) {
         MondrianDef.Role role = new MondrianDef.Role();

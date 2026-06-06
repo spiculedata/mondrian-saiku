@@ -108,6 +108,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
         new HashMap<String, RoleFactory>();
 
     /**
+     * #105: maps {@link String names of query parameters} to their
+     * {@link RolapQueryParameterDef bounded, typed definitions}. Populated by
+     * {@link RolapSchemaLoader} from {@code <QueryParameter>} elements.
+     */
+    final Map<String, RolapQueryParameterDef> mapNameToQueryParameter =
+        new HashMap<String, RolapQueryParameterDef>();
+
+    /**
      * Maps {@link String names of sets} to {@link NamedSet named sets}.
      */
     private final Map<String, NamedSet> mapNameToSet =
@@ -485,6 +493,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
     public Set<String> roleNames() {
         return mapNameToRole.keySet();
+    }
+
+    /**
+     * #105: immutable view of the declared query-parameter definitions
+     * (name -&gt; def). Empty when the schema declares none. Consumed when
+     * building a per-request {@link mondrian.calcite.QueryParameterContext}.
+     */
+    public Map<String, RolapQueryParameterDef> getQueryParameterDefs() {
+        return java.util.Collections.unmodifiableMap(mapNameToQueryParameter);
     }
 
     public FunTable getFunTable() {

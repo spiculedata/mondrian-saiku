@@ -245,12 +245,26 @@ public final class PlannerRequest {
         public final Column column;
         public final Operator op;
         public final List<Object> literals;
+        /** #105: when non-null, this is a parameter-bound EQ filter — the
+         *  predicate value is NOT one of {@link #literals} but the validated,
+         *  typed value of the named query parameter resolved at render time
+         *  from the request's {@link PlannerRequest#paramContext}. This is the
+         *  single Phase-2 isolation seam: a future {@code ?} bind-variable
+         *  swap touches only the render site, not this model. The
+         *  {@link #literals} list holds a sentinel ({@link #PARAM_PLACEHOLDER})
+         *  so the EQ single-literal invariant still holds. */
+        public final String paramRef;
         /** Back-compat shortcut: single-literal EQ filter. */
         public Filter(Column column, Object literal) {
             this(column, Operator.EQ,
                 java.util.Collections.singletonList(literal));
         }
         public Filter(Column column, Operator op, List<Object> literals) {
+            this(column, op, literals, null);
+        }
+        private Filter(
+            Column column, Operator op, List<Object> literals, String paramRef)
+        {
             this.column = column;
             this.op = op;
             // Defensive copy that tolerates null elements — a null
@@ -258,6 +272,7 @@ public final class PlannerRequest {
             // downstream). List.copyOf / List.of reject nulls.
             this.literals = java.util.Collections.unmodifiableList(
                 new java.util.ArrayList<>(literals));
+            this.paramRef = paramRef;
             if (op == Operator.EQ && this.literals.size() != 1) {
                 throw new IllegalArgumentException(
                     "EQ filter requires exactly one literal; got "
@@ -267,6 +282,23 @@ public final class PlannerRequest {
                 throw new IllegalArgumentException(
                     "IN filter requires at least one literal");
             }
+        }
+        /** #105: sentinel literal held by a parameter-bound filter so the
+         *  EQ invariant holds; the real value is resolved at render time. */
+        public static final Object PARAM_PLACEHOLDER = new Object();
+        /** #105: build an EQ filter whose value is bound to a declared query
+         *  parameter, resolved+validated at render time. */
+        public static Filter boundToParam(Column column, String paramRef) {
+            if (paramRef == null || paramRef.isEmpty()) {
+                throw new IllegalArgumentException("paramRef required");
+            }
+            return new Filter(
+                column, Operator.EQ,
+                java.util.Collections.singletonList(PARAM_PLACEHOLDER),
+                paramRef);
+        }
+        public boolean isParamBound() {
+            return paramRef != null;
         }
         /** Back-compat accessor: EQ filter's single literal. */
         public Object literal() {
@@ -507,6 +539,12 @@ public final class PlannerRequest {
      *  bridges roll up additively and never set this. */
     public final Column symmetricGrainColumn;
 
+    /** #105: per-request resolved query-parameter context. Carries the
+     *  validated, typed values that parameter-bound filters substitute at
+     *  the single render seam. Never null — defaults to
+     *  {@link QueryParameterContext#EMPTY}. */
+    public final QueryParameterContext paramContext;
+
     private PlannerRequest(Builder b) {
         this.factTable = b.factTable;
         this.factPhysName = b.factPhysName;
@@ -524,6 +562,8 @@ public final class PlannerRequest {
         this.limit = b.limit;
         this.unionArms = List.copyOf(b.unionArms);
         this.symmetricGrainColumn = b.symmetricGrainColumn;
+        this.paramContext = b.paramContext == null
+            ? QueryParameterContext.EMPTY : b.paramContext;
         if (this.distinct
             && (!this.measures.isEmpty() || !this.groupBy.isEmpty()))
         {
@@ -575,6 +615,7 @@ public final class PlannerRequest {
         private int limit;
         private final List<PlannerRequest> unionArms = new ArrayList<>();
         private Column symmetricGrainColumn;
+        private QueryParameterContext paramContext;
 
         private Builder(String factTable) {
             if (factTable == null || factTable.isEmpty()) {
@@ -596,6 +637,12 @@ public final class PlannerRequest {
          *  grain key — see {@link PlannerRequest#symmetricGrainColumn}. */
         public Builder symmetricGrainColumn(Column c) {
             this.symmetricGrainColumn = c;
+            return this;
+        }
+        /** #105: attach the resolved query-parameter context that
+         *  parameter-bound filters substitute at render time. */
+        public Builder paramContext(QueryParameterContext ctx) {
+            this.paramContext = ctx;
             return this;
         }
         public Builder addProjection(Column c) {

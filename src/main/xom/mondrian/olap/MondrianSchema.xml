@@ -301,7 +301,7 @@ version 3.x schemas.</p>
             <Doc>
                 Child elements of this Schema. PhysicalSchema (at most once),
                 Dimension, Cube, Role, NamedSet, UserDefinedFunction, Parameter,
-                Annotations (at most once), in any order.
+                QueryParameter, Annotations (at most once), in any order.
             </Doc>
         </Array>
         <Code>
@@ -317,6 +317,7 @@ version 3.x schemas.</p>
                     NamedSet.class,
                     UserDefinedFunction.class,
                     Parameter.class,
+                    QueryParameter.class,
                     PhysicalSchema.class,
                     Annotations.class)
                 {
@@ -344,6 +345,9 @@ version 3.x schemas.</p>
             }
             public NamedList<Parameter> getParameters() {
                 return children.filterNamed(Parameter.class);
+            }
+            public NamedList<QueryParameter> getQueryParameters() {
+                return children.filterNamed(QueryParameter.class);
             }
             public PhysicalSchema getPhysicalSchema() {
                 return children.singleton(PhysicalSchema.class);
@@ -3244,6 +3248,63 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 public String getNameAttribute() { return name; }
             ]]>
         </Code>
+    </Element>
+
+    <Element type="QueryParameter" class="NamedElement,SchemaElement">
+        <Doc>
+            #105: A <code>QueryParameter</code> declares a bounded, typed
+            query-context parameter. Unlike <code>Parameter</code> (an MDX
+            ParamRef whose default is an MDX expression), a QueryParameter's
+            value is supplied per request through a connection
+            <code>session.&lt;name&gt;</code> property, coerced to the declared
+            type and checked against an optional closed allowed-value set
+            BEFORE it ever becomes a SQL literal. It is NOT free-form SQL
+            templating: the no-injection guarantee comes from strict typing +
+            enumeration, not from a JDBC placeholder. Requires the Calcite
+            backend; the legacy SQL generator ignores query parameters.
+        </Doc>
+        <Attribute name="name" required="true">
+            <Doc>Name of this query parameter. Referenced from a use-site and
+                bound from the connection's <code>session.&lt;name&gt;</code>
+                property.</Doc>
+        </Attribute>
+        <Attribute name="description" required="false">
+            <Doc>Description of this query parameter.</Doc>
+        </Attribute>
+        <Attribute name="type" default="String" required="true">
+            <Doc>Declared type of the parameter value:
+                String, Numeric, Date, or Member. The supplied value is
+                coerced to this type and rejected if it cannot be.</Doc>
+            <Value>String</Value>
+            <Value>Numeric</Value>
+            <Value>Date</Value>
+            <Value>Member</Value>
+        </Attribute>
+        <Attribute name="defaultValue" type="String" required="false">
+            <Doc>Default value (a LITERAL, not an MDX expression) used when no
+                <code>session.&lt;name&gt;</code> value is supplied. Must
+                itself satisfy the type and (if present) the allowed-value
+                set.</Doc>
+        </Attribute>
+        <Array name="values" type="QueryParameterValue">
+            <Doc>Optional closed enumeration of allowed values. When present,
+                a supplied or default value outside this set is rejected with
+                a clear error.</Doc>
+        </Array>
+        <Code>
+            <![CDATA[
+                public String getNameAttribute() { return name; }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="QueryParameterValue">
+        <Doc>
+            #105: One allowed value in a <code>QueryParameter</code>'s closed
+            enumeration. The CDATA holds the literal value (coerced to the
+            parameter's declared type).
+        </Doc>
+        <CData/>
     </Element>
 
     <Element type="Annotations" class="Holder,SchemaElement,CubeElement,DimensionElement,HierarchyElement,LevelElement,AttributeElement,MeasureElement,QueryElement,CalculatedMemberElement,RoleElement,PropertyElement">

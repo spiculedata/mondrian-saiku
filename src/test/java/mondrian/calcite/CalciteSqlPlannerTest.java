@@ -584,6 +584,50 @@ public class CalciteSqlPlannerTest {
         org.junit.jupiter.api.Assertions.assertThrows(
             IllegalArgumentException.class, () -> planner.plan(null));
     }
+
+    /**
+     * #105 (TDD #3): the same param-bound PlannerRequest rendered under two
+     * different validated parameter contexts emits different predicate values
+     * in the SQL, each containing its own context's value.
+     */
+    @Test
+    public void paramBoundFilterSubstitutesContextValue() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        java.util.Map<String, mondrian.rolap.RolapQueryParameterDef> defs =
+            new java.util.LinkedHashMap<>();
+        defs.put("region", mondrian.rolap.RolapQueryParameterDef.create(
+            "region", "String", "EAST",
+            java.util.Arrays.asList("EAST", "WEST")));
+
+        String eastSql = planParamBound(planner, defs, "EAST");
+        String westSql = planParamBound(planner, defs, "WEST");
+
+        assertTrue("EAST in: " + eastSql, eastSql.contains("EAST"));
+        assertFalse("WEST not in EAST plan: " + eastSql,
+            eastSql.contains("WEST"));
+        assertTrue("WEST in: " + westSql, westSql.contains("WEST"));
+        assertFalse("EAST not in WEST plan: " + westSql,
+            westSql.contains("EAST"));
+        assertNotEquals(
+            "param substitution must change the emitted SQL per context",
+            eastSql, westSql);
+    }
+
+    private static String planParamBound(
+        CalciteSqlPlanner planner,
+        java.util.Map<String, mondrian.rolap.RolapQueryParameterDef> defs,
+        String regionValue)
+    {
+        QueryParameterContext ctx = QueryParameterContext.resolveAll(
+            defs, java.util.Collections.singletonMap("region", regionValue));
+        PlannerRequest req = PlannerRequest.builder("store")
+            .addProjection(new PlannerRequest.Column(null, "store_id"))
+            .addFilter(PlannerRequest.Filter.boundToParam(
+                new PlannerRequest.Column(null, "store_country"), "region"))
+            .paramContext(ctx)
+            .build();
+        return planner.plan(req);
+    }
 }
 
 // End CalciteSqlPlannerTest.java

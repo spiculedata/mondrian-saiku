@@ -365,6 +365,7 @@ public class RolapSchemaLoader {
             xmlSchema.getUserDefinedFunctions(),
             xmlSchema.getDimensions(),
             xmlSchema.getParameters(),
+            xmlSchema.getQueryParameters(),
             xmlSchema.getCubes());
         return schema;
     }
@@ -474,6 +475,7 @@ public class RolapSchemaLoader {
         final List<MondrianDef.UserDefinedFunction> xmlUserDefinedFunctions,
         final List<MondrianDef.Dimension> xmlDimensions,
         final List<MondrianDef.Parameter> xmlParameters,
+        final List<MondrianDef.QueryParameter> xmlQueryParameters,
         final List<MondrianDef.Cube> xmlCubes)
     {
         final Dialect dialect = schema.getDialect();
@@ -517,6 +519,34 @@ public class RolapSchemaLoader {
                     schema, parameterName, defaultValue, description, type,
                     modifiable);
             validator.putXml(param, xmlParameter);
+        }
+
+        // #105: Create bounded, typed query-context parameters. Distinct from
+        // the MDX <Parameter> above — these ride as a binding layer, resolved
+        // per request from session.<name> properties and validated against a
+        // closed allowed-value set before becoming a Calcite literal.
+        for (MondrianDef.QueryParameter xmlQueryParameter : xmlQueryParameters)
+        {
+            final String qpName = xmlQueryParameter.name;
+            if (schema.mapNameToQueryParameter.containsKey(qpName)) {
+                throw new mondrian.olap.MondrianException(
+                    "Duplicate <QueryParameter> name '" + qpName + "'.");
+            }
+            final java.util.List<String> allowed = new java.util.ArrayList<>();
+            if (xmlQueryParameter.values != null) {
+                for (MondrianDef.QueryParameterValue v
+                    : xmlQueryParameter.values)
+                {
+                    allowed.add(v.cdata);
+                }
+            }
+            final RolapQueryParameterDef qpDef =
+                RolapQueryParameterDef.create(
+                    qpName,
+                    xmlQueryParameter.type,
+                    xmlQueryParameter.defaultValue,
+                    allowed);
+            schema.mapNameToQueryParameter.put(qpName, qpDef);
         }
 
         // Create cubes.

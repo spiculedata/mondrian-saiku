@@ -276,6 +276,7 @@ public final class CalcitePlannerAdapters {
         }
 
         b.distinct(true);
+        attachParamContext(b);
         return b.build();
     }
 
@@ -373,6 +374,7 @@ public final class CalcitePlannerAdapters {
         addSlicerFilters(
             b, evaluator, factTable, joinedAliases,
             new CrossJoinArg[0]);
+        attachParamContext(b);
         return b.build();
     }
 
@@ -631,6 +633,7 @@ public final class CalcitePlannerAdapters {
         b.addTupleFilter(
             new PlannerRequest.TupleFilter(filterCols, rows));
         b.distinct(true);
+        attachParamContext(b);
         return b.build();
     }
 
@@ -2808,6 +2811,35 @@ public final class CalcitePlannerAdapters {
     public static final Object WILDCARD_VALUE = new Object();
 
     /**
+     * #105: attach the active connection's resolved query-parameter context
+     * to a PlannerRequest builder, so parameter-bound filters built into the
+     * request resolve their validated, typed values at the single render
+     * seam. Reads the context off the current {@link mondrian.server.Locus}
+     * (execution → statement → connection); a no-op (EMPTY) when there is no
+     * active Locus (e.g. a unit test driving the planner directly, which
+     * sets the context on the builder itself).
+     */
+    static void attachParamContext(PlannerRequest.Builder b) {
+        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        if (locus == null
+            || locus.execution == null
+            || locus.execution.getMondrianStatement() == null)
+        {
+            return;
+        }
+        mondrian.rolap.RolapConnection conn =
+            locus.execution.getMondrianStatement().getMondrianConnection();
+        if (conn == null) {
+            return;
+        }
+        mondrian.calcite.QueryParameterContext ctx =
+            conn.getQueryParameterContext();
+        if (ctx != null && !ctx.isEmpty()) {
+            b.paramContext(ctx);
+        }
+    }
+
+    /**
      * If {@code col} is a {@link RolapSchema.PhysCalcColumn} whose SQL
      * is a pure literal (integer / decimal / NULL / single-quoted
      * string, possibly with surrounding whitespace), return the
@@ -3518,6 +3550,7 @@ public final class CalcitePlannerAdapters {
                     calcAlias, entry.expression, refs));
         }
 
+        attachParamContext(b);
         return b.build();
     }
 
