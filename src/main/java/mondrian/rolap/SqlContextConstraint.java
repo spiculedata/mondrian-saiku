@@ -103,6 +103,20 @@ public class SqlContextConstraint
             measureGroupList.addAll(measureGroupSet);
         }
 
+        // #106 SECURITY (fail-closed): the native set evaluators
+        // (RolapNativeCrossJoin / TopCount / Filter) build their own SQL and
+        // apply member-grant IN-lists but NEVER the <PredicateGrant>
+        // row-security filter (that filter is injected ONLY in the Calcite
+        // segment-load path). Allowing native here would rank / filter /
+        // non-empty-prune using UNFILTERED fact rows — forbidden rows
+        // influencing which allowed members appear and in what order: a
+        // row-level disclosure. So if the active role places a predicate grant
+        // on a measure group this native query would touch, disqualify native
+        // and fall back to the non-native (segment-load-enforced) path.
+        if (touchesPredicateSecuredMeasureGroup(context, measureGroupList)) {
+            return false;
+        }
+
         // may return more rows than requested?
         if (!strict) {
             return true;
@@ -126,6 +140,63 @@ public class SqlContextConstraint
             }
         }
         return true;
+    }
+
+    /**
+     * #106 SECURITY (fail-closed): whether the active role places any
+     * {@code <PredicateGrant>} on a measure group this native evaluation would
+     * touch. The native set evaluators do not apply predicate row-security, so
+     * a {@code true} result disqualifies native — the query then evaluates
+     * non-natively through the fail-closed Calcite segment-load path, which DOES
+     * enforce the predicate.
+     *
+     * <p>Mirrors {@code CalcitePlannerAdapters.isPredicateSecuredLoad}: the
+     * touched-measure-group key is {@code cubeName + '.' + measureGroupName},
+     * matching {@code RolapSchemaLoader.predicateGrantKey}.
+     *
+     * <p>Conservative when the touched measure groups cannot be enumerated
+     * precisely (e.g. a pure member crossjoin whose NON EMPTY tests only the
+     * default measure): if the role declares ANY predicate grant on the cube
+     * being queried, native is disqualified. Over-disabling native for a
+     * predicate-secured role is a minor perf cost; under-disabling is a leak.
+     *
+     * <p>No-op (returns {@code false}, the overwhelmingly common case) when
+     * there is no active role or the role declares no predicate grants at all,
+     * so member-grant-only and unsecured roles keep using native.
+     *
+     * @param context the native evaluation context
+     * @param measureGroupList the measure groups the native query resolved
+     * @return {@code true} if a touched measure group is predicate-secured
+     */
+    private static boolean touchesPredicateSecuredMeasureGroup(
+        RolapEvaluator context,
+        List<RolapMeasureGroup> measureGroupList)
+    {
+        final Role role = context.getSchemaReader().getRole();
+        if (role == null || !role.hasPredicateGrants()) {
+            return false;
+        }
+        // Precise path: any resolved measure group secured for this role?
+        for (RolapMeasureGroup mg : measureGroupList) {
+            String key = mg.getCube().getName() + "." + mg.getName();
+            if (!role.getPredicateGrants(key).isEmpty()) {
+                return true;
+            }
+        }
+        // Conservative fallback: the native context may not have resolved the
+        // measure group(s) the non-empty test will actually hit (e.g. the
+        // default measure of the cube). Fail closed if the role places ANY
+        // predicate grant on ANY measure group of the queried cube.
+        RolapCube cube = context.getCube();
+        if (cube != null) {
+            for (RolapMeasureGroup mg : cube.getMeasureGroups()) {
+                String key = mg.getCube().getName() + "." + mg.getName();
+                if (!role.getPredicateGrants(key).isEmpty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
