@@ -1,0 +1,34 @@
+mondrian-saiku
+Copyright (c) Pentaho Corporation and contributors.
+
+This product includes software developed by third parties, as noted below.
+
+--------------------------------------------------------------------------------
+LookML parser (vendored)
+--------------------------------------------------------------------------------
+
+The package mondrian.lookml.parse (and its sub-package mondrian.lookml.parse.util)
+contains a vendored and modified copy of the generic LookML parser from the
+"lookml" project:
+
+    Julian Hyde / LookML Authors
+    https://github.com/hydromatic/lookml
+    Licensed under the Apache License, Version 2.0.
+
+Files originating from that project retain their original Apache-2.0 license
+headers. They have been re-packaged from net.hydromatic.lookml(.parse|.util)
+into mondrian.lookml.parse(.util) and trimmed/patched for the LookML-to-Mondrian
+M4 importer (issue #98):
+
+  * Only the generic push parser, its event handlers (ObjectHandler,
+    ListHandler), the value model (Value, ValueImpl, Values), positions (Pos,
+    Source, Sources) and the PairList utilities (PairList, ImmutablePairList,
+    PairLists, MapEntry, Nullness) were vendored.
+  * The Calcite / SQL / MiniLookml / Facade / schema-validation / writer /
+    logging layers were NOT vendored.
+  * src/main/javacc/mondrian/lookml/LookmlParser.jj is a patched copy of the
+    upstream grammar; the three applied patches are documented in that file.
+
+A copy of the Apache License, Version 2.0 is available at:
+
+    http://www.apache.org/licenses/LICENSE-2.0

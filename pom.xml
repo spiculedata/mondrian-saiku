@@ -87,6 +87,16 @@
          log4j 1.x classes directly (Appender, Level, WriterAppender, MDC). Migrating
          those is tracked separately — see follow-up issue. -->
     <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.13</version></dependency>
+
+    <!-- Direct deps for the vendored LookML parser (issue #98). All three are
+         already on the compile classpath transitively (via Calcite/Avatica);
+         declared explicitly at the versions Maven already resolves so the
+         vendored mondrian.lookml.parse package compiles without relying on
+         transitive scope. No new heavy dependency is introduced. -->
+    <dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>33.4.8-jre</version></dependency>
+    <dependency><groupId>org.checkerframework</groupId><artifactId>checker-qual</artifactId><version>3.10.0</version></dependency>
+    <dependency><groupId>com.google.errorprone</groupId><artifactId>error_prone_annotations</artifactId><version>2.36.0</version></dependency>
+
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-slf4j2-impl</artifactId><version>2.23.1</version><scope>runtime</scope></dependency>
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-core</artifactId><version>2.23.1</version><scope>runtime</scope></dependency>
     <dependency><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-api</artifactId><version>2.23.1</version></dependency>
@@ -325,6 +335,24 @@
                 <argument>javacc</argument>
                 <argument>-OUTPUT_DIRECTORY=${project.build.directory}/generated-sources/javacc/mondrian/parser</argument>
                 <argument>${project.basedir}/src/main/javacc/mondrian/parser/MdxParser.jj</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <!-- LookML grammar (issue #98). Vendored + patched from
+               hydromatic/lookml; declares package mondrian.lookml.parse, so
+               output goes under that path within generated-sources/javacc. -->
+          <execution>
+            <id>javacc-lookml</id>
+            <phase>generate-sources</phase>
+            <goals><goal>exec</goal></goals>
+            <configuration>
+              <executable>${java.home}/bin/java</executable>
+              <arguments>
+                <argument>-cp</argument>
+                <argument>${settings.localRepository}/net/java/dev/javacc/javacc/5.0/javacc-5.0.jar</argument>
+                <argument>javacc</argument>
+                <argument>-OUTPUT_DIRECTORY=${project.build.directory}/generated-sources/javacc/mondrian/lookml/parse</argument>
+                <argument>${project.basedir}/src/main/javacc/mondrian/lookml/LookmlParser.jj</argument>
               </arguments>
             </configuration>
           </execution>
