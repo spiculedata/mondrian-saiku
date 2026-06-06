@@ -2688,7 +2688,8 @@ public class RolapSchemaLoader {
                 .add(
                     bridgeFactKey,
                     Collections.singletonList(factFk),
-                    true) // fan-out hop: one fact row -> many bridge rows
+                    true,          // fan-out hop: one fact row -> many bridge
+                    weightColumn)  // weighted-bridge allocation (null = full)
                 .add(dimKey, Collections.singletonList(bridgeDimKeyCol))
                 .done();
 

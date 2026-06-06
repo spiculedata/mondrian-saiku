@@ -91,6 +91,14 @@ public class RolapMeasureGroup {
         return bridgeInfoMap.get(dimension);
     }
 
+    /** All bridge allocations recorded for this measure group (empty if it
+     *  has no {@code <BridgeLink>}). Read by the Calcite backend to resolve
+     *  the weighted-bridge allocation at segment-load time, where only the
+     *  star (shared across cubes) and cube name are in hand. */
+    public java.util.Collection<BridgeInfo> getBridgeInfos() {
+        return bridgeInfoMap.values();
+    }
+
     /**
      * Measure which computes the number of rows in the fact table. Used for
      * value allocation during writeback.

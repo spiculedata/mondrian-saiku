@@ -718,9 +718,25 @@ public final class CalciteSqlPlanner {
         }
 
         if (req.isAggregation()) {
+            // Alias each group key to a name unique within this aggregate
+            // (`k_<ordinal>_<col>`). In a plain star the source field name
+            // is already unique, but when a join brings two columns of the
+            // same name into scope — e.g. a #107 bridge where both the
+            // bridge and the dimension expose `customer_id` — Calcite
+            // disambiguates the row type by suffixing (`customer_id0`),
+            // and the post-aggregate re-projection below (which restores
+            // request order by name) would miss the suffixed field and
+            // fall back to the legacy planner. Pinning a unique, predictable
+            // name keeps the restore robust; the request column name is
+            // re-applied as the SELECT alias there, so the emitted SQL is
+            // unchanged for non-colliding queries.
             List<RexNode> keys = new ArrayList<>();
-            for (PlannerRequest.Column c : req.groupBy) {
-                keys.add(fieldRef(b, c));
+            List<String> keyNames = new ArrayList<>(req.groupBy.size());
+            for (int gi = 0; gi < req.groupBy.size(); gi++) {
+                PlannerRequest.Column c = req.groupBy.get(gi);
+                String kn = "k_" + gi + "_" + c.name;
+                keys.add(b.alias(fieldRef(b, c), kn));
+                keyNames.add(kn);
             }
             List<RelBuilder.AggCall> aggs = new ArrayList<>();
             for (PlannerRequest.Measure m : req.measures) {
@@ -763,9 +779,9 @@ public final class CalciteSqlPlanner {
                 req.groupBy.size() + req.measures.size());
             List<String> restoredAliases = new ArrayList<>(
                 req.groupBy.size() + req.measures.size());
-            for (PlannerRequest.Column c : req.groupBy) {
-                restored.add(b.field(c.name));
-                restoredAliases.add(c.name);
+            for (int gi = 0; gi < req.groupBy.size(); gi++) {
+                restored.add(b.field(keyNames.get(gi)));
+                restoredAliases.add(req.groupBy.get(gi).name);
             }
             for (PlannerRequest.Measure m : req.measures) {
                 restored.add(b.field(m.alias));

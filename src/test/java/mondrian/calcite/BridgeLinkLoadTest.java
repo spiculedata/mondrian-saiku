@@ -71,6 +71,10 @@ public class BridgeLinkLoadTest {
                 st.execute(sql);
             }
         }
+        // Drop the process-wide Calcite planner cache so it re-reflects the
+        // JDBC catalog including the fixture tables created above (a prior
+        // test class may have warmed it against FoodMart only).
+        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
     }
 
     /** Build a Bank schema, parameterising the fact-key and bridge-link XML. */

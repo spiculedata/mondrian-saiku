@@ -16,6 +16,7 @@ import mondrian.rolap.DescendantsConstraint;
 import mondrian.rolap.SqlContextConstraint;
 import mondrian.rolap.RolapAggregator;
 import mondrian.rolap.RolapAttribute;
+import mondrian.rolap.RolapCube;
 import mondrian.rolap.RolapCubeDimension;
 import mondrian.rolap.RolapCubeLevel;
 import mondrian.rolap.RolapEvaluator;
@@ -3330,6 +3331,15 @@ public final class CalcitePlannerAdapters {
             throw new UnsupportedTranslation(
                 "fromSegmentLoad: no segments (no measures)");
         }
+
+        // #107 weighted bridge: if this load groups by a weighted bridge
+        // dimension (a <BridgeLink> with a weightColumn), every measure is
+        // allocated by the bridge weight — SUM(measure × weight) — rather
+        // than full-counted. The bridge table is already joined (step 1
+        // stitched the fact→bridge→dim chain), so the weight column is in
+        // scope for the arithmetic.
+        RolapSchema.PhysColumn bridgeWeight =
+            findBridgeWeightColumn(columns, segments, star);
         // Map from RolapStar.Measure → its alias in the request, used
         // when resolving a pushable calc's base-measure references below.
         java.util.Map<RolapStar.Measure, String> starMeasureAliases =
@@ -3360,13 +3370,36 @@ public final class CalcitePlannerAdapters {
             }
             if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
-                b.addMeasure(
-                    new PlannerRequest.Measure(
-                        op.fn,
-                        new PlannerRequest.Column(
-                            factTable.getAlias(), mcol),
-                        alias,
-                        op.distinct));
+                if (bridgeWeight instanceof RolapSchema.PhysRealColumn) {
+                    // Weighted bridge: SUM(measure × weight). The weight
+                    // lives on the bridge table (already joined); the
+                    // measure on the fact.
+                    RolapSchema.PhysRealColumn wc =
+                        (RolapSchema.PhysRealColumn) bridgeWeight;
+                    b.addMeasure(
+                        new PlannerRequest.Measure(
+                            op.fn,
+                            new PlannerRequest.Column(
+                                factTable.getAlias(), alias),
+                            alias,
+                            op.distinct,
+                            null,
+                            null,
+                            new PlannerRequest.ArithExpr(
+                                new PlannerRequest.Column(
+                                    factTable.getAlias(), mcol),
+                                PlannerRequest.ArithOp.TIMES,
+                                new PlannerRequest.Column(
+                                    wc.relation.getAlias(), wc.name))));
+                } else {
+                    b.addMeasure(
+                        new PlannerRequest.Measure(
+                            op.fn,
+                            new PlannerRequest.Column(
+                                factTable.getAlias(), mcol),
+                            alias,
+                            op.distinct));
+                }
                 starMeasureAliases.put(m, alias);
                 continue;
             }
@@ -3509,6 +3542,75 @@ public final class CalcitePlannerAdapters {
      * table's alias so the renderer can disambiguate columns that share
      * names across the chain (e.g. {@code product_class_id}).
      */
+    /**
+     * #107: resolve the weighted-bridge allocation column for a segment
+     * load, or {@code null} if this load does not group by a weighted
+     * bridge dimension.
+     *
+     * <p>The fan-out marker ({@code oneToMany}) lives on the shared
+     * physical star, so any load that groups by a bridge dimension can
+     * spot the fan-out hop. But the <em>weight</em> is a property of the
+     * {@code <BridgeLink>} on a specific measure group, and two cubes can
+     * share one star (keyed by fact table) — one declaring the bridge
+     * full-count, the other weighted. So we identify the bridge relation
+     * from the fan-out hop, then disambiguate the allocation by the owning
+     * cube (read from the segment's measure) rather than trusting the
+     * shared star path.
+     */
+    private static RolapSchema.PhysColumn findBridgeWeightColumn(
+        RolapStar.Column[] columns,
+        List<Segment> segments,
+        RolapStar star)
+    {
+        // 1) Find the bridge (fan-out) relation among the grouping columns.
+        RolapSchema.PhysRelation bridgeRel = null;
+        for (RolapStar.Column col : columns) {
+            for (RolapSchema.PhysHop hop : col.getTable().getPath().hopList) {
+                if (hop.link != null && hop.link.oneToMany) {
+                    bridgeRel = hop.relation;
+                    break;
+                }
+            }
+            if (bridgeRel != null) {
+                break;
+            }
+        }
+        if (bridgeRel == null) {
+            return null;
+        }
+        // 2) Resolve the owning cube and consult its measure groups' bridge
+        //    allocation. A weighted bridge to this relation contributes its
+        //    weight column; a full-count bridge (or another cube's load)
+        //    leaves the measures un-weighted.
+        String cubeName = null;
+        for (Segment s : segments) {
+            if (s.aggMeasure != null) {
+                cubeName = s.aggMeasure.getCubeName();
+                if (cubeName != null) {
+                    break;
+                }
+            }
+        }
+        if (cubeName == null) {
+            return null;
+        }
+        mondrian.olap.Cube cube = star.getSchema().lookupCube(cubeName, false);
+        if (!(cube instanceof RolapCube)) {
+            return null;
+        }
+        for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
+            for (RolapMeasureGroup.BridgeInfo info : mg.getBridgeInfos()) {
+                if (info.weighted
+                    && info.weightColumn != null
+                    && info.weightColumn.relation == bridgeRel)
+                {
+                    return info.weightColumn;
+                }
+            }
+        }
+        return null;
+    }
+
     private static void ensureJoinedChain(
         PlannerRequest.Builder b,
         RolapStar.Table factTable,

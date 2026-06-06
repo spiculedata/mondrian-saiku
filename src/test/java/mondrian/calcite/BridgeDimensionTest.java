@@ -173,6 +173,13 @@ public class BridgeDimensionTest {
                 st.execute(sql);
             }
         }
+        // The Calcite planner cache memoises the JDBC catalog (table list)
+        // process-wide on first use. A prior test class (e.g. the parity
+        // fuzzer) may have warmed it against the FoodMart tables only, so
+        // the bridge tables we just created would be invisible ("Table
+        // 'account_fact' not found"). Drop the cache so the planner
+        // re-reflects the database including the freshly-created fixture.
+        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         Util.PropertyList props =
             Util.parseConnectString(TestContext.getDefaultConnectString());
         props.put("UseSchemaPool", "false");
@@ -264,7 +271,6 @@ public class BridgeDimensionTest {
     }
 
     /** weighted: each balance split by ownership weight; reconciles to 1800. */
-    @Disabled("enabled when the Calcite bridge read/aggregate lands (#107 P3-4)")
     @Test
     public void weightedBalanceByCustomer() {
         Map<String, Double> m = rowMap(
