@@ -3340,6 +3340,23 @@ public final class CalcitePlannerAdapters {
         // scope for the arithmetic.
         RolapSchema.PhysColumn bridgeWeight =
             findBridgeWeightColumn(columns, segments, star);
+
+        // #103 symmetric aggregate: a full-count bridge (no weight) fans out
+        // over the bridge join, so when this load groups by a bridge-reached
+        // column the renderer must de-duplicate on the fact grain before
+        // summing — otherwise a fact row shared by several owners in the
+        // same group is double-counted (correct at the leaf today, wrong
+        // once rolled up to an intermediate bridge level). Weighted bridges
+        // roll up additively and never need this.
+        if (bridgeWeight == null) {
+            RolapSchema.PhysColumn grain = findBridgeFanoutGrain(columns);
+            if (grain instanceof RolapSchema.PhysRealColumn) {
+                b.symmetricGrainColumn(
+                    new PlannerRequest.Column(
+                        grain.relation.getAlias(),
+                        ((RolapSchema.PhysRealColumn) grain).name));
+            }
+        }
         // Map from RolapStar.Measure → its alias in the request, used
         // when resolving a pushable calc's base-measure references below.
         java.util.Map<RolapStar.Measure, String> starMeasureAliases =
@@ -3605,6 +3622,31 @@ public final class CalcitePlannerAdapters {
                     && info.weightColumn.relation == bridgeRel)
                 {
                     return info.weightColumn;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * #103: when a grouping column is reached through a fan-out hop, return
+     * the fact-grain key column that the {@link PlannerRequest} must
+     * de-duplicate on (the fact-side column of the one-to-many link), or
+     * {@code null} if this load does not fan out. Used for the full-count
+     * symmetric aggregate; the weighted path uses
+     * {@link #findBridgeWeightColumn} instead.
+     */
+    private static RolapSchema.PhysColumn findBridgeFanoutGrain(
+        RolapStar.Column[] columns)
+    {
+        for (RolapStar.Column col : columns) {
+            for (RolapSchema.PhysHop hop : col.getTable().getPath().hopList) {
+                if (hop.link != null && hop.link.oneToMany) {
+                    List<RolapSchema.PhysColumn> cl =
+                        hop.link.getColumnList();
+                    if (!cl.isEmpty()) {
+                        return cl.get(0);
+                    }
                 }
             }
         }

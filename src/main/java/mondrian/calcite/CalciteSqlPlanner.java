@@ -738,23 +738,37 @@ public final class CalciteSqlPlanner {
                 keys.add(b.alias(fieldRef(b, c), kn));
                 keyNames.add(kn);
             }
-            List<RelBuilder.AggCall> aggs = new ArrayList<>();
-            for (PlannerRequest.Measure m : req.measures) {
-                aggs.add(aggCall(b, m));
+            if (req.symmetricGrainColumn != null) {
+                // #103 symmetric aggregate: this aggregation fans out over a
+                // one-to-many join (a full-count bridge), so the SAME fact
+                // row can appear several times within one group. De-duplicate
+                // on the fact grain first —
+                //   SELECT k_0..k_n, fn(msrc_i)
+                //   FROM (SELECT DISTINCT k_0..k_n, grain, msrc_0..msrc_m ...)
+                //   GROUP BY k_0..k_n
+                // — so fanned rows are counted once. Only reached for plain
+                // real-column measures (the adapter gates this); HAVING and
+                // computed measures are not combined with it.
+                emitSymmetricAggregate(b, req, keyNames);
+            } else {
+                List<RelBuilder.AggCall> aggs = new ArrayList<>();
+                for (PlannerRequest.Measure m : req.measures) {
+                    aggs.add(aggCall(b, m));
+                }
+                // HAVING predicates ride along in the aggregate so their
+                // measure alias is resolvable by the subsequent filter()
+                // call. Distinct aliases are guaranteed by the builder —
+                // user measures already have stable aliases, and HAVING
+                // translation in CalcitePlannerAdapters emits h0..hN.
+                // Measures that pre-exist the aggregate by matching
+                // fn+column+distinct+alias are NOT deduped; the
+                // post-aggregate reproject drops the HAVING-only ones
+                // by name, preserving the user's SELECT layout.
+                for (PlannerRequest.Having h : req.havings) {
+                    aggs.add(aggCall(b, h.measure));
+                }
+                b.aggregate(b.groupKey(keys), aggs);
             }
-            // HAVING predicates ride along in the aggregate so their
-            // measure alias is resolvable by the subsequent filter()
-            // call. Distinct aliases are guaranteed by the builder —
-            // user measures already have stable aliases, and HAVING
-            // translation in CalcitePlannerAdapters emits h0..hN.
-            // Measures that pre-exist the aggregate by matching
-            // fn+column+distinct+alias are NOT deduped; the
-            // post-aggregate reproject drops the HAVING-only ones
-            // by name, preserving the user's SELECT layout.
-            for (PlannerRequest.Having h : req.havings) {
-                aggs.add(aggCall(b, h.measure));
-            }
-            b.aggregate(b.groupKey(keys), aggs);
 
             // HAVING: filter on the aggregate's output columns. Calcite
             // recognises a Filter immediately above an Aggregate whose
@@ -1078,6 +1092,63 @@ public final class CalciteSqlPlanner {
             condition, thenRex, elseRex);
     }
 
+    /**
+     * #103 symmetric aggregate emission: project (group keys, fact grain,
+     * measure sources), apply {@code DISTINCT}, then aggregate over the
+     * de-duplicated rows. Leaves the builder with the outer aggregate on
+     * top — group-key fields named per {@code keyNames}, measure fields
+     * named per the measure alias — so the shared post-aggregate
+     * re-projection restores request order unchanged.
+     */
+    private static void emitSymmetricAggregate(
+        RelBuilder b,
+        PlannerRequest req,
+        List<String> keyNames)
+    {
+        List<RexNode> proj = new ArrayList<>();
+        List<String> aliases = new ArrayList<>();
+        for (int gi = 0; gi < req.groupBy.size(); gi++) {
+            proj.add(fieldRef(b, req.groupBy.get(gi)));
+            aliases.add(keyNames.get(gi));
+        }
+        proj.add(fieldRef(b, req.symmetricGrainColumn));
+        aliases.add("g_grain");
+        List<String> msrcNames = new ArrayList<>(req.measures.size());
+        for (int mi = 0; mi < req.measures.size(); mi++) {
+            PlannerRequest.Measure m = req.measures.get(mi);
+            if (m.column == null
+                || m.caseExpr != null
+                || m.arithExpr != null
+                || m.literal != null)
+            {
+                throw new UnsupportedTranslation(
+                    "symmetric aggregate supports plain real-column measures "
+                    + "only (measure '" + m.alias + "')");
+            }
+            String mn = "msrc_" + mi;
+            proj.add(fieldRef(b, m.column));
+            aliases.add(mn);
+            msrcNames.add(mn);
+        }
+        // SELECT DISTINCT k_0..k_n, grain, msrc_0..msrc_m. force=true stops
+        // RelBuilder collapsing the projection into the scan/join so the
+        // grain genuinely participates in the DISTINCT.
+        b.project(proj, aliases, true);
+        b.distinct();
+        List<RexNode> symKeys = new ArrayList<>(req.groupBy.size());
+        for (int gi = 0; gi < req.groupBy.size(); gi++) {
+            symKeys.add(b.field(keyNames.get(gi)));
+        }
+        List<RelBuilder.AggCall> aggs = new ArrayList<>(req.measures.size());
+        for (int mi = 0; mi < req.measures.size(); mi++) {
+            PlannerRequest.Measure m = req.measures.get(mi);
+            aggs.add(
+                aggOf(b, m.fn, m.distinct, m.alias,
+                    b.field(msrcNames.get(mi))));
+        }
+        b.aggregate(b.groupKey(symKeys), aggs);
+    }
+
     private static RelBuilder.AggCall aggCall(
         RelBuilder b, PlannerRequest.Measure m)
     {
@@ -1096,39 +1167,53 @@ public final class CalciteSqlPlanner {
         } else {
             ref = b.field(m.column.name);
         }
-        switch (m.fn) {
+        return aggOf(b, m.fn, m.distinct, m.alias, ref);
+    }
+
+    /** Map an {@link PlannerRequest.AggFn} + already-built operand RexNode to
+     *  a {@link RelBuilder.AggCall}. Shared by {@link #aggCall} and the #103
+     *  symmetric-aggregate path, which supplies its own de-duplicated
+     *  operand. */
+    private static RelBuilder.AggCall aggOf(
+        RelBuilder b,
+        PlannerRequest.AggFn fn,
+        boolean distinct,
+        String alias,
+        RexNode ref)
+    {
+        switch (fn) {
         case SUM:
-            if (m.distinct) {
+            if (distinct) {
                 throw new UnsupportedTranslation(
                     "CalciteSqlPlanner.aggCall: DISTINCT only supported for "
                     + "COUNT (got SUM)");
             }
-            return b.sum(ref).as(m.alias);
+            return b.sum(ref).as(alias);
         case COUNT:
-            return b.count(m.distinct, m.alias, ref);
+            return b.count(distinct, alias, ref);
         case MIN:
-            if (m.distinct) {
+            if (distinct) {
                 throw new UnsupportedTranslation(
                     "CalciteSqlPlanner.aggCall: DISTINCT only supported for "
                     + "COUNT (got MIN)");
             }
-            return b.min(ref).as(m.alias);
+            return b.min(ref).as(alias);
         case MAX:
-            if (m.distinct) {
+            if (distinct) {
                 throw new UnsupportedTranslation(
                     "CalciteSqlPlanner.aggCall: DISTINCT only supported for "
                     + "COUNT (got MAX)");
             }
-            return b.max(ref).as(m.alias);
+            return b.max(ref).as(alias);
         case AVG:
-            if (m.distinct) {
+            if (distinct) {
                 throw new UnsupportedTranslation(
                     "CalciteSqlPlanner.aggCall: DISTINCT only supported for "
                     + "COUNT (got AVG)");
             }
-            return b.avg(ref).as(m.alias);
+            return b.avg(ref).as(alias);
         default:
-            throw new IllegalStateException("unhandled AggFn: " + m.fn);
+            throw new IllegalStateException("unhandled AggFn: " + fn);
         }
     }
 }
