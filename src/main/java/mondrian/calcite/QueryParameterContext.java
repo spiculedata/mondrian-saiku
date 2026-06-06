@@ -48,9 +48,14 @@ public final class QueryParameterContext {
     private static final class Resolved {
         final RolapQueryParameterDef def;
         final Object value;
-        Resolved(RolapQueryParameterDef def, Object value) {
+        /** #106: the raw supplied (or default) value, retained so an IN
+         *  predicate grant can split a comma-separated multi-value parameter
+         *  and re-validate each token through the same {@code def} sandbox. */
+        final String raw;
+        Resolved(RolapQueryParameterDef def, Object value, String raw) {
             this.def = def;
             this.value = value;
+            this.raw = raw;
         }
     }
 
@@ -83,17 +88,20 @@ public final class QueryParameterContext {
             String raw = sessionValues == null
                 ? null : sessionValues.get(name);
             Object value;
+            String rawForList;
             if (raw != null) {
                 value = def.validate(raw);
+                rawForList = raw;
             } else if (def.hasDefault()) {
                 value = def.getDefaultValue();
+                rawForList = String.valueOf(def.getDefaultValue());
             } else {
                 throw new MondrianException(
                     "Query parameter '" + name
                     + "' has no session value and no default; supply a "
                     + "session." + name + " connection property.");
             }
-            out.put(name, new Resolved(def, value));
+            out.put(name, new Resolved(def, value, rawForList));
         }
         return new QueryParameterContext(Collections.unmodifiableMap(out));
     }
@@ -123,6 +131,44 @@ public final class QueryParameterContext {
      *
      * @throws MondrianException if the parameter is not declared
      */
+    /**
+     * #106: resolves a parameter as a list of validated, typed values for an
+     * IN predicate grant. The raw value is split on commas and each token is
+     * validated through the same {@link RolapQueryParameterDef} sandbox (type
+     * coercion + allowed-value enumeration) before it can become a literal —
+     * the no-injection guarantee holds per-token exactly as for a single
+     * value.
+     *
+     * <p>A blank token set (empty or whitespace-only raw value) returns an
+     * empty list, which the caller MUST treat as deny-all (fail closed).
+     *
+     * @param name parameter name
+     * @return immutable list of coerced, validated values (possibly empty)
+     * @throws MondrianException if the parameter is not declared, or any token
+     *     fails type / allowed-value validation
+     */
+    public java.util.List<Object> resolveList(String name) {
+        Resolved r = resolved.get(name);
+        if (r == null) {
+            throw new MondrianException(
+                "Query parameter '" + name + "' is not declared in the "
+                + "schema.");
+        }
+        java.util.List<Object> out = new java.util.ArrayList<>();
+        if (r.raw == null) {
+            return java.util.Collections.unmodifiableList(out);
+        }
+        for (String token : r.raw.split(",")) {
+            String trimmed = token.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            // Re-validate every token through the def's sandbox.
+            out.add(r.def.validate(trimmed));
+        }
+        return java.util.Collections.unmodifiableList(out);
+    }
+
     public RolapQueryParameterDef.Datatype datatypeOf(String name) {
         Resolved r = resolved.get(name);
         if (r == null) {

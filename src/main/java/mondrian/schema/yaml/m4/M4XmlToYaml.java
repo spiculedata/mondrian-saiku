@@ -806,6 +806,33 @@ public final class M4XmlToYaml {
             }
             out.put("hierarchies", hiers);
         }
+        // #106: predicate-based row-security grants.
+        if (cg.predicateGrants != null && cg.predicateGrants.length > 0) {
+            List<Object> preds = new ArrayList<>();
+            for (MondrianDef.PredicateGrant pg : cg.predicateGrants) {
+                preds.add(predicateGrant(pg));
+            }
+            out.put("predicate_grants", preds);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> predicateGrant(
+        MondrianDef.PredicateGrant pg)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (pg.measureGroup != null) {
+            out.put("measure_group", pg.measureGroup);
+        }
+        if (pg.column != null) {
+            out.put("column", pg.column);
+        }
+        if (pg.operator != null) {
+            out.put("operator", pg.operator);
+        }
+        if (pg.parameter != null) {
+            out.put("parameter", pg.parameter);
+        }
         return out;
     }
 

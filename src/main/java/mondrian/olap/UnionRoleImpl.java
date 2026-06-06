@@ -191,6 +191,33 @@ class UnionRoleImpl implements Role {
     }
 
     /**
+     * #106: a union role's predicate grants are the concatenation of every
+     * constituent role's grants for the measure group. Each grant is applied
+     * as an AND filter at injection, so a fact row must satisfy ALL of them —
+     * the conservative, fail-safe reading of a union for row security (a row
+     * is visible only if every constituent's restriction admits it).
+     */
+    public java.util.List<PredicateGrant> getPredicateGrants(
+        String measureGroupKey)
+    {
+        java.util.List<PredicateGrant> all =
+            new java.util.ArrayList<PredicateGrant>();
+        for (Role role : roleList) {
+            all.addAll(role.getPredicateGrants(measureGroupKey));
+        }
+        return java.util.Collections.unmodifiableList(all);
+    }
+
+    public boolean hasPredicateGrants() {
+        for (Role role : roleList) {
+            if (role.hasPredicateGrants()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Implementation of {@link mondrian.olap.Role.HierarchyAccess} that
      * gives access to an object if any one of the constituent hierarchy
      * accesses has access to that object.

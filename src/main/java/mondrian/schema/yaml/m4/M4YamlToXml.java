@@ -234,6 +234,27 @@ public final class M4YamlToXml {
             }
             grant.hierarchyGrants = list.toArray(new MondrianDef.HierarchyGrant[0]);
         }
+        // #106: predicate-based row-security grants.
+        Object preds = cg.get("predicate_grants");
+        if (preds instanceof List && !((List<?>) preds).isEmpty()) {
+            List<MondrianDef.PredicateGrant> list = new ArrayList<>();
+            for (Object p : (List<?>) preds) {
+                if (p instanceof Map) {
+                    list.add(buildPredicateGrant((Map<?, ?>) p));
+                }
+            }
+            grant.predicateGrants =
+                list.toArray(new MondrianDef.PredicateGrant[0]);
+        }
+        return grant;
+    }
+
+    private static MondrianDef.PredicateGrant buildPredicateGrant(Map<?, ?> pg) {
+        MondrianDef.PredicateGrant grant = new MondrianDef.PredicateGrant();
+        grant.measureGroup = str(pg.get("measure_group"));
+        grant.column = str(pg.get("column"));
+        grant.operator = str(pg.get("operator"));
+        grant.parameter = str(pg.get("parameter"));
         return grant;
     }
 

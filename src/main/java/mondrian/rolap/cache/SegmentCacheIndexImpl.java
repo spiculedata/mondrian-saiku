@@ -95,9 +95,17 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
             request.getMeasure().getCubeName(),
             request.getMeasure().getStar().getFactTable().getAlias(),
             request.getMeasure().getName(),
-            AggregationKey.getCompoundPredicateStringList(
-                key.getStar(),
-                key.getCompoundPredicateList()));
+            // #106: append the predicate-grant security key so this
+            // request-derived converter key matches the header-derived key
+            // (header.compoundPredicates already carries the key from
+            // SegmentBuilder.toHeader). Without this the converter lookup
+            // misses for a secured load.
+            mondrian.rolap.agg.SegmentCacheManager.withPredicateSecurityKey(
+                AggregationKey.getCompoundPredicateStringList(
+                    key.getStar(),
+                    key.getCompoundPredicateList()),
+                request.getMeasure(),
+                key.getStar()));
     }
 
     public List<SegmentHeader> locate(

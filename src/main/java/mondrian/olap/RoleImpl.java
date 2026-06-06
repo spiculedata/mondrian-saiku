@@ -32,6 +32,13 @@ public class RoleImpl implements Role {
         new HashMap<Dimension, Access>();
     private final Map<Hierarchy, HierarchyAccessImpl> hierarchyGrants =
         new HashMap<Hierarchy, HierarchyAccessImpl>();
+    /** #106: predicate-based row-security grants. Keyed by the fully-qualified
+     *  measure-group identity ({@code cubeName + '.' + measureGroupName}) so a
+     *  grant only matches the measure group it was declared against, even when
+     *  two cubes share a measure-group name. Value is an immutable list of
+     *  grants for that measure group (multiple columns may be restricted). */
+    private final Map<String, List<PredicateGrant>> predicateGrants =
+        new LinkedHashMap<String, List<PredicateGrant>>();
 
     /**
      * Creates a role with no permissions.
@@ -52,6 +59,9 @@ public class RoleImpl implements Role {
                 entry.getKey(),
                 (HierarchyAccessImpl) entry.getValue().clone());
         }
+        // #106: predicate grants are immutable value objects, and the lists
+        // are already unmodifiable, so a shallow copy of the map is safe.
+        role.predicateGrants.putAll(predicateGrants);
         return role;
     }
 
@@ -182,6 +192,57 @@ public class RoleImpl implements Role {
         // We always figure out the inheritance at runtime since the place
         // where the dimension is used (either inside of a virtual cube,
         // a shared dimension or a cube) will influence on the decision.
+    }
+
+    /**
+     * #106: registers a predicate-based row-security grant for a measure
+     * group, identified by its fully-qualified {@code measureGroupKey}
+     * ({@code cubeName + '.' + measureGroupName}). Grants accumulate; several
+     * columns of the same measure group may be restricted independently.
+     *
+     * @param measureGroupKey fully-qualified measure-group identity
+     * @param grant the (already-validated) predicate grant
+     *
+     * @pre measureGroupKey != null
+     * @pre grant != null
+     * @pre isMutable()
+     */
+    public void grant(String measureGroupKey, PredicateGrant grant) {
+        assert measureGroupKey != null;
+        assert grant != null;
+        Util.assertPrecondition(isMutable(), "isMutable()");
+        // Immutable accumulation: replace the list with a new unmodifiable
+        // copy that includes the new grant, never mutate a shared list.
+        List<PredicateGrant> existing = predicateGrants.get(measureGroupKey);
+        List<PredicateGrant> updated = new ArrayList<PredicateGrant>(
+            existing == null ? Collections.<PredicateGrant>emptyList()
+                : existing);
+        updated.add(grant);
+        predicateGrants.put(
+            measureGroupKey, Collections.unmodifiableList(updated));
+    }
+
+    /**
+     * #106: returns the predicate grants restricting the given measure group,
+     * or an empty list if none. The result is immutable.
+     *
+     * @param measureGroupKey fully-qualified measure-group identity
+     * @return immutable list of predicate grants (never null)
+     */
+    public List<PredicateGrant> getPredicateGrants(String measureGroupKey) {
+        List<PredicateGrant> grants = predicateGrants.get(measureGroupKey);
+        return grants == null
+            ? Collections.<PredicateGrant>emptyList()
+            : grants;
+    }
+
+    /**
+     * #106: returns whether this role declares any predicate grants at all.
+     * A fast pre-check so the hot segment-load path can skip grant lookup
+     * for the (overwhelmingly common) unsecured case.
+     */
+    public boolean hasPredicateGrants() {
+        return !predicateGrants.isEmpty();
     }
 
     public Access getAccess(Dimension dimension) {

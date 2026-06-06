@@ -1121,6 +1121,22 @@ public final class CalciteSqlPlanner {
         // has passed type + allowed-value checks at context-build time. A
         // future Phase-2 `?` bind-variable swap is local to this branch.
         if (f.isParamBound()) {
+            // #106: an IN predicate grant binds to a comma-separated
+            // multi-value parameter. Resolve+validate each token through the
+            // #105 sandbox; an empty membership set fails closed (no row can
+            // match) rather than degenerating to an unrestricted scan.
+            if (f.op == PlannerRequest.Operator.IN) {
+                java.util.List<Object> values =
+                    paramContext.resolveList(f.paramRef);
+                if (values.isEmpty()) {
+                    return b.literal(false);
+                }
+                List<RexNode> ors = new ArrayList<>(values.size());
+                for (Object v : values) {
+                    ors.add(eqOrIsNull(b, col, v));
+                }
+                return ors.size() == 1 ? ors.get(0) : b.or(ors);
+            }
             Object value = paramContext.resolve(f.paramRef);
             return eqOrIsNull(b, col, value);
         }

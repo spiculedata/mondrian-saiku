@@ -3145,6 +3145,38 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
         </Attribute>
         <Array name="dimensionGrants" type="DimensionGrant"/>
         <Array name="hierarchyGrants" type="HierarchyGrant"/>
+        <Array name="predicateGrants" type="PredicateGrant"/>
+    </Element>
+
+    <Element type="PredicateGrant">
+        <Doc>
+            #106: Predicate-based row security. Restricts the fact rows of a
+            measure group to those whose real fact column matches the value of
+            a bounded query-context parameter (a #105 &lt;QueryParameter&gt;,
+            fed via a <code>session.&lt;name&gt;</code> connection property).
+            The Calcite adapter injects this as a filter on every segment load
+            touching the measure group, pre-aggregation, so totals are
+            correctly restricted. Bounds: equality / IN on a REAL fact column
+            only, value = a bound parameter. No arbitrary SQL.
+        </Doc>
+        <Attribute name="measureGroup" required="true">
+            <Doc>Name of the measure group whose fact rows are restricted.</Doc>
+        </Attribute>
+        <Attribute name="column" required="true">
+            <Doc>Real fact column (on the measure group's fact relation) the
+            predicate is applied to. Must be a physical real column on the
+            fact grain; dimension/snowflake columns are rejected.</Doc>
+        </Attribute>
+        <Attribute name="operator" required="false" default="eq">
+            <Doc>Comparison operator: "eq" (equality) or "in" (membership in a
+            comma-separated parameter value).</Doc>
+            <Value>eq</Value>
+            <Value>in</Value>
+        </Attribute>
+        <Attribute name="parameter" required="true">
+            <Doc>Name of the bound #105 query-context parameter supplying the
+            predicate value.</Doc>
+        </Attribute>
     </Element>
 
     <Element class="Grant" type="DimensionGrant">

@@ -3620,7 +3620,316 @@ public final class CalcitePlannerAdapters {
         }
 
         attachParamContext(b);
+
+        // #106: predicate-based row security. After all functional filters are
+        // in place and before the aggregate is built (req.filters are applied
+        // below the Aggregate in CalciteSqlPlanner.planRel), inject one filter
+        // per applicable predicate grant on the real fact column. This is the
+        // single chokepoint every Calcite fact aggregation flows through, so
+        // the restriction cannot be bypassed; a missing/empty bound value
+        // fails closed (zero rows) rather than scanning unrestricted.
+        injectPredicateGrants(b, segments, star);
+
         return b.build();
+    }
+
+    /**
+     * #106: the fully-qualified measure-group identity used to key predicate
+     * grants — {@code cubeName + '.' + measureGroupName}. MUST mirror
+     * {@code RolapSchemaLoader.predicateGrantKey} so a grant declared at load
+     * time matches the live measure group at inject time.
+     */
+    private static String predicateGrantKey(
+        String cubeName, String measureGroupName)
+    {
+        return cubeName + "." + measureGroupName;
+    }
+
+    /**
+     * #106: inject predicate-based row-security filters for this segment load.
+     *
+     * <p>Resolves the active role off the current {@link mondrian.server.Locus}
+     * and, for every measure group this load touches, applies each declared
+     * {@link mondrian.olap.PredicateGrant} as an EQ/IN filter on its real fact
+     * column. The filter's value is bound to a #105 query-context parameter and
+     * resolved at the single render seam, so a raw string never reaches SQL.
+     *
+     * <p>Fail-closed contract: if a grant applies but its bound parameter is
+     * undeclared (no value in the request's parameter context), the whole load
+     * is forced to {@code universalFalse} (zero rows) — never unrestricted. For
+     * a declared-but-empty value the render seam emits a universally-false
+     * predicate (see {@code CalciteSqlPlanner.filterRex}).
+     *
+     * <p>No-op (the overwhelmingly common case) when there is no active role,
+     * the role declares no predicate grants, or no touched measure group is
+     * secured.
+     */
+    private static void injectPredicateGrants(
+        PlannerRequest.Builder b,
+        List<Segment> segments,
+        RolapStar star)
+    {
+        mondrian.olap.Role role = activeRole();
+        if (role == null || !role.hasPredicateGrants()) {
+            return;
+        }
+        mondrian.calcite.QueryParameterContext paramContext =
+            activeParamContext();
+
+        // Resolve every distinct measure group this load touches (a UNION
+        // fan-out across measure groups lands here arm-by-arm, so each arm
+        // independently gets its own grant's filter).
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
+            for (mondrian.olap.PredicateGrant grant
+                : role.getPredicateGrants(key))
+            {
+                applyPredicateGrant(b, mg, grant, paramContext);
+            }
+        }
+    }
+
+    /**
+     * #106 cache isolation: a stable string capturing the active role's
+     * resolved predicate-grant value(s) for the measure group owning
+     * {@code measure}, or {@code ""} when the load is unsecured.
+     *
+     * <p>This string is folded into the segment header's compound-predicate
+     * list (which feeds {@code SegmentHeader.getUniqueID()}), so a segment
+     * cached for user A (parameter=1) gets a different cache identity from
+     * user B's (parameter=2) — preventing cross-user cache bleed. An unbound
+     * parameter yields a distinct {@code <unbound>} marker so a fail-closed
+     * (zero-row) segment is never served to a user whose parameter IS bound.
+     *
+     * @param measure the segment's star measure
+     * @param star the segment's star
+     * @return a deterministic per-user security key, or {@code ""} if unsecured
+     */
+    public static String predicateSecurityCacheKey(
+        RolapStar.Measure measure, RolapStar star)
+    {
+        mondrian.olap.Role role = activeRole();
+        if (role == null || !role.hasPredicateGrants() || measure == null) {
+            return "";
+        }
+        String cubeName = measure.getCubeName();
+        if (cubeName == null) {
+            return "";
+        }
+        mondrian.olap.Cube cube = star.getSchema().lookupCube(cubeName, false);
+        if (!(cube instanceof RolapCube)) {
+            return "";
+        }
+        mondrian.calcite.QueryParameterContext paramContext =
+            activeParamContext();
+        StringBuilder sb = new StringBuilder();
+        for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
+            if (!measureGroupOwnsMeasure(mg, measure)) {
+                continue;
+            }
+            String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
+            for (mondrian.olap.PredicateGrant grant
+                : role.getPredicateGrants(key))
+            {
+                sb.append("|pg:").append(grant.getColumn())
+                    .append(':').append(grant.getOperator()).append('=');
+                appendResolvedGrantValue(sb, grant, paramContext);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** #106: append the resolved value(s) of a predicate grant to the cache
+     *  key, or an {@code <unbound>} marker when the parameter is not bound. */
+    private static void appendResolvedGrantValue(
+        StringBuilder sb,
+        mondrian.olap.PredicateGrant grant,
+        mondrian.calcite.QueryParameterContext paramContext)
+    {
+        if (paramContext == null
+            || !paramContext.isDeclared(grant.getParameter()))
+        {
+            sb.append("<unbound>");
+            return;
+        }
+        try {
+            if (grant.getOperator()
+                == mondrian.olap.PredicateGrant.Operator.IN)
+            {
+                sb.append(paramContext.resolveList(grant.getParameter()));
+            } else {
+                sb.append(
+                    String.valueOf(
+                        paramContext.resolve(grant.getParameter())));
+            }
+        } catch (RuntimeException ex) {
+            // A validation failure here must NOT collide with a valid key;
+            // use a distinct marker so the failing user gets their own slot.
+            sb.append("<invalid>");
+        }
+    }
+
+    /**
+     * #106 fail-closed guard: whether the active role places any predicate
+     * grant on a measure group this segment load touches. The legacy Mondrian
+     * SQL generator knows nothing about predicate grants, so a silent fallback
+     * for a secured load would drop the security filter (data leak). The
+     * SegmentLoader consults this and refuses to fall back when it returns
+     * {@code true} — failing the load closed instead.
+     *
+     * @param segments the load's segments
+     * @param star the load's star
+     * @return {@code true} if at least one touched measure group is predicate-
+     *     secured for the active role
+     */
+    public static boolean isPredicateSecuredLoad(
+        List<Segment> segments, RolapStar star)
+    {
+        mondrian.olap.Role role = activeRole();
+        if (role == null || !role.hasPredicateGrants()) {
+            return false;
+        }
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
+            if (!role.getPredicateGrants(key).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * #106: apply a single predicate grant as a filter on the measure group's
+     * real fact column. Fails closed (universalFalse) when the bound parameter
+     * is not declared in the request's parameter context.
+     */
+    private static void applyPredicateGrant(
+        PlannerRequest.Builder b,
+        RolapMeasureGroup mg,
+        mondrian.olap.PredicateGrant grant,
+        mondrian.calcite.QueryParameterContext paramContext)
+    {
+        // Fail closed: an undeclared parameter means we cannot bind a value,
+        // so admit zero rows rather than leaving the fact unrestricted.
+        if (paramContext == null
+            || !paramContext.isDeclared(grant.getParameter()))
+        {
+            b.universalFalse(true);
+            return;
+        }
+        // The grant column was validated at load time as a real fact column on
+        // this measure group's fact relation; resolve its physical name now.
+        RolapSchema.PhysRelation factRelation = mg.getFactRelation();
+        RolapSchema.PhysColumn col =
+            factRelation.getColumn(grant.getColumn(), false);
+        if (!(col instanceof RolapSchema.PhysRealColumn)) {
+            // Defensive: should never happen (load-time validation). Fail
+            // closed rather than emit an unsecured load.
+            b.universalFalse(true);
+            return;
+        }
+        PlannerRequest.Column filterCol = new PlannerRequest.Column(
+            factRelation.getAlias(),
+            ((RolapSchema.PhysRealColumn) col).name);
+        switch (grant.getOperator()) {
+        case IN:
+            b.addFilter(
+                PlannerRequest.Filter.boundToParamIn(
+                    filterCol, grant.getParameter()));
+            break;
+        case EQ:
+        default:
+            b.addFilter(
+                PlannerRequest.Filter.boundToParam(
+                    filterCol, grant.getParameter()));
+            break;
+        }
+    }
+
+    /**
+     * #106: the distinct measure groups whose fact rows this segment load
+     * aggregates. Resolved from the segments' star measures via the owning
+     * cube — the same cube-resolution path #107's weighted-bridge code uses.
+     */
+    private static java.util.Set<RolapMeasureGroup> touchedMeasureGroups(
+        List<Segment> segments, RolapStar star)
+    {
+        java.util.Set<RolapMeasureGroup> out =
+            new java.util.LinkedHashSet<RolapMeasureGroup>();
+        for (Segment s : segments) {
+            if (s.aggMeasure == null) {
+                continue;
+            }
+            String cubeName = s.aggMeasure.getCubeName();
+            if (cubeName == null) {
+                continue;
+            }
+            mondrian.olap.Cube cube =
+                star.getSchema().lookupCube(cubeName, false);
+            if (!(cube instanceof RolapCube)) {
+                continue;
+            }
+            // A star is keyed by fact table and may back several measure
+            // groups; the segment's measure expression lives on exactly one,
+            // so match by the measure's fact column membership.
+            for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
+                if (measureGroupOwnsMeasure(mg, s.aggMeasure)) {
+                    out.add(mg);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * #106: whether {@code mg}'s fact relation is the table the star measure's
+     * expression reads from — i.e. this measure group owns the measure.
+     */
+    private static boolean measureGroupOwnsMeasure(
+        RolapMeasureGroup mg, RolapStar.Measure measure)
+    {
+        RolapSchema.PhysColumn expr = measure.getExpression();
+        if (expr == null) {
+            // Synthetic measure (e.g. fact-count) — attribute to mg by table.
+            return measure.getTable() != null
+                && measure.getTable().getRelation() == mg.getFactRelation();
+        }
+        return expr.relation == mg.getFactRelation();
+    }
+
+    /**
+     * #106: the active query role off the current {@link mondrian.server.Locus}
+     * (execution → statement → connection), or {@code null} when there is no
+     * active Locus (e.g. a unit test driving the planner directly).
+     */
+    private static mondrian.olap.Role activeRole() {
+        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        if (locus == null
+            || locus.execution == null
+            || locus.execution.getMondrianStatement() == null)
+        {
+            return null;
+        }
+        mondrian.rolap.RolapConnection conn =
+            locus.execution.getMondrianStatement().getMondrianConnection();
+        return conn == null ? null : conn.getRole();
+    }
+
+    /**
+     * #106: the active connection's resolved query-parameter context, or
+     * {@code null} when there is no active Locus/connection.
+     */
+    private static mondrian.calcite.QueryParameterContext activeParamContext() {
+        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        if (locus == null
+            || locus.execution == null
+            || locus.execution.getMondrianStatement() == null)
+        {
+            return null;
+        }
+        mondrian.rolap.RolapConnection conn =
+            locus.execution.getMondrianStatement().getMondrianConnection();
+        return conn == null ? null : conn.getQueryParameterContext();
     }
 
     /**

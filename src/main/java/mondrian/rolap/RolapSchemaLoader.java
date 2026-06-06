@@ -5057,10 +5057,93 @@ public class RolapSchemaLoader {
                             getAccess(memberGrant.access, memberAllowed));
                     }
                 }
+                // #106: predicate-based row-security grants. Validated here
+                // (boundary) so a misconfigured schema fails loudly at load
+                // time, never silently at query time.
+                if (cubeGrant.predicateGrants != null) {
+                    for (MondrianDef.PredicateGrant predicateGrant
+                        : cubeGrant.predicateGrants)
+                    {
+                        grantPredicate(role, cube, predicateGrant);
+                    }
+                }
             }
         }
         role.makeImmutable();
         return new RolapSchema.ConstantRoleFactory(role);
+    }
+
+    /**
+     * #106: validates and registers a single {@code <PredicateGrant>} on the
+     * role. Enforces, at load time:
+     * <ul>
+     *   <li>the named measure group exists in the cube;</li>
+     *   <li>the column is a {@link RolapSchema.PhysRealColumn} on that measure
+     *       group's FACT relation (rejecting dimension / snowflake columns so
+     *       the predicate stays on the fact grain, pre-aggregation);</li>
+     *   <li>the operator parses ({@code eq} | {@code in});</li>
+     *   <li>the bound parameter is a declared {@code <QueryParameter>}.</li>
+     * </ul>
+     */
+    private void grantPredicate(
+        RoleImpl role,
+        RolapCube cube,
+        MondrianDef.PredicateGrant predicateGrant)
+    {
+        final String mgName = predicateGrant.measureGroup;
+        RolapMeasureGroup measureGroup = null;
+        for (RolapMeasureGroup mg : cube.getMeasureGroups()) {
+            if (mg.getName().equals(mgName)) {
+                measureGroup = mg;
+                break;
+            }
+        }
+        if (measureGroup == null) {
+            throw Util.newError(
+                "<PredicateGrant> references unknown measure group '"
+                + mgName + "' in cube '" + cube.getName() + "'");
+        }
+
+        // Column must be a real physical column on the FACT relation — not a
+        // dimension/snowflake column — so the predicate filters fact rows at
+        // the grain, before aggregation.
+        final String colName = predicateGrant.column;
+        RolapSchema.PhysRelation factRelation = measureGroup.getFactRelation();
+        RolapSchema.PhysColumn physColumn =
+            factRelation.getColumn(colName, false);
+        if (!(physColumn instanceof RolapSchema.PhysRealColumn)) {
+            throw Util.newError(
+                "<PredicateGrant> column '" + colName + "' is not a real "
+                + "column on the fact relation of measure group '" + mgName
+                + "' in cube '" + cube.getName() + "'; predicate grants must "
+                + "filter a real fact column at the fact grain.");
+        }
+
+        final PredicateGrant.Operator operator =
+            PredicateGrant.Operator.parse(predicateGrant.operator);
+
+        final String paramName = predicateGrant.parameter;
+        if (!schema.getQueryParameterDefs().containsKey(paramName)) {
+            throw Util.newError(
+                "<PredicateGrant> references undeclared query parameter '"
+                + paramName + "'; declare a <QueryParameter name='" + paramName
+                + "'> in the schema.");
+        }
+
+        role.grant(
+            predicateGrantKey(cube.getName(), mgName),
+            new PredicateGrant(mgName, colName, operator, paramName));
+    }
+
+    /**
+     * #106: the fully-qualified measure-group identity used to key predicate
+     * grants — {@code cubeName + '.' + measureGroupName}. Must match the key
+     * the injection chokepoint
+     * ({@code CalcitePlannerAdapters.predicateGrantKey}) computes from a live
+     * {@link RolapMeasureGroup}.
+     */
+    static String predicateGrantKey(String cubeName, String measureGroupName) {
+        return cubeName + "." + measureGroupName;
     }
 
     private RolapSchema.RoleFactory createUnionRole(

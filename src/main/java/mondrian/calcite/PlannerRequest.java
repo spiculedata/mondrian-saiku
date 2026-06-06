@@ -335,14 +335,19 @@ public final class PlannerRequest {
             this.literals = java.util.Collections.unmodifiableList(
                 new java.util.ArrayList<>(literals));
             this.paramRef = paramRef;
-            if (op == Operator.EQ && this.literals.size() != 1) {
-                throw new IllegalArgumentException(
-                    "EQ filter requires exactly one literal; got "
-                    + this.literals.size());
-            }
-            if (op == Operator.IN && this.literals.isEmpty()) {
-                throw new IllegalArgumentException(
-                    "IN filter requires at least one literal");
+            // A parameter-bound filter holds a single placeholder regardless
+            // of op (EQ or IN); the real value(s) are resolved at render
+            // time. So bypass the literal-count invariants when paramRef set.
+            if (paramRef == null) {
+                if (op == Operator.EQ && this.literals.size() != 1) {
+                    throw new IllegalArgumentException(
+                        "EQ filter requires exactly one literal; got "
+                        + this.literals.size());
+                }
+                if (op == Operator.IN && this.literals.isEmpty()) {
+                    throw new IllegalArgumentException(
+                        "IN filter requires at least one literal");
+                }
             }
         }
         /** #105: sentinel literal held by a parameter-bound filter so the
@@ -356,6 +361,20 @@ public final class PlannerRequest {
             }
             return new Filter(
                 column, Operator.EQ,
+                java.util.Collections.singletonList(PARAM_PLACEHOLDER),
+                paramRef);
+        }
+        /** #106: build an IN filter whose membership set is bound to a declared
+         *  query parameter (a comma-separated session value), each token
+         *  coerced+validated at render time. The single placeholder keeps the
+         *  literals list non-empty; the real set is resolved off the
+         *  request's {@link PlannerRequest#paramContext}. */
+        public static Filter boundToParamIn(Column column, String paramRef) {
+            if (paramRef == null || paramRef.isEmpty()) {
+                throw new IllegalArgumentException("paramRef required");
+            }
+            return new Filter(
+                column, Operator.IN,
                 java.util.Collections.singletonList(PARAM_PLACEHOLDER),
                 paramRef);
         }
