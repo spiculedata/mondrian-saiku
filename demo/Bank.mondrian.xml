@@ -128,4 +128,35 @@
     </MeasureGroups>
   </Cube>
 
+  <!-- =================================================================
+       Cube 3 — Account Statistics. A plain star (no bridge) over the same
+       fact, showing the non-additive leaf aggregators median / percentile
+       (#104). Computed at the queried grain via PERCENTILE_CONT; requires
+       the Calcite backend on a PERCENTILE_CONT-capable database (the demo's
+       H2 datasource qualifies).
+       ================================================================= -->
+  <Cube name="Account Statistics">
+    <Dimensions>
+      <Dimension source="Branch"/>
+      <Dimension source="Date"/>
+    </Dimensions>
+    <MeasureGroups>
+      <MeasureGroup name="Balances" table="mm_fact">
+        <Measures>
+          <Measure name="Total Balance" column="balance" aggregator="sum"
+                   formatString="#,###"/>
+          <Measure name="Median Balance" column="balance"
+                   aggregator="median" formatString="#,###"/>
+          <Measure name="P90 Balance" column="balance"
+                   aggregator="percentile" percentile="90"
+                   formatString="#,###"/>
+        </Measures>
+        <DimensionLinks>
+          <ForeignKeyLink dimension="Branch" foreignKeyColumn="branch_id"/>
+          <ForeignKeyLink dimension="Date" foreignKeyColumn="date_key"/>
+        </DimensionLinks>
+      </MeasureGroup>
+    </MeasureGroups>
+  </Cube>
+
 </Schema>

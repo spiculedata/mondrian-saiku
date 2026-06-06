@@ -29,61 +29,87 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Issue #104: a FULL end-to-end proof — Mondrian → Calcite → H2 — that a
- * {@code median} / {@code percentile} measure returns the hand-computed
- * value when executed through the real engine on a backend that supports
- * {@code PERCENTILE_CONT} (H2). This is the scenario the demo runs (the
- * demo's datasource is H2), so it confirms the feature will work when
- * deployed, not just that the SQL is shaped correctly.
+ * Issue #104: a FULL end-to-end proof — Mondrian → Calcite → H2 — of the
+ * shipped demo cube. The Bank demo's "Account Statistics" cube uses the
+ * non-additive {@code median} / {@code percentile} aggregators over the
+ * {@code mm_fact} accounts, and the demo runs on H2 (which supports
+ * {@code PERCENTILE_CONT}). This runs that exact cube through the real
+ * engine on H2, confirming the feature works when deployed — not just that
+ * the SQL is shaped correctly.
  *
  * <pre>
- *   region  amount
- *   North   10, 20, 30          median 20   p90 28
- *   South   5, 15, 25, 35       median 20   p90 32
+ *   branch  account balances             median   p90
+ *   London  1000, 500, 2000, 4000        1500     3400
+ *   Leeds   300, 1500, 700, 3000         1100     2550
  * </pre>
  */
 public class PercentileH2EndToEndTest {
 
     private static final String[] DDL = {
-        "DROP TABLE IF EXISTS \"stats_fact\"",
-        "DROP TABLE IF EXISTS \"stats_region\"",
-        "CREATE TABLE \"stats_region\" (\"region_id\" VARCHAR(8),"
-            + " \"region_name\" VARCHAR(16))",
-        "CREATE TABLE \"stats_fact\" (\"region_id\" VARCHAR(8),"
-            + " \"amount\" INTEGER)",
-        "INSERT INTO \"stats_region\" VALUES ('N','North'),('S','South')",
-        "INSERT INTO \"stats_fact\" VALUES"
-            + " ('N',10),('N',20),('N',30),"
-            + " ('S',5),('S',15),('S',25),('S',35)",
+        "DROP TABLE IF EXISTS \"mm_fact\"",
+        "DROP TABLE IF EXISTS \"mm_branch\"",
+        "DROP TABLE IF EXISTS \"mm_date\"",
+        "CREATE TABLE \"mm_branch\" (\"branch_id\" VARCHAR(8),"
+            + " \"branch_name\" VARCHAR(16))",
+        "CREATE TABLE \"mm_date\" (\"date_key\" INTEGER, \"yr\" INTEGER)",
+        "CREATE TABLE \"mm_fact\" (\"account_id\" INTEGER,"
+            + " \"date_key\" INTEGER, \"branch_id\" VARCHAR(8),"
+            + " \"balance\" INTEGER, \"fees\" INTEGER)",
+        "INSERT INTO \"mm_branch\" VALUES ('LON','London'),('LDS','Leeds')",
+        "INSERT INTO \"mm_date\" VALUES (2024,2024),(2025,2025)",
+        "INSERT INTO \"mm_fact\" VALUES"
+            + " (1,2024,'LON',1000,10),(2,2024,'LON',500,5),"
+            + " (3,2025,'LDS',300,3),(4,2024,'LON',2000,20),"
+            + " (5,2024,'LDS',1500,15),(6,2025,'LDS',700,7),"
+            + " (7,2025,'LON',4000,40),(8,2025,'LDS',3000,30)",
     };
 
+    /** The Account Statistics cube from the shipped Bank demo schema. */
     private static final String SCHEMA =
-        "<Schema name='Stats' metamodelVersion='4.0'>\n"
+        "<Schema name='Bank' metamodelVersion='4.0'>\n"
         + "  <PhysicalSchema>\n"
-        + "    <Table name='stats_fact'/>\n"
-        + "    <Table name='stats_region'/>\n"
+        + "    <Table name='mm_fact'/>\n"
+        + "    <Table name='mm_branch'/>\n"
+        + "    <Table name='mm_date'/>\n"
         + "  </PhysicalSchema>\n"
-        + "  <Dimension name='Region' table='stats_region' key='Region'>\n"
-        + "    <Attributes>\n"
-        + "      <Attribute name='Region'>\n"
-        + "        <Key><Column name='region_id'/></Key>\n"
-        + "        <Name><Column name='region_name'/></Name>\n"
-        + "      </Attribute>\n"
-        + "    </Attributes>\n"
+        + "  <Dimension name='Branch' table='mm_branch' key='Branch'>\n"
+        + "    <Attributes><Attribute name='Branch'>\n"
+        + "      <Key><Column name='branch_id'/></Key>\n"
+        + "      <Name><Column name='branch_name'/></Name>\n"
+        + "    </Attribute></Attributes>\n"
         + "  </Dimension>\n"
-        + "  <Cube name='Stats'>\n"
-        + "    <Dimensions><Dimension source='Region'/></Dimensions>\n"
+        + "  <Dimension name='Date' table='mm_date' key='Date Id'"
+        + " type='TIME'>\n"
+        + "    <Attributes>\n"
+        + "      <Attribute name='Date Id' hasHierarchy='false'>"
+        + "<Key><Column name='date_key'/></Key></Attribute>\n"
+        + "      <Attribute name='Year' levelType='TimeYears'"
+        + " hasHierarchy='false'><Key><Column name='yr'/></Key></Attribute>\n"
+        + "    </Attributes>\n"
+        + "    <Hierarchies>"
+        + "<Hierarchy name='Calendar' allMemberName='All Years'>"
+        + "<Level attribute='Year'/></Hierarchy></Hierarchies>\n"
+        + "  </Dimension>\n"
+        + "  <Cube name='Account Statistics'>\n"
+        + "    <Dimensions>\n"
+        + "      <Dimension source='Branch'/>\n"
+        + "      <Dimension source='Date'/>\n"
+        + "    </Dimensions>\n"
         + "    <MeasureGroups>\n"
-        + "      <MeasureGroup name='Amounts' table='stats_fact'>\n"
+        + "      <MeasureGroup name='Balances' table='mm_fact'>\n"
         + "        <Measures>\n"
-        + "          <Measure name='Median Amount' column='amount'"
+        + "          <Measure name='Total Balance' column='balance'"
+        + " aggregator='sum'/>\n"
+        + "          <Measure name='Median Balance' column='balance'"
         + " aggregator='median'/>\n"
-        + "          <Measure name='P90 Amount' column='amount'"
+        + "          <Measure name='P90 Balance' column='balance'"
         + " aggregator='percentile' percentile='90'/>\n"
         + "        </Measures>\n"
         + "        <DimensionLinks>\n"
-        + "          <ForeignKeyLink dimension='Region'"
-        + " foreignKeyColumn='region_id'/>\n"
+        + "          <ForeignKeyLink dimension='Branch'"
+        + " foreignKeyColumn='branch_id'/>\n"
+        + "          <ForeignKeyLink dimension='Date'"
+        + " foreignKeyColumn='date_key'/>\n"
         + "        </DimensionLinks>\n"
         + "      </MeasureGroup>\n"
         + "    </MeasureGroups>\n"
@@ -132,7 +158,7 @@ public class PercentileH2EndToEndTest {
         }
     }
 
-    /** "region|measure" → value. */
+    /** "row|col" → value. */
     private Map<String, Double> grid(String mdx) {
         Query q = conn.parseQuery(mdx);
         Result r = conn.execute(q);
@@ -155,16 +181,18 @@ public class PercentileH2EndToEndTest {
         return out;
     }
 
+    /** The shipped Account Statistics cube: median + p90 balance by branch,
+     *  executed through the full engine on H2. */
     @Test
-    public void medianAndPercentileByRegion() {
+    public void medianAndPercentileByBranch() {
         Map<String, Double> g = grid(
-            "SELECT {[Measures].[Median Amount], [Measures].[P90 Amount]}"
+            "SELECT {[Measures].[Median Balance], [Measures].[P90 Balance]}"
             + " ON COLUMNS,\n"
-            + " [Region].[Region].Members ON ROWS\n"
-            + "FROM [Stats]");
-        assertEquals(20.0, g.get("North|Median Amount"), 0.001);
-        assertEquals(28.0, g.get("North|P90 Amount"), 0.001);
-        assertEquals(20.0, g.get("South|Median Amount"), 0.001);
-        assertEquals(32.0, g.get("South|P90 Amount"), 0.001);
+            + " [Branch].[Branch].Members ON ROWS\n"
+            + "FROM [Account Statistics]");
+        assertEquals(1500.0, g.get("London|Median Balance"), 0.001);
+        assertEquals(3400.0, g.get("London|P90 Balance"), 0.001);
+        assertEquals(1100.0, g.get("Leeds|Median Balance"), 0.001);
+        assertEquals(2550.0, g.get("Leeds|P90 Balance"), 0.001);
     }
 }
