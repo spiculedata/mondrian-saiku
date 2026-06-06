@@ -214,30 +214,62 @@ final class FieldClassifier {
   /**
    * Classifies any Liquid the field carries: empty if there is none; a DEGRADE
    * record routed to the matched bounded mapping; or a {@code REFUSE_LIQUID}
-   * record naming why it is arbitrary. A field is bounded only if EVERY Liquid
-   * fragment it carries is bounded — any arbitrary fragment refuses the field.
+   * record naming why it is arbitrary.
+   *
+   * <p>Arbitrary (computed) Liquid only refuses when it sits in a SQL /
+   * predicate / filter key, where it would shape engine SQL. The same Liquid
+   * in a <em>presentation-only</em> key ({@code label} / {@code html} /
+   * {@code value_format}) never reaches engine SQL, so it is dropped and the
+   * field DEGRADEs instead of refusing the whole field
+   * ({@link LookmlKeywords#LIQUID_PRESENTATION_KEYS}). A bounded fragment in
+   * any key routes to its DEGRADE mapping as before.
    */
   private Optional<CoverageRecord> classifyLiquid(String qn, LookmlNode field) {
-    boolean any = false;
     LiquidPattern.Kind routed = null;
     String routedFragment = null;
+    boolean presentationOnlyLiquid = false;
     for (String key : LookmlKeywords.LIQUID_SCAN_KEYS) {
+      final boolean presentationKey =
+          LookmlKeywords.LIQUID_PRESENTATION_KEYS.contains(key);
       for (Value v : field.values(key)) {
         for (String fragment : liquidFragments(v)) {
-          any = true;
           final LiquidPattern.Kind kind = liquidKind(fragment);
           if (kind == LiquidPattern.Kind.ARBITRARY) {
-            return Optional.of(refusalLiquid(qn, field, fragment));
+            if (!presentationKey) {
+              return Optional.of(refusalLiquid(qn, field, fragment));
+            }
+            // Arbitrary Liquid in a presentation-only key: dropped, not routed.
+            presentationOnlyLiquid = true;
+            continue;
           }
           routed = kind;
           routedFragment = fragment;
         }
       }
     }
-    if (!any) {
-      return Optional.empty();
+    if (routed != null) {
+      return Optional.of(boundedLiquid(qn, field, routed, routedFragment));
     }
-    return Optional.of(boundedLiquid(qn, field, routed, routedFragment));
+    if (presentationOnlyLiquid) {
+      return Optional.of(presentationLiquidDegrade(qn, field));
+    }
+    return Optional.empty();
+  }
+
+  /** A DEGRADE record for arbitrary Liquid confined to a presentation-only key
+   * (label / html / value_format): the templated presentation fragment is
+   * dropped, but the field still emits — it never shaped engine SQL (#118). */
+  private CoverageRecord presentationLiquidDegrade(String qn,
+      LookmlNode field) {
+    return CoverageRecord.builder(Scope.FIELD, qn,
+            ReasonCode.DEGRADE_LIQUID_BOUNDED,
+            "field `" + simpleName(field) + "` carries computed Liquid only in "
+                + "a presentation-only key (label/html/value_format); it never "
+                + "shapes engine SQL, so the templated fragment is dropped and "
+                + "the field is emitted without it (#118)")
+        .producedM4("emitted (presentation Liquid dropped)")
+        .lostCapability("templated presentation fragment dropped")
+        .build();
   }
 
   /** Recognises the Liquid {@link LiquidPattern.Kind} of one fragment, but only
