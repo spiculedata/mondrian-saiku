@@ -71,6 +71,7 @@ public final class M4YamlToXml {
             schema.caption = str(sm.get("caption"));
             schema.description = str(sm.get("description"));
             schema.measuresCaption = str(sm.get("measures_caption"));
+            schema.missingLink = str(sm.get("missing_link"));
         } else {
             schema.name = str(schemaNode);
         }

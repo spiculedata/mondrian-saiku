@@ -72,6 +72,13 @@ public final class M4XmlToYaml {
         if (schema.measuresCaption != null) {
             header.put("measures_caption", schema.measuresCaption);
         }
+        // #110: missingLink (default "warning"); emit only when set to a
+        // non-default value so an omitted attribute is not materialised.
+        if (schema.missingLink != null
+            && !"warning".equals(schema.missingLink))
+        {
+            header.put("missing_link", schema.missingLink);
+        }
         root.put("schema", header);
 
         if (schema.childArray != null) {

@@ -66,7 +66,8 @@ public class M4ConverterFidelityTest {
 
     private static final String DISPLAY_XML =
         "<Schema name='Probe' metamodelVersion='4.0' caption='Schema Caption'"
-        + " description='Schema Desc' measuresCaption='MeasuresCap'>"
+        + " description='Schema Desc' measuresCaption='MeasuresCap'"
+        + " missingLink='ignore'>"
         + "<PhysicalSchema>"
         + "<Table name='f'><Key><Column name='id'/></Key></Table>"
         + "<Table name='d'/>"
@@ -100,6 +101,7 @@ public class M4ConverterFidelityTest {
         assertTrue(back, back.contains("caption=\"Schema Caption\""));
         assertTrue(back, back.contains("description=\"Schema Desc\""));
         assertTrue(back, back.contains("measuresCaption=\"MeasuresCap\""));
+        assertTrue(back, back.contains("missingLink=\"ignore\""));
         // Cube
         assertTrue(back, back.contains("caption=\"Cube Caption\""));
         assertTrue(back, back.contains("description=\"Cube Desc\""));
