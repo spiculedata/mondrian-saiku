@@ -3720,7 +3720,7 @@ public final class CalcitePlannerAdapters {
         RolapStar.Measure measure, RolapStar star)
     {
         mondrian.olap.Role role = activeRole();
-        if (role == null || !role.hasPredicateGrants() || measure == null) {
+        if (role == null || measure == null) {
             return "";
         }
         String cubeName = measure.getCubeName();
@@ -3734,20 +3734,119 @@ public final class CalcitePlannerAdapters {
         mondrian.calcite.QueryParameterContext paramContext =
             activeParamContext();
         StringBuilder sb = new StringBuilder();
+        final boolean hasPredicateGrants = role.hasPredicateGrants();
         for (RolapMeasureGroup mg : ((RolapCube) cube).getMeasureGroups()) {
             if (!measureGroupOwnsMeasure(mg, measure)) {
                 continue;
             }
-            String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
-            for (mondrian.olap.PredicateGrant grant
-                : role.getPredicateGrants(key))
-            {
-                sb.append("|pg:").append(grant.getColumn())
-                    .append(':').append(grant.getOperator()).append('=');
-                appendResolvedGrantValue(sb, grant, paramContext);
+            if (hasPredicateGrants) {
+                String key =
+                    predicateGrantKey(mg.getCube().getName(), mg.getName());
+                for (mondrian.olap.PredicateGrant grant
+                    : role.getPredicateGrants(key))
+                {
+                    sb.append("|pg:").append(grant.getColumn())
+                        .append(':').append(grant.getOperator()).append('=');
+                    appendResolvedGrantValue(sb, grant, paramContext);
+                }
             }
+            // #107: fold the active role's bridge member-grant constraint for
+            // this measure group into the SAME key, so a bridge [All]/aggregate
+            // whose VALUE depends on the role's visible-member set is never
+            // cross-served to a role with a different visible set (cross-role
+            // bleed). The #107 SQL fix (applyBridgeMemberGrant) constrains the
+            // fan-out below the aggregate but does NOT touch cache identity;
+            // this closes that residual. Contributes nothing when the role
+            // grants ALL access (or the MG has no bridge), keeping unsecured
+            // keys byte-identical.
+            appendBridgeMemberGrantKey(sb, mg, role);
         }
         return sb.toString();
+    }
+
+    /**
+     * #107 cache isolation: append a DETERMINISTIC representation of the active
+     * role's visible bridge-member-key SET (per restricted bridge dimension on
+     * {@code mg}) to the security cache key. Mirrors EXACTLY the decision logic
+     * of {@link #applyBridgeMemberGrant} so cache identity tracks the segment
+     * VALUE the SQL constraint produces:
+     *
+     * <ul>
+     *   <li><b>ALL access</b> (or no bridge): contributes nothing — the SQL
+     *       path applies no constraint, so the value is identical to an
+     *       unsecured load and may safely share its cache slot.</li>
+     *   <li><b>Restricted (CUSTOM)</b>: contributes a stable, SORTED list of
+     *       the role's visible member keys — two roles with the SAME visible
+     *       set share the segment; different sets get distinct identities.</li>
+     *   <li><b>None visible / deny / unresolvable</b>: a distinct
+     *       {@code <deny>} marker — the SQL path fails closed (zero rows), and
+     *       this marker keeps that fail-closed segment from ever being served
+     *       to (or from) a role with visible members.</li>
+     * </ul>
+     */
+    private static void appendBridgeMemberGrantKey(
+        StringBuilder sb,
+        RolapMeasureGroup mg,
+        mondrian.olap.Role role)
+    {
+        if (mg.getBridgeDimensions().isEmpty()) {
+            return;
+        }
+        mondrian.olap.SchemaReader reader = activeSchemaReader();
+        for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+            RolapMeasureGroup.BridgeInfo info = mg.getBridgeInfo(bridgeDim);
+            if (info == null) {
+                continue;
+            }
+            // Resolve the securing hierarchy exactly as applyBridgeMemberGrant.
+            mondrian.olap.Hierarchy restricted = null;
+            boolean anyNone = false;
+            for (mondrian.olap.Hierarchy h : bridgeDim.getHierarchies()) {
+                mondrian.olap.Access a = role.getAccess(h);
+                if (a == mondrian.olap.Access.NONE) {
+                    anyNone = true;
+                } else if (a != mondrian.olap.Access.ALL) {
+                    restricted = h;
+                    break;
+                }
+            }
+            if (restricted == null) {
+                if (anyNone) {
+                    // Entire bridge dimension hidden → SQL fails closed.
+                    sb.append("|bmg:")
+                        .append(mg.getCube().getName()).append('.')
+                        .append(mg.getName()).append(':')
+                        .append(bridgeDim.getName()).append("=<deny>");
+                }
+                // ALL access everywhere → unsecured → contribute nothing.
+                continue;
+            }
+            // Restricted hierarchy: append the visible member-key set (or a
+            // deny marker when it cannot be resolved / is empty), matching the
+            // SQL path's fail-closed semantics.
+            sb.append("|bmg:")
+                .append(mg.getCube().getName()).append('.')
+                .append(mg.getName()).append(':')
+                .append(bridgeDim.getName()).append('=');
+            java.util.List<Object> visibleKeys = reader == null
+                ? null
+                : visibleBridgeKeyValues(restricted, role, reader);
+            if (visibleKeys == null || visibleKeys.isEmpty()) {
+                // null → unresolvable (SQL denies); empty → no visible members
+                // (SQL denies). Either way a distinct fail-closed marker.
+                sb.append("<deny>");
+                continue;
+            }
+            // Sort a stable string view of the keys for a deterministic
+            // identity independent of member enumeration order.
+            java.util.List<String> sorted =
+                new java.util.ArrayList<String>(visibleKeys.size());
+            for (Object k : visibleKeys) {
+                sorted.add(String.valueOf(k));
+            }
+            java.util.Collections.sort(sorted);
+            sb.append(sorted);
+        }
     }
 
     /** #106: append the resolved value(s) of a predicate grant to the cache
