@@ -86,9 +86,10 @@ class LookmlClassifierTest {
   // --- fan-out / symmetric aggregate ------------------------------------
 
   /** A sum measure on the ONE side of a one_to_many the explore fans out is
-   * symmetric-aggregate-dependent: REFUSE. A count_distinct on the same view
-   * is fan-out safe: NOT refused. */
-  @Test void sumOnOneSideOfOneToManyRefusedButCountDistinctSafe() {
+   * now CLEAN when the fact declares a primary key: symmetric (fan-out-safe)
+   * aggregation shipped (#103), and the declared grain lets the engine
+   * pre-aggregate. A count_distinct is always fan-out safe: CLEAN. */
+  @Test void sumOnOneSideOfOneToManyWithPkIsCleanViaSymmetricAggregate() {
     final String lookml = ""
         + "explore: orders {\n"
         + "  join: items {\n"
@@ -98,6 +99,8 @@ class LookmlClassifierTest {
         + "  }\n"
         + "}\n"
         + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
         + "  measure: revenue {\n"
         + "    type: sum\n"
         + "    sql: ${TABLE}.amount ;;\n"
@@ -112,13 +115,33 @@ class LookmlClassifierTest {
     final ClassificationResult r = classify(lookml);
 
     final CoverageRecord rev = record(r, "orders.revenue");
-    assertEquals(Classification.REFUSE, rev.classification());
-    assertEquals(ReasonCode.REFUSE_FANOUT_SYMMETRIC_AGGREGATE,
-        rev.reasonCode());
-    assertEquals("#103", rev.relatedIssue().orElseThrow());
+    assertEquals(Classification.CLEAN, rev.classification());
 
     final CoverageRecord cd = record(r, "orders.distinct_customers");
     assertEquals(Classification.CLEAN, cd.classification());
+  }
+
+  /** A fan-out additive aggregate with NO declared fact primary key stays
+   * REFUSE: without a grain to pre-aggregate the symmetric path cannot fire,
+   * so emitting the sum would be silently wrong. */
+  @Test void sumOnOneSideOfOneToManyWithoutPkStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  join: items {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${orders.id} = ${items.order_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders {\n"
+        + "  measure: revenue { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: items { dimension: order_id { type: number } }\n";
+
+    final CoverageRecord rev = record(classify(lookml), "orders.revenue");
+    assertEquals(Classification.REFUSE, rev.classification());
+    assertEquals(ReasonCode.REFUSE_FANOUT_SYMMETRIC_AGGREGATE,
+        rev.reasonCode());
   }
 
   // --- non-star topology -------------------------------------------------
@@ -187,10 +210,162 @@ class LookmlClassifierTest {
         record(r, "orders.plain_rev").classification());
   }
 
+  // --- bounded Liquid (#118) --------------------------------------------
+
+  /** A {{ _user_attributes['region'] }} reference in a measure filter is a
+   * bounded user-attribute pattern: DEGRADE routed to a session.region
+   * parameter (#118), not REFUSE_LIQUID. */
+  @Test void userAttributeLiquidInFilterDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: regional_rev {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "    filters: [region: \"{{ _user_attributes['region'] }}\"]\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.regional_rev");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED, rec.reasonCode());
+    assertEquals("#118", rec.relatedIssue().orElseThrow());
+  }
+
+  /** A {{ _user_attributes._region }} dotted reference is equally bounded. */
+  @Test void userAttributeDottedLiquidDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: tenant {\n"
+        + "    sql: {{ _user_attributes._tenant_id }} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED,
+        record(classify(lookml), "orders.tenant").reasonCode());
+  }
+
+  /** A {% parameter region %} use of a DECLARED bounded parameter is bounded:
+   * DEGRADE (field-switching maps to a Saiku-layer WITH MEMBER, #118). */
+  @Test void parameterUseOfDeclaredParameterDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  parameter: region { type: unquoted\n"
+        + "    allowed_value: { value: \"east\" } }\n"
+        + "  dimension: dyn {\n"
+        + "    sql: {% parameter region %} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.dyn");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED, rec.reasonCode());
+    // and the declaration itself is still CLEAN (#105).
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.region").classification());
+  }
+
+  /** A {% parameter X %} use of an UNDECLARED parameter cannot be resolved to a
+   * bounded enumeration, so it stays REFUSE_LIQUID (the safety boundary). */
+  @Test void parameterUseOfUndeclaredParameterStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: dyn { sql: {% parameter mystery %} ;; }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.dyn").reasonCode());
+  }
+
+  /** A {% condition %} filter tied to a field is a bounded parameter-bound
+   * filter: DEGRADE (#118). */
+  @Test void conditionTagDegradesBounded() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: filtered {\n"
+        + "    type: sum\n"
+        + "    sql: SUM({% condition date_filter %} ${TABLE}.amount "
+        + "{% endcondition %}) ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.DEGRADE_LIQUID_BOUNDED,
+        record(classify(lookml), "orders.filtered").reasonCode());
+  }
+
+  /** Computed Liquid control flow ({% if %}) producing SQL stays REFUSE_LIQUID
+   * — the safety boundary that prevents silently-wrong emits (#118). */
+  @Test void computedIfLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: computed {\n"
+        + "    type: sum\n"
+        + "    sql: {% if _user_attributes['x'] == 'a' %} ${TABLE}.a "
+        + "{% else %} ${TABLE}.b {% endif %} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.computed");
+    assertEquals(Classification.REFUSE, rec.classification());
+    assertEquals(ReasonCode.REFUSE_LIQUID, rec.reasonCode());
+  }
+
+  /** An arithmetic / field-value {{ }} output is computed, not a bounded
+   * user-attribute reference: stays REFUSE_LIQUID. */
+  @Test void arithmeticOutputLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: m {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount * {{ value }} ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.m").reasonCode());
+  }
+
+  /** A field mixing a bounded user-attribute ref with arbitrary control flow is
+   * refused as a whole (any arbitrary fragment refuses the field). */
+  @Test void mixedBoundedAndArbitraryLiquidStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: m {\n"
+        + "    type: sum\n"
+        + "    sql: {{ _user_attributes['x'] }} ;;\n"
+        + "    filters: [y: \"{% if z %}a{% endif %}\"]\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_LIQUID,
+        record(classify(lookml), "orders.m").reasonCode());
+  }
+
+  /** ${TABLE}.col is NOT Liquid and is unaffected — CLEAN (regression guard). */
+  @Test void tableRefIsNotLiquidAndStaysClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: rev { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.rev").classification());
+  }
+
   // --- per-field metadata refusals --------------------------------------
 
-  /** A parameter field is refused. */
-  @Test void parameterFieldRefused() {
+  /** A bounded parameter DECLARATION is now CLEAN: it maps to an M4
+   * {@code <QueryParameter>} (#105). (A parameter's USE inside {% parameter %}
+   * Liquid SQL is still caught as REFUSE_LIQUID on the using field.) */
+  @Test void parameterDeclarationIsClean() {
     final String lookml = ""
         + "explore: orders {}\n"
         + "view: orders {\n"
@@ -200,20 +375,64 @@ class LookmlClassifierTest {
         + "  }\n"
         + "}\n";
 
-    assertEquals(ReasonCode.REFUSE_PARAMETER_FIELD,
-        record(classify(lookml), "orders.metric_picker").reasonCode());
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.metric_picker").classification());
   }
 
-  /** type: median measure is refused. */
-  @Test void medianMeasureRefused() {
+  /** type: median measure now DEGRADEs (emitted as an M4 median aggregator,
+   * #104) with the PERCENTILE_CONT dialect caveat noted. */
+  @Test void medianMeasureDegradesWithDialectNote() {
     final String lookml = ""
         + "explore: orders {}\n"
         + "view: orders {\n"
         + "  measure: med { type: median sql: ${TABLE}.amount ;; }\n"
         + "}\n";
 
-    assertEquals(ReasonCode.REFUSE_MEDIAN_PERCENTILE,
-        record(classify(lookml), "orders.med").reasonCode());
+    final CoverageRecord rec = record(classify(lookml), "orders.med");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_PERCENTILE_DIALECT, rec.reasonCode());
+    assertEquals("#104", rec.relatedIssue().orElseThrow());
+  }
+
+  /** type: percentile measure DEGRADEs the same way (#104). */
+  @Test void percentileMeasureDegradesWithDialectNote() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: p90 { type: percentile percentile: 90"
+        + "    sql: ${TABLE}.amount ;; }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.DEGRADE_PERCENTILE_DIALECT,
+        record(classify(lookml), "orders.p90").reasonCode());
+  }
+
+  /** A type: tier dimension is CLEAN (maps to an M4 &lt;Tier&gt;, #108). */
+  @Test void tierDimensionIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: size_tier { type: tier tiers: [10, 100]\n"
+        + "    sql: ${TABLE}.units ;; }\n"
+        + "}\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.size_tier").classification());
+  }
+
+  /** A type: duration dimension_group is CLEAN (maps to &lt;Duration&gt;). */
+  @Test void durationDimensionGroupIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension_group: lead { type: duration\n"
+        + "    intervals: [day]\n"
+        + "    sql_start: ${TABLE}.order_date ;;\n"
+        + "    sql_end: ${TABLE}.ship_date ;; }\n"
+        + "}\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "orders.lead").classification());
   }
 
   /** type: list field is refused. */
@@ -226,6 +445,102 @@ class LookmlClassifierTest {
 
     assertEquals(ReasonCode.REFUSE_TYPE_LIST,
         record(classify(lookml), "orders.skus").reasonCode());
+  }
+
+  // --- sum_distinct / average_distinct (#117) ---------------------------
+
+  /** A sum_distinct whose sql_distinct_key resolves to the base view's own
+   * primary_key dimension de-duplicates on the fact grain — one row per key —
+   * so it equals a plain SUM and is CLEAN. Mapped to a symmetric-aggregate-safe
+   * SUM (#117 / #103). */
+  @Test void sumDistinctOnPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${id} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.total");
+    assertEquals(Classification.CLEAN, rec.classification());
+    assertEquals(ReasonCode.CLEAN, rec.reasonCode());
+  }
+
+  /** average_distinct keyed on the primary key is likewise CLEAN. */
+  @Test void averageDistinctOnPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: avg_amt {\n"
+        + "    type: average_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.order_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.avg_amt").reasonCode());
+  }
+
+  /** A sum_distinct whose sql_distinct_key is NOT the base view primary key
+   * (here a joined-view key) cannot be de-duplicated at measure level by the
+   * engine — a plain SUM would be silently wrong — so it stays REFUSE. */
+  @Test void sumDistinctOnNonPrimaryKeyStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${customer.sfid} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** A sum_distinct with no sql_distinct_key and no primary_key fallback stays
+   * REFUSE (no resolvable de-dup grain). */
+  @Test void sumDistinctWithNoResolvableKeyStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** A sum_distinct with no explicit sql_distinct_key falls back to the base
+   * view's primary_key dimension — CLEAN. */
+  @Test void sumDistinctFallsBackToPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.total").reasonCode());
   }
 
   // --- access_filter / access grants ------------------------------------
@@ -243,18 +558,22 @@ class LookmlClassifierTest {
     assertEquals(Classification.CLEAN,
         record(classify(clean), "explore:orders").classification());
 
+    // An access_filter on an arbitrary fact COLUMN now DEGRADEs: it maps to a
+    // <PredicateGrant> bound to a query-context parameter (#106).
     final String arbitrary = ""
         + "explore: orders {\n"
         + "  access_filter: {\n"
-        + "    field: orders.amount\n"
-        + "    user_attribute: max\n"
+        + "    field: orders.tenant_id\n"
+        + "    user_attribute: tenant_id\n"
         + "  }\n"
         + "}\n"
         + "view: orders {\n"
         + "  measure: amount { type: sum sql: ${TABLE}.amount ;; }\n"
         + "}\n";
-    assertEquals(ReasonCode.REFUSE_ARBITRARY_ACCESS_FILTER,
-        record(classify(arbitrary), "explore:orders").reasonCode());
+    final CoverageRecord rec = record(classify(arbitrary), "explore:orders");
+    assertEquals(Classification.DEGRADE, rec.classification());
+    assertEquals(ReasonCode.DEGRADE_PREDICATE_ROW_SECURITY, rec.reasonCode());
+    assertEquals("#106", rec.relatedIssue().orElseThrow());
   }
 
   /** required_access_grants on a field is refused. */

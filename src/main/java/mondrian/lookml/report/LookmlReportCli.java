@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.nio.file.FileVisitOption;
 
 /**
  * Issue #102: the end-user CLI for the LookML import coverage report — the
@@ -43,12 +44,16 @@ import java.util.stream.Stream;
  * </pre>
  *
  * <p>{@code <path>} is a single {@code .lkml} file or a directory of
- * {@code .lkml} files. For a directory every {@code .lkml} file is read and
- * their top-level objects are concatenated into one document for classification
- * (LookML's top level is a flat list of {@code view:} / {@code explore:} /
- * {@code model:} blocks). {@code include:} / {@code extends} / {@code @{}}
- * cross-file resolution is a documented v1 limitation (consistent with #100):
- * unresolved references are classified on their literal text.
+ * {@code .lkml} files. For a directory every {@code .lkml} file is discovered
+ * recursively ({@code Files.walk}) and parsed INDEPENDENTLY: parseable files
+ * have their top-level objects concatenated into one document for
+ * classification (LookML's top level is a flat list of {@code view:} /
+ * {@code explore:} / {@code model:} blocks); a file that fails to parse is
+ * collected under "Unparseable files" rather than aborting the whole batch; and
+ * {@code *.dashboard.lkml} files (YAML-structured dashboards) are skipped and
+ * listed under "Skipped files". {@code include:} / {@code extends} /
+ * {@code @{}} cross-file resolution is a documented v1 limitation (consistent
+ * with #100): unresolved references are classified on their literal text.
  *
  * <p>By default the Markdown report is printed to stdout; {@code -o} writes it
  * to a file and {@code --json} additionally writes the machine-readable JSON.
@@ -58,11 +63,13 @@ import java.util.stream.Stream;
  * <h3>Exit codes</h3>
  *
  * <ul>
- *   <li>{@code 0} — success (no refusals, or {@code --fail-on-refuse} absent)
- *       </li>
+ *   <li>{@code 0} — success, including PARTIAL success in directory mode (some
+ *       files unparseable but at least one parsed); the unparseable list is in
+ *       the report</li>
  *   <li>{@code 1} — bad arguments / unknown subcommand</li>
- *   <li>{@code 2} — missing/unreadable path or LookML parse failure, or a
- *       refusal with {@code --fail-on-refuse}</li>
+ *   <li>{@code 2} — missing/unreadable path, a single-file parse failure,
+ *       nothing parseable at all (empty dir / every file unparseable or
+ *       skipped), or a refusal with {@code --fail-on-refuse}</li>
  * </ul>
  */
 public final class LookmlReportCli {
@@ -113,9 +120,9 @@ public final class LookmlReportCli {
       return RC_BAD_ARGS;
     }
 
-    final String lookml;
+    final Ingest ingest;
     try {
-      lookml = readLookml(opts.path);
+      ingest = ingest(opts.path);
     } catch (java.nio.file.NoSuchFileException e) {
       err.println("error: cannot read " + opts.path + ": no such file");
       return RC_FAILURE;
@@ -125,12 +132,28 @@ public final class LookmlReportCli {
       return RC_FAILURE;
     }
 
+    // Nothing parseable at all -> hard failure (rc 2). For a directory this
+    // means every .lkml file was unparseable or skipped.
+    if (ingest.lookml.isBlank() && ingest.diagnostics.unparseable().isEmpty()
+        && ingest.diagnostics.skipped().isEmpty()) {
+      err.println("error: " + opts.path + " contains no " + LKML_SUFFIX
+          + " files");
+      return RC_FAILURE;
+    }
+    if (ingest.lookml.isBlank()) {
+      err.println("error: nothing parseable in " + opts.path + " ("
+          + ingest.diagnostics.unparseable().size() + " unparseable, "
+          + ingest.diagnostics.skipped().size() + " skipped)");
+      return RC_FAILURE;
+    }
+
     final CoverageReport coverage;
     try {
-      final LookmlNode doc = LookmlParser.parse(lookml);
+      final LookmlNode doc = LookmlParser.parse(ingest.lookml);
       final TranspileResult tr = new LookmlTranspiler().transpile(doc);
       coverage = CoverageReport.from(tr);
     } catch (LookmlParseException e) {
+      // Single-file mode (or a merged doc that still won't parse): graceful.
       err.println("error: failed to parse LookML at " + opts.path + ": "
           + rootMessage(e));
       return RC_FAILURE;
@@ -140,7 +163,7 @@ public final class LookmlReportCli {
       return RC_FAILURE;
     }
 
-    final int emitRc = emit(coverage, opts, out, err);
+    final int emitRc = emit(coverage, ingest.diagnostics, opts, out, err);
     if (emitRc != RC_OK) {
       return emitRc;
     }
@@ -154,9 +177,9 @@ public final class LookmlReportCli {
   }
 
   /** Writes the Markdown (stdout or {@code -o}) and any {@code --json}. */
-  private static int emit(CoverageReport coverage, Options opts,
-      PrintStream out, PrintStream err) {
-    final String markdown = new MarkdownReportWriter().write(coverage);
+  private static int emit(CoverageReport coverage, IngestDiagnostics diag,
+      Options opts, PrintStream out, PrintStream err) {
+    final String markdown = new MarkdownReportWriter().write(coverage, diag);
     if (opts.markdownOut != null) {
       try {
         Files.writeString(opts.markdownOut, markdown, StandardCharsets.UTF_8);
@@ -169,7 +192,7 @@ public final class LookmlReportCli {
       out.print(markdown);
     }
     if (opts.jsonOut != null) {
-      final String json = new JsonReportWriter().write(coverage);
+      final String json = new JsonReportWriter().write(coverage, diag);
       try {
         Files.writeString(opts.jsonOut, json, StandardCharsets.UTF_8);
       } catch (IOException e) {
@@ -181,36 +204,74 @@ public final class LookmlReportCli {
     return RC_OK;
   }
 
-  /**
-   * Reads LookML from a file, or merges every {@code .lkml} file in a
-   * directory (sorted by name for determinism) into one document by
-   * concatenation.
-   */
-  private static String readLookml(Path path) throws IOException {
-    if (Files.isDirectory(path)) {
-      return mergeDirectory(path);
+  /** The merged LookML text plus per-file ingest diagnostics. */
+  private static final class Ingest {
+    private final String lookml;
+    private final IngestDiagnostics diagnostics;
+
+    private Ingest(String lookml, IngestDiagnostics diagnostics) {
+      this.lookml = lookml;
+      this.diagnostics = diagnostics;
     }
-    return Files.readString(path, StandardCharsets.UTF_8);
   }
 
-  private static String mergeDirectory(Path dir) throws IOException {
+  /**
+   * Reads LookML from a single file, or from every {@code .lkml} file under a
+   * directory (recursively, sorted for determinism). In directory mode each
+   * file is parsed INDEPENDENTLY: parseable files are merged for
+   * classification, unparseable files are collected as diagnostics (never a
+   * hard abort), and {@code *.dashboard.lkml} files are skipped (issue #98).
+   */
+  private static Ingest ingest(Path path) throws IOException {
+    if (!Files.isDirectory(path)) {
+      return new Ingest(Files.readString(path, StandardCharsets.UTF_8),
+          IngestDiagnostics.none());
+    }
+    return ingestDirectory(path);
+  }
+
+  private static Ingest ingestDirectory(Path dir) throws IOException {
     final List<Path> files;
-    try (Stream<Path> walk = Files.list(dir)) {
+    try (Stream<Path> walk =
+        Files.walk(dir, FileVisitOption.FOLLOW_LINKS)) {
       files = walk
+          .filter(Files::isRegularFile)
           .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)
               .endsWith(LKML_SUFFIX))
           .sorted()
           .collect(Collectors.toList());
     }
-    if (files.isEmpty()) {
-      throw new java.nio.file.NoSuchFileException(
-          dir + " contains no " + LKML_SUFFIX + " files");
-    }
-    final StringBuilder sb = new StringBuilder();
+    final StringBuilder merged = new StringBuilder();
+    final List<IngestDiagnostics.Entry> unparseable = new ArrayList<>();
+    final List<IngestDiagnostics.Entry> skipped = new ArrayList<>();
     for (Path f : files) {
-      sb.append(Files.readString(f, StandardCharsets.UTF_8)).append('\n');
+      final String rel = dir.relativize(f).toString();
+      if (isDashboardFile(f)) {
+        skipped.add(new IngestDiagnostics.Entry(rel,
+            "dashboard LKML (YAML-structured) is not view/model/explore"));
+        continue;
+      }
+      final String text = Files.readString(f, StandardCharsets.UTF_8);
+      try {
+        // Parse independently so one bad file cannot abort the batch.
+        LookmlParser.parse(text);
+        merged.append(text).append('\n');
+      } catch (RuntimeException e) {
+        // LookmlParseException (a RuntimeException) and any other parse-time
+        // failure are collected, never propagated — one bad file must not
+        // abort the batch.
+        unparseable.add(new IngestDiagnostics.Entry(rel, rootMessage(e)));
+      }
     }
-    return sb.toString();
+    return new Ingest(merged.toString(),
+        IngestDiagnostics.of(unparseable, skipped));
+  }
+
+  /** True for {@code *.dashboard.lkml} (YAML-structured dashboards, leading
+   * {@code -}); these are not view/model/explore LookML and are skipped. */
+  private static boolean isDashboardFile(Path f) {
+    return f.getFileName().toString().toLowerCase(Locale.ROOT)
+        .endsWith(".dashboard" + LKML_SUFFIX);
   }
 
   private static String rootMessage(Throwable t) {

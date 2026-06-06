@@ -190,6 +190,85 @@ public class LookmlReportCliTest {
         stdout().contains("orders"));
   }
 
+  /** Issue #98 directory resilience: a directory with a good file, a nested
+   * good file, a deliberately broken file, and a {@code .dashboard.lkml} must
+   * (a) find the NESTED file's fields, (b) list the broken file under
+   * "Unparseable files", (c) skip the dashboard (listed under "Skipped
+   * files"), and (d) return rc 0 (partial success is not a failure). */
+  @Test
+  public void directoryResilienceMergesGoodFilesAndListsTheRest()
+      throws Exception {
+    Path dir = tmp.newFolder("project2").toPath();
+    // A good top-level file.
+    Files.writeString(dir.resolve("explores.lkml"),
+        "explore: orders { }\n", StandardCharsets.UTF_8);
+    // A good file in a NESTED subdir whose fields must be discovered.
+    Path sub = Files.createDirectories(dir.resolve("views/sub"));
+    Files.writeString(sub.resolve("nested.view.lkml"),
+        "view: nested_orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: nested_total { type: max sql: ${TABLE}.amount ;; }\n"
+        + "}\n",
+        StandardCharsets.UTF_8);
+    // A deliberately broken file.
+    Files.writeString(dir.resolve("broken.view.lkml"),
+        "view: broken { this is not valid lookml {{{\n",
+        StandardCharsets.UTF_8);
+    // A dashboard file that must be skipped, not parsed.
+    Files.writeString(dir.resolve("board.dashboard.lkml"),
+        "- dashboard: sales\n  title: Sales\n", StandardCharsets.UTF_8);
+
+    Path md = tmp.getRoot().toPath().resolve("r.md");
+    Path json = tmp.getRoot().toPath().resolve("r.json");
+    int rc = LookmlReportCli.run(
+        new String[] { "report", dir.toString(),
+            "-o", md.toString(), "--json", json.toString() },
+        outP, errP);
+
+    assertEquals("partial success must be rc 0; stderr=" + stderr(), 0, rc);
+    String mdText = Files.readString(md, StandardCharsets.UTF_8);
+    String jsonText = Files.readString(json, StandardCharsets.UTF_8);
+
+    // (a) nested file's field is discovered.
+    assertTrue("nested measure must be classified:\n" + mdText,
+        mdText.contains("nested_total"));
+    // (b) broken file is listed under Unparseable files (md + json).
+    assertTrue("unparseable section present:\n" + mdText,
+        mdText.contains("## Unparseable files"));
+    assertTrue("broken file listed:\n" + mdText,
+        mdText.contains("broken.view.lkml"));
+    assertTrue("json unparseable list:\n" + jsonText,
+        jsonText.contains("\"unparseableFiles\"")
+            && jsonText.contains("broken.view.lkml"));
+    // (c) dashboard skipped, not unparseable.
+    assertTrue("skipped section present:\n" + mdText,
+        mdText.contains("## Skipped files"));
+    assertTrue("dashboard listed as skipped:\n" + mdText,
+        mdText.contains("board.dashboard.lkml"));
+    assertTrue("json skipped list:\n" + jsonText,
+        jsonText.contains("\"skippedFiles\"")
+            && jsonText.contains("board.dashboard.lkml"));
+    // The dashboard must NOT appear in the unparseable list.
+    int unparseAt = jsonText.indexOf("\"unparseableFiles\"");
+    int skipAt = jsonText.indexOf("\"skippedFiles\"");
+    assertTrue("dashboard must not be in the unparseable list",
+        jsonText.substring(unparseAt, skipAt).indexOf("board.dashboard")
+            < 0);
+  }
+
+  /** A directory in which every {@code .lkml} file is unparseable (and none
+   * skipped-only) yields rc 2 — nothing classifiable. */
+  @Test
+  public void directoryWithOnlyUnparseableFilesReturnsRcTwo()
+      throws Exception {
+    Path dir = tmp.newFolder("project3").toPath();
+    Files.writeString(dir.resolve("a.view.lkml"),
+        "view: a { not valid {{{\n", StandardCharsets.UTF_8);
+    int rc = LookmlReportCli.run(
+        new String[] { "report", dir.toString() }, outP, errP);
+    assertEquals("no parseable content -> rc 2; stderr=" + stderr(), 2, rc);
+  }
+
   @Test
   public void unknownSubcommandPrintsUsageRcOne() {
     int rc = LookmlReportCli.run(new String[] { "bogus" }, outP, errP);

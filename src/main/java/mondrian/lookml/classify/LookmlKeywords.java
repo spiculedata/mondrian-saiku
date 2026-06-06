@@ -43,7 +43,9 @@ final class LookmlKeywords {
   static final String FROM = "from";
   static final String VIEW_NAME = "view_name";
   static final String FIELD = "field";
+  static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
+  static final String SQL_DISTINCT_KEY = "sql_distinct_key";
   static final String LABEL = "label";
   static final String HTML = "html";
   static final String SQL = "sql";
@@ -69,17 +71,45 @@ final class LookmlKeywords {
   static final ImmutableSet<String> ADDITIVE_AGGREGATE_TYPES =
       ImmutableSet.of("sum", "average", "avg", "count");
 
-  // --- measure types that are refused outright ----------------------------
+  // --- percentile-family measure types now supported via #104 -------------
+  // (median / percentile map to an M4 aggregator that needs a
+  // PERCENTILE_CONT-capable backend, so they DEGRADE rather than REFUSE).
+  static final String TYPE_MEDIAN = "median";
+  static final String TYPE_PERCENTILE = "percentile";
+  static final ImmutableSet<String> PERCENTILE_FAMILY_TYPES =
+      ImmutableSet.of(TYPE_MEDIAN, TYPE_PERCENTILE);
+
+  // --- distinct-key aggregators mapped via #117 ---------------------------
+  // sum_distinct / average_distinct de-duplicate on a sql_distinct_key before
+  // aggregating. When that key resolves to the base view's primary key (one
+  // row per key in the fact), the de-dup is a no-op and the measure maps to a
+  // plain SUM/AVG (fan-out-safe via the #103 symmetric path when bridged).
+  static final String TYPE_SUM_DISTINCT = "sum_distinct";
+  static final String TYPE_AVERAGE_DISTINCT = "average_distinct";
+  static final ImmutableSet<String> DISTINCT_KEY_AGGREGATE_TYPES =
+      ImmutableSet.of(TYPE_SUM_DISTINCT, TYPE_AVERAGE_DISTINCT);
+
+  // --- measure types still refused (no static M4 mapping) -----------------
   static final ImmutableSet<String> NON_ADDITIVE_REFUSED_TYPES =
-      ImmutableSet.of("median", "percentile",
-          "percentile_distinct", "average_distinct", "sum_distinct");
+      ImmutableSet.of("percentile_distinct");
 
   static final String TYPE_LIST = "list";
+
+  // --- dimension / dimension_group types mapped via #108 ------------------
+  static final String TYPE_TIER = "tier";
+  static final String TYPE_DURATION = "duration";
 
   /** SQL-bearing / templated keys to scan for Liquid on a field. */
   static final ImmutableSet<String> LIQUID_SCAN_KEYS =
       ImmutableSet.of(SQL, "sql_distinct_key", FILTERS, LABEL, HTML,
           "value_format", "value_format_name");
+
+  /** The {@code label} / {@code html} keys carry presentation-only Liquid: a
+   * bounded reference there never shapes engine SQL, so it is dropped (DEGRADE)
+   * rather than routed. Kept separate so the router only fires for predicate /
+   * filter / sql contexts. */
+  static final ImmutableSet<String> LIQUID_PRESENTATION_KEYS =
+      ImmutableSet.of(LABEL, HTML, "value_format", "value_format_name");
 }
 
 // End LookmlKeywords.java

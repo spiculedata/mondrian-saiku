@@ -63,6 +63,10 @@ public final class LookmlClassifier {
     //    apart from an arbitrary predicate (a measure / unknown field).
     final Set<String> dimensionKeys = indexDimensionKeys(document);
 
+    // 0b. Index declared bounded parameter names so a {% parameter X %} use can
+    //     be confirmed bounded (it selects among declared parameters, #118).
+    final Set<String> parameterNames = indexParameterNames(document);
+
     // 1. Build every explore graph; index base view -> fan-out edge so a
     //    measure can be tested for symmetric-aggregate dependence.
     final Map<String, JoinEdge> fanOutByBaseView = new HashMap<>();
@@ -75,7 +79,7 @@ public final class LookmlClassifier {
 
     // 2. Classify every view's fields, consulting the fan-out index.
     for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
-      classifyView(view, fanOutByBaseView, out);
+      classifyView(view, fanOutByBaseView, parameterNames, out);
     }
 
     return out.build();
@@ -102,6 +106,19 @@ public final class LookmlClassifier {
         keys.add(viewName + "." + name);
       }
     }
+  }
+
+  /** Collects every declared {@code parameter:} name (lower-cased) across all
+   * views — the bounded set a {@code {% parameter X %}} use can select from. */
+  private Set<String> indexParameterNames(LookmlNode document) {
+    final Set<String> names = new HashSet<>();
+    for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
+      for (LookmlNode param : view.children(LookmlKeywords.PARAMETER)) {
+        param.name().ifPresent(
+            n -> names.add(n.toLowerCase(java.util.Locale.ROOT)));
+      }
+    }
+    return names;
   }
 
   // --- explores ----------------------------------------------------------
@@ -135,20 +152,23 @@ public final class LookmlClassifier {
     }
   }
 
-  /** Returns a refusal record if any access_filter is an arbitrary predicate,
-   * else empty (a dimension-key access_filter is CLEAN). */
+  /** Returns a DEGRADE record if any access_filter is on an arbitrary fact
+   * column (mapped to a {@code <PredicateGrant>}, #106), else empty (a
+   * dimension-key access_filter is CLEAN; the DimensionGrant case is #115). */
   private Optional<CoverageRecord> classifyAccessFilters(LookmlNode explore,
       String qn, Set<String> dimensionKeys) {
     for (LookmlNode af : explore.children(LookmlKeywords.ACCESS_FILTER)) {
       final Optional<String> field = af.stringValue(LookmlKeywords.FIELD);
       if (!isSimpleDimensionRef(field, dimensionKeys)) {
         return Optional.of(CoverageRecord.builder(Scope.EXPLORE, qn,
-                ReasonCode.REFUSE_ARBITRARY_ACCESS_FILTER,
+                ReasonCode.DEGRADE_PREDICATE_ROW_SECURITY,
                 "explore `" + explore.name().orElse("?")
                     + "` has an access_filter on `" + field.orElse("?")
-                    + "` that is not a simple modelled dimension key; "
-                    + "predicate-based row security lands in #106")
-            .lostCapability("explore not emitted")
+                    + "` (an arbitrary fact column, not a modelled dimension "
+                    + "key); emitted as a <PredicateGrant> bound to a "
+                    + "query-context parameter (#106)")
+            .producedM4("PredicateGrant")
+            .lostCapability("user-attribute value supplied at query time")
             .build());
       }
     }
@@ -204,17 +224,19 @@ public final class LookmlClassifier {
   // --- views -------------------------------------------------------------
 
   private void classifyView(LookmlNode view,
-      Map<String, JoinEdge> fanOutByBaseView, ClassificationResult.Builder out) {
+      Map<String, JoinEdge> fanOutByBaseView, Set<String> parameterNames,
+      ClassificationResult.Builder out) {
     final String viewName = view.name().orElse("?");
 
     classifyDerivedTable(view, viewName).ifPresent(out::add);
 
-    final FieldClassifier fields = new FieldClassifier(viewName);
+    final FieldClassifier fields = new FieldClassifier(viewName, parameterNames);
     final Optional<JoinEdge> fanOut =
         Optional.ofNullable(fanOutByBaseView.get(viewName));
+    final FieldClassifier.PrimaryKey primaryKey = primaryKeyOf(view);
 
     for (LookmlNode measure : view.children(LookmlKeywords.MEASURE)) {
-      out.add(fields.classifyMeasure(measure, fanOut));
+      out.add(fields.classifyMeasure(measure, fanOut, primaryKey));
     }
     for (LookmlNode parameter : view.children(LookmlKeywords.PARAMETER)) {
       out.add(fields.classifyParameter(parameter));
@@ -225,6 +247,32 @@ public final class LookmlClassifier {
     for (LookmlNode dg : view.children(LookmlKeywords.DIMENSION_GROUP)) {
       out.add(fields.classifyDimension(dg));
     }
+  }
+
+  /** The view's {@code primary_key: yes} dimension as a {@link
+   * FieldClassifier.PrimaryKey} (its name and resolved column) — the fact grain
+   * symmetric (fan-out-safe) aggregation needs (#103) and a {@code
+   * sql_distinct_key} can de-duplicate on (#117). Absent if none declared. */
+  private FieldClassifier.PrimaryKey primaryKeyOf(LookmlNode view) {
+    for (LookmlNode dim : view.children(LookmlKeywords.DIMENSION)) {
+      final boolean isPk = dim.stringValue(LookmlKeywords.PRIMARY_KEY)
+          .map(v -> v.equalsIgnoreCase("yes") || v.equalsIgnoreCase("true"))
+          .orElse(false);
+      if (isPk) {
+        final String name = dim.name().orElse("");
+        return FieldClassifier.PrimaryKey.of(name, primaryKeyColumn(dim, name));
+      }
+    }
+    return FieldClassifier.PrimaryKey.none();
+  }
+
+  /** The column a primary-key dimension reads: its {@code ${TABLE}.col} sql
+   * column else its own name. Mirrors the transpiler's column resolution
+   * without depending on it (separate package). */
+  private String primaryKeyColumn(LookmlNode dim, String dimName) {
+    return DistinctKey.resolveSameView(
+            dim.stringValue(LookmlKeywords.SQL).orElse(""))
+        .orElse(dimName);
   }
 
   /** A derived_table with a persistence policy degrades (policy dropped). */

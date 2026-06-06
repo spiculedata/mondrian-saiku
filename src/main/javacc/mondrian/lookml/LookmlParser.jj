@@ -19,15 +19,43 @@
 //
 // Vendored from net.hydromatic:lookml (https://github.com/hydromatic/lookml),
 // Apache-2.0, and re-packaged into mondrian.lookml.parse for the LookML->M4
-// importer (issue #98). Three grammar patches are applied versus upstream;
-// each is marked "PATCH (#98)" below:
-//   (a) IDENTIFIER accepts a leading '+' (refinements, e.g. "+orders {") and
-//       dotted references (e.g. "customers.id").
+// importer (issue #98). Grammar patches versus upstream; each marked
+// "PATCH (#98)" below:
+//   (a) IDENTIFIER accepts a leading '+' (refinements, e.g. "+orders {"),
+//       dotted references (e.g. "customers.id"), AND — added in the real-world
+//       hardening pass — a leading '_' (e.g. "_dbt_source"; FIX 3) and a
+//       trailing '*' wildcard per dotted segment (e.g. "orders.*", "detail*";
+//       FIX 2).
 //   (b) document() accepts MANY top-level objects, not one (upstream silently
 //       dropped all but the first top-level property -> data loss).
 //   (c) the IN_CODE lexical state preserves ;;-terminated code (sql, sql_on,
 //       html, ...) verbatim, including Liquid; the set of code-valued keys is
 //       supplied at runtime via LookmlParsers.Config.withCodePropertyNames.
+//
+// Real-world hardening (issue #98, second pass) — fixes found by a validation
+// sweep over 6 public Looker repos (901 .lkml files, ~79% baseline parse rate):
+//   FIX 1: listBody tolerates a trailing comma and empty/leading-empty slots
+//          (e.g. "fields: [a, b,]", "timeframes: [, date, week]").
+//   FIX 2: '*' wildcard as the trailing char of a (dotted) field reference —
+//          see IDENTIFIER below; surfaced as an IdentifierValue.
+//   FIX 3: leading '_' in IDENTIFIER (e.g. "dimension: _dbt_source {").
+//   FIX 4: QUOTED_STRING consumes "\<char>" escape sequences verbatim (the
+//          backslash is kept; we do not unescape), e.g. "0.00\%", "...\"B\"...".
+//   FIX 5: a list pair value may be a BARE identifier (asc/desc, etc.), e.g.
+//          "sorts: [orders.first_seen_month: desc]" -> PairValue.
+//   FIX 6: a digit-leading object/property NAME (e.g. "measure: 1st_yr_bill {")
+//          via a dedicated NAME token that does NOT shadow numeric literals.
+//          Used only in name position (objectName()), so number values
+//          ("boundary: 10", "tiers: [0, 100]") are unaffected.
+//   FIX 8: a leading '-' field-exclusion ref in IDENTIFIER (e.g.
+//          "fields: [ALL_FIELDS*, -account.id]"); never collides with a
+//          negative numeric literal (whose '-' is followed by a digit).
+//
+// One non-grammar fix lives in LookmlParser.java (finding #4 root cause):
+//   FIX 7: "default_value" was removed from CODE_PROPERTY_NAMES — it is a
+//          string-valued key, not a ;;-terminated code block; treating it as
+//          code made the IN_CODE lexer swallow to a later ;;, surfacing as a
+//          spurious <EOF>.
 //
 options {
   STATIC = false;
@@ -115,6 +143,17 @@ String identifier() : {}
   <IDENTIFIER> { return token.image; }
 }
 
+/** Parses a name in name position: an ordinary identifier OR a digit-leading
+ * NAME (PATCH (#98) FIX 6, e.g. 'measure: 1st_yr_bill {'). Kept distinct from
+ * {@link #identifier} so the NAME token only ever appears where a name is
+ * expected — never where a value (and thus a numeric literal) could occur. */
+String objectName() : {}
+{
+  <IDENTIFIER> { return token.image; }
+|
+  <NAME> { return token.image; }
+}
+
 String comment() : {}
 {
   <COMMENT> { return token.image; }
@@ -149,20 +188,30 @@ void objectElement(ObjectHandler h) : {}
 
 /** Parses the body of a list.
     It is a sequence of values, separated by commas.
-    Any number of comments can occur before or after values. */
+    Any number of comments can occur before or after values.
+
+    <p>PATCH (#98) FIX 1: tolerate a trailing comma and empty/leading-empty
+    slots, e.g. 'fields: [a, b,]' and 'timeframes: [, date, week]'. We treat the
+    list as a comma-separated run where each slot's value is OPTIONAL; empty
+    slots simply contribute nothing. This accepts the (harmless) degenerate
+    '[ , , ]' rather than rejecting it — favouring ingestion robustness over
+    strictness, consistent with the lax-parser goal. */
 void listBody(ListHandler h) : {}
 {
+  listSlot(h)
+  (
+    <COMMA>
+    listSlot(h)
+  )*
+}
+
+/** A single comma-delimited slot: optional comments, an optional value, more
+    optional comments. An absent value is a tolerated empty slot (FIX 1). */
+void listSlot(ListHandler h) : {}
+{
   ( commentInList(h) )*
-  [
-    value(h)
-    ( commentInList(h) )*
-    (
-      <COMMA>
-      ( commentInList(h) )*
-      value(h)
-      ( commentInList(h) )*
-    )*
-  ]
+  [ value(h) ]
+  ( commentInList(h) )*
 }
 
 /** Parses a property, e.g. 'p: true', 'q: 1', 'r: []', 's: name {}',
@@ -254,7 +303,7 @@ void identifierProperty(Pos.Builder pb, String propertyName,
   ObjectHandler h2;
 }
 {
-  identifier = identifier()
+  identifier = objectName()
   (
     LOOKAHEAD(1)
     <LBRACE> { h2 = h.objOpen(end(pb), propertyName, identifier); }
@@ -289,11 +338,21 @@ void value(ListHandler h) : {
 |
   string = string() { h.string(pos(), string); }
 |
-  identifier = identifier()
+  identifier = objectName()
   (
      { pb = start(); }
-     <COLON> string = string() { h.pair(end(pb), identifier, string); }
+     <COLON>
+     (
+        string = string() { h.pair(end(pb), identifier, string); }
+     |
+        // PATCH (#98) FIX 5: a bare-identifier pair value, e.g.
+        // 'sorts: [orders.first_seen_month: desc]' -> PairValue(ref, "desc").
+        string = identifier() { h.pair(end(pb), identifier, string); }
+     )
   |
+     // The list element is a bare identifier/NAME. Using objectName() above
+     // also lets a digit-leading ref start a list pair, e.g.
+     // 'filters: [21days_since_release: "yes"]' (FIX 6 in list position).
      { h.identifier(pos(), identifier); }
   )
 |
@@ -326,15 +385,34 @@ void commentInList(ListHandler h) : {
       (["0"-"9"])+
       ("." (["0"-"9"])+)?
       (["e", "E"] ("-")?(["0"-"9"])+)? >
-| < QUOTED_STRING: <DOUBLE_QUOTE> ( (~["\"", "\\"]) | ("\\" "\"") | ("\\" "\\") )* <DOUBLE_QUOTE> >
+// PATCH (#98) FIX 4: consume any "\<char>" escape sequence (kept verbatim,
+// incl. the backslash; we do not unescape). Upstream only allowed \" and \\,
+// so real value_format / label strings like "0.00\%" failed to tokenize.
+| < QUOTED_STRING: <DOUBLE_QUOTE> ( (~["\"", "\\"]) | ("\\" ~[]) )* <DOUBLE_QUOTE> >
 | < DOUBLE_QUOTE: "\"" >
 
-// PATCH (#98)(a): allow an optional leading '+' (LookML refinements, e.g.
-// '+orders {') and dotted references (e.g. 'customers.id'). Upstream allowed
-// only a single bare [a-zA-Z][a-zA-Z_0-9]* identifier.
-| < IDENTIFIER: ("+")?
-      ["a"-"z", "A"-"Z"](["a"-"z", "A"-"Z", "_", "0"-"9"])*
-      ("." (["a"-"z", "A"-"Z", "_", "0"-"9"])+)* >
+// PATCH (#98)(a) + FIX 2 + FIX 3 + FIX 8: an identifier may have an optional
+// leading '+' (LookML refinements, e.g. '+orders {'), a leading '-' (FIX 8,
+// field exclusion in a fields list, e.g. '-account.id'), a leading '_' (FIX 3,
+// e.g. '_dbt_source'), dotted references (e.g. 'customers.id'), and a trailing
+// '*' wildcard per dotted segment (FIX 2, e.g. 'orders.*', 'detail*').
+// Upstream allowed only a single bare [a-zA-Z][a-zA-Z_0-9]* identifier.
+// A leading '-' followed by a letter/'_' can never collide with NUMBER_LITERAL
+// ('-3.5'), whose '-' is always followed by a digit.
+| < IDENTIFIER: ("+"|"-")?
+      ["a"-"z", "A"-"Z", "_"](["a"-"z", "A"-"Z", "_", "0"-"9"])* ("*")?
+      ("." (["a"-"z", "A"-"Z", "_", "0"-"9"])+ ("*")?)*
+      ("." "*")? >
+
+// PATCH (#98) FIX 6: a NAME is a digit-leading identifier (e.g. '1st_yr_bill').
+// LookML permits object/property names that start with a digit. The token
+// REQUIRES at least one trailing letter or '_' so it can never match a pure
+// numeric literal ('10', '100', '3.5') — those still tokenize as
+// NUMBER_LITERAL, which is defined first and so wins on equal-length matches.
+// NAME is consumed only in name position (see objectName()); it never appears
+// where a value is expected, so number values are unaffected.
+| < NAME: ["0"-"9"](["0"-"9"])* ["a"-"z", "A"-"Z", "_"]
+      (["a"-"z", "A"-"Z", "_", "0"-"9"])* >
 
 | < COMMENT: "#" (~["\n", "\r"])* >
 }

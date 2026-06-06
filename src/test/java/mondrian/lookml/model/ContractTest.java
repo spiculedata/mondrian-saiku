@@ -45,7 +45,9 @@ class ContractTest {
         record.reasonCode());
     assertEquals("orders.view.lkml:42", record.sourceRef().orElseThrow());
     assertEquals("measure not emitted", record.lostCapability().orElseThrow());
-    // related issue auto-filled from the reason code (#103 flips this REFUSE).
+    // related issue auto-filled from the reason code (#103 symmetric aggregation
+    // is the headline mechanism that flips this REFUSE; the residual unbridged
+    // many-to-many subset is finished by the bridge, #107).
     assertEquals("#103", record.relatedIssue().orElseThrow());
   }
 

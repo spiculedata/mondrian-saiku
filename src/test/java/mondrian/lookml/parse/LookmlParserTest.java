@@ -301,6 +301,308 @@ class LookmlParserTest {
         ex.getMessage());
   }
 
+  // ------------------------------------------------------------------
+  // Issue #98 real-world hardening: each fix below has a confirmed minimal
+  // repro drawn from the validation sweep over 6 public Looker repos.
+  // ------------------------------------------------------------------
+
+  /** FIX 1: a trailing comma in a {@code [...]} list must be tolerated, and a
+   * leading/empty element skipped. Repro: 68 files
+   * (e.g. {@code timeframes: [, date, week]}). */
+  @Test void parsesTrailingAndLeadingCommaInList() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  set: s { fields: [a, b,] }\n"
+        + "  dimension_group: created {\n"
+        + "    timeframes: [, date, week]\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode view = LookmlParser.parse(lookml).children("view").get(0);
+
+    // Assert: trailing comma dropped, two real elements survive.
+    final Value fields = view.children("set").get(0).value("fields")
+        .orElseThrow();
+    final List<ValueImpl> items = ((Values.ListValue) fields).list;
+    assertEquals(2, items.size(), "trailing comma must be ignored");
+    assertEquals("a", ((Values.IdentifierValue) items.get(0)).id);
+    assertEquals("b", ((Values.IdentifierValue) items.get(1)).id);
+
+    // Assert: leading empty slot dropped, two timeframes survive.
+    final Value tf = view.children("dimension_group").get(0).value("timeframes")
+        .orElseThrow();
+    final List<ValueImpl> tfs = ((Values.ListValue) tf).list;
+    assertEquals(2, tfs.size(), "leading empty slot must be ignored");
+    assertEquals("date", ((Values.IdentifierValue) tfs.get(0)).id);
+    assertEquals("week", ((Values.IdentifierValue) tfs.get(1)).id);
+  }
+
+  /** FIX 2: a {@code *} wildcard as the trailing char of a field reference,
+   * incl. {@code view.*}. Repro: 50 files
+   * (e.g. {@code drill_fields: [detail*]}, {@code fields: [orders.*]}). */
+  @Test void parsesWildcardFieldRefs() {
+    // Arrange
+    final String lookml = ""
+        + "explore: e {\n"
+        + "  fields: [orders.*, detail*, all]\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode explore = LookmlParser.parse(lookml).children("explore")
+        .get(0);
+
+    // Assert
+    final List<ValueImpl> items =
+        ((Values.ListValue) explore.value("fields").orElseThrow()).list;
+    assertEquals(3, items.size());
+    assertEquals("orders.*", ((Values.IdentifierValue) items.get(0)).id);
+    assertEquals("detail*", ((Values.IdentifierValue) items.get(1)).id);
+    assertEquals("all", ((Values.IdentifierValue) items.get(2)).id);
+  }
+
+  /** FIX 3: a leading-underscore identifier (object name and ref). Repro: 37
+   * files (e.g. {@code dimension: _dbt_source {}}). */
+  @Test void parsesLeadingUnderscoreIdentifiers() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  dimension: _dbt_source {\n"
+        + "    type: string\n"
+        + "    sql: ${TABLE}._loaded_at ;;\n"
+        + "  }\n"
+        + "  set: _hidden { fields: [_dbt_source] }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode view = LookmlParser.parse(lookml).children("view").get(0);
+
+    // Assert
+    assertEquals("_dbt_source",
+        view.children("dimension").get(0).name().orElseThrow());
+    assertEquals("_hidden", view.children("set").get(0).name().orElseThrow());
+  }
+
+  /** FIX 4: backslash escape sequences inside a quoted string must be consumed
+   * (kept verbatim, incl. the backslash). Repro: 6 files
+   * (e.g. {@code value_format: "0.00\%"}). */
+  @Test void parsesBackslashEscapesInQuotedStrings() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  dimension: pct {\n"
+        + "    value_format: \"0.00\\%\"\n"
+        + "    label: \"say \\\"hi\\\" now\"\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode dim = LookmlParser.parse(lookml).children("view").get(0)
+        .children("dimension").get(0);
+
+    // Assert: backslash-escapes are kept verbatim (we don't unescape).
+    assertEquals("0.00\\%", dim.stringValue("value_format").orElseThrow());
+    assertEquals("say \\\"hi\\\" now", dim.stringValue("label").orElseThrow());
+  }
+
+  /** FIX 5: a {@code ref: asc|desc} bare-identifier pair in a list. Repro: 5
+   * files (e.g. {@code sorts: [orders.first_seen_month: desc]}). */
+  @Test void parsesSortsWithBareIdentifierPair() {
+    // Arrange
+    final String lookml = ""
+        + "explore: e {\n"
+        + "  sorts: [orders.first_seen_month: desc, orders.id: asc]\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode explore = LookmlParser.parse(lookml).children("explore")
+        .get(0);
+
+    // Assert
+    final List<ValueImpl> items =
+        ((Values.ListValue) explore.value("sorts").orElseThrow()).list;
+    assertEquals(2, items.size());
+    final Values.PairValue p0 = (Values.PairValue) items.get(0);
+    assertEquals("orders.first_seen_month", p0.ref);
+    assertEquals("desc", p0.s);
+    final Values.PairValue p1 = (Values.PairValue) items.get(1);
+    assertEquals("orders.id", p1.ref);
+    assertEquals("asc", p1.s);
+  }
+
+  /** FIX 6: a digit-leading object name in name position. Repro: 4 files
+   * (e.g. {@code measure: 1st_yr_bill {}}). Number literals as values must NOT
+   * regress. */
+  @Test void parsesDigitLeadingObjectNames() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  measure: 1st_yr_bill {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "  dimension: 2nd_thing {\n"
+        + "    type: number\n"
+        + "    value_format: \"0\"\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode view = LookmlParser.parse(lookml).children("view").get(0);
+
+    // Assert: digit-leading names parse.
+    assertEquals("1st_yr_bill",
+        view.children("measure").get(0).name().orElseThrow());
+    assertEquals("2nd_thing",
+        view.children("dimension").get(0).name().orElseThrow());
+  }
+
+  /** FIX 6 in list-pair position: a digit-leading ref starting a list pair,
+   * e.g. {@code filters: [21days_since_release: "yes"]}. */
+  @Test void parsesDigitLeadingRefInListPair() {
+    // Arrange
+    final String lookml = ""
+        + "explore: e {\n"
+        + "  always_filter: {\n"
+        + "    filters: [21days_since_release: \"yes\"]\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode filter = LookmlParser.parse(lookml).children("explore")
+        .get(0).child("always_filter").orElseThrow();
+
+    // Assert
+    final List<ValueImpl> items =
+        ((Values.ListValue) filter.value("filters").orElseThrow()).list;
+    assertEquals(1, items.size());
+    final Values.PairValue p = (Values.PairValue) items.get(0);
+    assertEquals("21days_since_release", p.ref);
+    assertEquals("yes", p.s);
+  }
+
+  /** FIX 6 guard: numeric literal values must still parse as numbers, not get
+   * swallowed by the digit-leading NAME rule. */
+  @Test void numberLiteralsStillParseAsNumbers() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  dimension: tier {\n"
+        + "    tiers: [0, 10, 100]\n"
+        + "  }\n"
+        + "  measure: m {\n"
+        + "    type: number\n"
+        + "    precision: 2\n"
+        + "    value: -3.5\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode view = LookmlParser.parse(lookml).children("view").get(0);
+
+    // Assert: list of numbers stays numeric.
+    final List<ValueImpl> tiers = ((Values.ListValue)
+        view.children("dimension").get(0).value("tiers").orElseThrow()).list;
+    assertEquals(3, tiers.size());
+    assertTrue(tiers.get(0) instanceof Values.NumberValue,
+        "0 must be a NumberValue, not a NAME");
+    assertEquals(new java.math.BigDecimal("100"),
+        ((Values.NumberValue) tiers.get(2)).toBigDecimal());
+
+    // Assert: scalar number properties stay numeric.
+    final LookmlNode m = view.children("measure").get(0);
+    final Value precision = m.value("precision").orElseThrow();
+    assertTrue(precision instanceof Values.NumberValue, "precision is a number");
+    final Value val = m.value("value").orElseThrow();
+    assertTrue(val instanceof Values.NumberValue, "negative number stays number");
+    assertEquals(new java.math.BigDecimal("-3.5"),
+        ((Values.NumberValue) val).toBigDecimal());
+  }
+
+  /** FIX 7 / finding #4 root cause: {@code default_value} is a STRING-valued
+   * key in LookML (parameters/filters), never a {@code ;;}-terminated code
+   * block. Treating it as code made the lexer run past the unterminated quoted
+   * string and swallow following properties up to the next {@code ;;}, deep in
+   * the file — surfacing later as a spurious {@code <EOF>}. Repro pattern from
+   * 16 multi-block view files (mozilla experimentation/*, duet/*). */
+  @Test void defaultValueIsStringNotCodeAndDoesNotSwallowToEof() {
+    // Arrange: a parameter with a quoted default_value, then a real sql code
+    // block, then more properties — exactly the shape that used to fail.
+    final String lookml = ""
+        + "view: preview {\n"
+        + "  parameter: project {\n"
+        + "    type: unquoted\n"
+        + "    default_value: \"mozdata\"\n"
+        + "  }\n"
+        + "  sql_table_name: {% parameter project %}.t ;;\n"
+        + "  dimension: a {\n"
+        + "    type: number\n"
+        + "    sql: ${TABLE}.a ;;\n"
+        + "  }\n"
+        + "  measure: lower {\n"
+        + "    type: sum\n"
+        + "    sql: ${TABLE}.lower ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    // Act
+    final LookmlNode view = LookmlParser.parse(lookml).children("view").get(0);
+
+    // Assert: default_value survives as a plain string, and every following
+    // property is still reachable (nothing was swallowed).
+    final LookmlNode param = view.children("parameter").get(0);
+    assertEquals("mozdata", param.stringValue("default_value").orElseThrow());
+    assertTrue(view.value("sql_table_name").orElseThrow()
+        instanceof Values.CodeValue);
+    assertEquals(1, view.children("dimension").size());
+    assertEquals(1, view.children("measure").size());
+    assertEquals("lower", view.children("measure").get(0).name().orElseThrow());
+  }
+
+  /** FIX 8: a leading '-' field-exclusion ref in a list, e.g.
+   * {@code fields: [ALL_FIELDS*, -account.id]}. Negative number literals must
+   * NOT regress. */
+  @Test void parsesFieldExclusionWithLeadingDash() {
+    // Arrange
+    final String lookml = ""
+        + "explore: e {\n"
+        + "  fields: [ALL_FIELDS*, -tables.id, -account.region]\n"
+        + "}\n";
+
+    // Act
+    final List<ValueImpl> items = ((Values.ListValue)
+        LookmlParser.parse(lookml).children("explore").get(0)
+            .value("fields").orElseThrow()).list;
+
+    // Assert
+    assertEquals(3, items.size());
+    assertEquals("ALL_FIELDS*", ((Values.IdentifierValue) items.get(0)).id);
+    assertEquals("-tables.id", ((Values.IdentifierValue) items.get(1)).id);
+    assertEquals("-account.region", ((Values.IdentifierValue) items.get(2)).id);
+  }
+
+  /** FIX 8 guard: a list of negative number literals stays numeric. */
+  @Test void negativeNumberLiteralsStillParseAsNumbers() {
+    // Arrange
+    final String lookml = ""
+        + "view: v {\n"
+        + "  dimension: t { tiers: [-10, 0, 10] }\n"
+        + "}\n";
+
+    // Act
+    final List<ValueImpl> items = ((Values.ListValue)
+        LookmlParser.parse(lookml).children("view").get(0)
+            .children("dimension").get(0).value("tiers").orElseThrow()).list;
+
+    // Assert
+    assertEquals(3, items.size());
+    assertTrue(items.get(0) instanceof Values.NumberValue,
+        "-10 must stay a NumberValue");
+    assertEquals(new java.math.BigDecimal("-10"),
+        ((Values.NumberValue) items.get(0)).toBigDecimal());
+  }
+
   /** An empty document is valid and yields no top-level objects. */
   @Test void parsesEmptyDocument() {
     // Act

@@ -16,10 +16,13 @@ package mondrian.lookml.transpile;
 import mondrian.lookml.parse.LookmlNode;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static java.util.Objects.requireNonNull;
 
@@ -90,7 +93,10 @@ final class CubeEmitter {
     emitMeasures(baseView, baseViewName, mgPath, cubePath, factCountColumn,
         measures, calculatedMembers);
 
-    model.registerTable(factTable, null);
+    // Declare the fact grain key (from a primary_key: yes dimension) so the
+    // engine can apply symmetric (fan-out-safe) aggregation, #103. Without it,
+    // a fact key is null and a fan-out sum would double-count.
+    model.registerTable(factTable, primaryKeyColumn(baseView).orElse(null));
 
     final Map<String, Object> measureGroup = new LinkedHashMap<>();
     measureGroup.put("name", baseViewName);
@@ -110,6 +116,34 @@ final class CubeEmitter {
       cube.put("calculated_members", calculatedMembers);
     }
     model.addCube(cubeName, cube);
+
+    // Row security (#106): arbitrary-column access_filters become a generated
+    // role with a PredicateGrant on this cube's measure group.
+    RowSecurity.emit(explore, cubeName, baseViewName,
+        knownDimensionNames(explore, baseView), model, provenance);
+  }
+
+  /** The dimension names this cube models (base + joined view dimensions), so
+   * row security can skip a dimension-key access_filter (the DimensionGrant
+   * case, #115) and only emit predicate grants for arbitrary columns. */
+  private Set<String> knownDimensionNames(LookmlNode explore,
+      LookmlNode baseView) {
+    final Set<String> names = new HashSet<>();
+    collectDimensionNames(baseView, names);
+    for (LookmlNode join : LookmlTranspiler.joins(explore)) {
+      final LookmlNode joinedView =
+          viewsByName.get(LookmlTranspiler.joinedView(join));
+      if (joinedView != null) {
+        collectDimensionNames(joinedView, names);
+      }
+    }
+    return names;
+  }
+
+  private void collectDimensionNames(LookmlNode view, Set<String> names) {
+    for (LookmlNode dim : view.children(TranspileKeywords.DIMENSION)) {
+      dim.name().ifPresent(n -> names.add(n.toLowerCase(Locale.ROOT)));
+    }
   }
 
   // --- degenerate dimensions ---------------------------------------------
@@ -118,30 +152,60 @@ final class CubeEmitter {
       String baseViewName, String factTable, String cubePath,
       List<Object> dimensions, List<Object> dimensionLinks) {
     for (LookmlNode dim : baseView.children(TranspileKeywords.DIMENSION)) {
-      final String dimName = dim.name().orElse("");
-      if (dimName.isEmpty() || !eligible.field(baseViewName, dimName)) {
-        continue;
-      }
-      final String column = LookmlTranspiler.columnOf(dim, dimName);
-      final Map<String, Object> attribute =
-          buildAttribute(dimName, factTable, column, dim);
-      final List<Object> attributes = new ArrayList<>();
-      attributes.add(attribute);
-
-      final Map<String, Object> dimension = new LinkedHashMap<>();
-      dimension.put("name", dimName);
-      dimension.put("key", dimName);
-      dimension.put("attributes", attributes);
-      dimensions.add(dimension);
-
-      final Map<String, Object> link = new LinkedHashMap<>();
-      link.put("type", TranspileKeywords.LINK_FACT);
-      link.put("dimension", dimName);
-      dimensionLinks.add(link);
-
-      provenance.put(baseViewName + "." + dimName,
-          cubePath + "/dimension:" + dimName + "/attribute:" + dimName);
+      emitDegenerateDimension(dim, baseViewName, factTable, cubePath,
+          dimensions, dimensionLinks);
     }
+    // dimension_group children carry duration (#108); emit those too.
+    for (LookmlNode dg : baseView.children(TranspileKeywords.DIMENSION_GROUP)) {
+      if (TierDuration.isTierOrDuration(dg)) {
+        emitDegenerateDimension(dg, baseViewName, factTable, cubePath,
+            dimensions, dimensionLinks);
+      }
+    }
+  }
+
+  private void emitDegenerateDimension(LookmlNode dim, String baseViewName,
+      String factTable, String cubePath, List<Object> dimensions,
+      List<Object> dimensionLinks) {
+    final String dimName = dim.name().orElse("");
+    if (dimName.isEmpty() || !eligible.field(baseViewName, dimName)) {
+      return;
+    }
+    final Map<String, Object> attribute =
+        TierDuration.attribute(dim, dimName, factTable)
+            .orElseGet(() -> buildAttribute(dimName, factTable,
+                LookmlTranspiler.columnOf(dim, dimName), dim));
+    final List<Object> attributes = new ArrayList<>();
+    attributes.add(attribute);
+
+    final Map<String, Object> dimension = new LinkedHashMap<>();
+    dimension.put("name", dimName);
+    dimension.put("key", dimName);
+    dimension.put("attributes", attributes);
+    dimensions.add(dimension);
+
+    final Map<String, Object> link = new LinkedHashMap<>();
+    link.put("type", TranspileKeywords.LINK_FACT);
+    link.put("dimension", dimName);
+    dimensionLinks.add(link);
+
+    provenance.put(baseViewName + "." + dimName,
+        cubePath + "/dimension:" + dimName + "/attribute:" + dimName);
+  }
+
+  /** The fact's grain key column, from a {@code primary_key: yes} dimension's
+   * column, if the base view declares one (#103 symmetric aggregation). */
+  private Optional<String> primaryKeyColumn(LookmlNode baseView) {
+    for (LookmlNode dim : baseView.children(TranspileKeywords.DIMENSION)) {
+      final boolean isPk = dim.stringValue(TranspileKeywords.PRIMARY_KEY)
+          .map(v -> v.equalsIgnoreCase("yes") || v.equalsIgnoreCase("true"))
+          .orElse(false);
+      if (isPk) {
+        return Optional.of(
+            LookmlTranspiler.columnOf(dim, dim.name().orElse("")));
+      }
+    }
+    return Optional.empty();
   }
 
   // --- conformed (joined) dimensions -------------------------------------

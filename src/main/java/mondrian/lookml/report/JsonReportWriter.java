@@ -51,22 +51,44 @@ public final class JsonReportWriter {
 
   private static final ObjectWriter WRITER = stableWriter();
 
-  /** Renders the report to a pretty-printed JSON string. */
+  /** Renders the report to a pretty-printed JSON string (no diagnostics). */
   public String write(CoverageReport report) {
+    return write(report, IngestDiagnostics.none());
+  }
+
+  /** Renders the report to a pretty-printed JSON string, including any per-file
+   * ingest diagnostics (unparseable / skipped files). */
+  public String write(CoverageReport report, IngestDiagnostics diagnostics) {
     requireNonNull(report, "report");
+    requireNonNull(diagnostics, "diagnostics");
     try {
-      return WRITER.writeValueAsString(toTree(report));
+      return WRITER.writeValueAsString(toTree(report, diagnostics));
     } catch (Exception e) {
       throw new IllegalStateException(
           "failed to serialise coverage report to JSON", e);
     }
   }
 
-  private static Map<String, Object> toTree(CoverageReport report) {
+  private static Map<String, Object> toTree(CoverageReport report,
+      IngestDiagnostics diagnostics) {
     final Map<String, Object> root = new LinkedHashMap<>();
     root.put("metrics", metricsTree(report.metrics()));
     root.put("records", recordsTree(report));
+    root.put("unparseableFiles", entriesTree(diagnostics.unparseable()));
+    root.put("skippedFiles", entriesTree(diagnostics.skipped()));
     return root;
+  }
+
+  private static List<Map<String, Object>> entriesTree(
+      List<IngestDiagnostics.Entry> entries) {
+    final List<Map<String, Object>> out = new ArrayList<>();
+    for (IngestDiagnostics.Entry e : entries) {
+      final Map<String, Object> tree = new LinkedHashMap<>();
+      tree.put("file", e.file());
+      tree.put("reason", e.reason());
+      out.add(tree);
+    }
+    return out;
   }
 
   private static Map<String, Object> metricsTree(SummaryMetrics m) {
