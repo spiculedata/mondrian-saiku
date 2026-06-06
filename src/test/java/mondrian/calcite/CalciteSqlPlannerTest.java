@@ -14,6 +14,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
+import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 
 import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
@@ -74,7 +75,8 @@ public class CalciteSqlPlannerTest {
      *  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col). */
     @Test
     public void medianEmitsPercentileContWithinGroup() {
-        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        // PERCENTILE_CONT is emitted for a supporting dialect (Postgres).
+        CalciteSqlPlanner planner = plannerFor(PostgresqlSqlDialect.DEFAULT);
         PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
             .addJoin(new PlannerRequest.Join(
                 "time_by_day", "time_id", "time_id"))
@@ -100,7 +102,7 @@ public class CalciteSqlPlannerTest {
     /** #104: percentile(0.9) renders the requested fraction. */
     @Test
     public void percentile90EmitsFraction() {
-        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        CalciteSqlPlanner planner = plannerFor(PostgresqlSqlDialect.DEFAULT);
         PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
             .addGroupBy(
                 new PlannerRequest.Column("sales_fact_1997", "store_id"))
@@ -112,6 +114,46 @@ public class CalciteSqlPlannerTest {
         String sql = planner.plan(req).toLowerCase();
         assertTrue("expected PERCENTILE_CONT(0.9) in: " + sql,
             sql.contains("percentile_cont(") && sql.contains("0.9"));
+    }
+
+    /** #104: a percentile measure on a backend without PERCENTILE_CONT
+     *  (HSQLDB) is REFUSED with a clear error, not silently mis-emitted. */
+    @Test
+    public void percentileRefusedOnUnsupportedDialect() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "med",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.5))
+            .build();
+        try {
+            planner.plan(req);
+            org.junit.jupiter.api.Assertions.fail(
+                "expected REFUSE on HSQLDB");
+        } catch (RuntimeException e) {
+            String msg = String.valueOf(e.getMessage()).toLowerCase();
+            assertTrue("expected a clear percentile message: " + e.getMessage(),
+                msg.contains("percentile_cont") || msg.contains("percentile"));
+        }
+    }
+
+    /** A non-percentile (plain SUM) query is unaffected by the refuse on a
+     *  non-supporting dialect. */
+    @Test
+    public void plainAggregateAllowedOnAnyDialect() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(new PlannerRequest.Measure(
+                PlannerRequest.AggFn.SUM,
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                "us"))
+            .build();
+        assertNotNull(planner.plan(req));
     }
 
     @Test

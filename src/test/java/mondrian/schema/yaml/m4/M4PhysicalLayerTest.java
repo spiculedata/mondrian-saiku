@@ -486,6 +486,34 @@ public class M4PhysicalLayerTest {
         + "</MeasureGroup></MeasureGroups>"
         + "</Cube></Schema>";
 
+    /** #104: a percentile measure round-trips with its percentile param. */
+    @Test
+    public void percentileMeasureRoundTrips() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C'><MeasureGroups>"
+            + "<MeasureGroup name='G' table='f'>"
+            + "<Measures>"
+            + "<Measure name='Median Amt' column='amt' aggregator='median'/>"
+            + "<Measure name='P90 Amt' column='amt' aggregator='percentile'"
+            + " percentile='90'/>"
+            + "</Measures>"
+            + "</MeasureGroup></MeasureGroups></Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("aggregator: \"median\"")
+            || yaml.contains("aggregator: median"));
+        assertTrue(yaml, yaml.contains("aggregator: \"percentile\"")
+            || yaml.contains("aggregator: percentile"));
+        assertTrue(yaml, yaml.contains("percentile: \"90\"")
+            || yaml.contains("percentile: 90"));
+        // YAML -> XML preserves the percentile attribute.
+        String back = M4YamlToXml.toXml(yaml);
+        assertTrue(back, back.contains("aggregator=\"percentile\""));
+        assertTrue(back, back.contains("percentile=\"90\""));
+        // Idempotent emit.
+        assertEquals(yaml, M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml)));
+    }
+
     @Test
     public void ingestsBridgeLink() {
         String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);

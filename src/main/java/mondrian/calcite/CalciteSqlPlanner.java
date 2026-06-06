@@ -264,6 +264,35 @@ public final class CalciteSqlPlanner {
     }
 
     /** Render the request as a SQL string in the configured dialect. */
+    /**
+     * #104: database products whose dialect renders
+     * {@code PERCENTILE_CONT(x) WITHIN GROUP (ORDER BY ...)}. A
+     * median/percentile measure against any other backend is REFUSED with a
+     * clear error rather than emitting SQL the database cannot run. Allowlist
+     * (refuse unless known-supported) — conservative on version-dependent
+     * products (HSQLDB, MySQL), which is the honest default.
+     */
+    private static final java.util.Set<SqlDialect.DatabaseProduct>
+        PERCENTILE_CONT_DIALECTS =
+        java.util.EnumSet.of(
+            SqlDialect.DatabaseProduct.POSTGRESQL,
+            SqlDialect.DatabaseProduct.ORACLE,
+            SqlDialect.DatabaseProduct.MSSQL,
+            SqlDialect.DatabaseProduct.H2,
+            SqlDialect.DatabaseProduct.SNOWFLAKE,
+            SqlDialect.DatabaseProduct.BIG_QUERY,
+            SqlDialect.DatabaseProduct.REDSHIFT,
+            SqlDialect.DatabaseProduct.VERTICA,
+            SqlDialect.DatabaseProduct.TERADATA,
+            SqlDialect.DatabaseProduct.DB2,
+            SqlDialect.DatabaseProduct.SPARK,
+            SqlDialect.DatabaseProduct.DUCKDB,
+            SqlDialect.DatabaseProduct.PRESTO,
+            SqlDialect.DatabaseProduct.TRINO,
+            SqlDialect.DatabaseProduct.EXASOL,
+            SqlDialect.DatabaseProduct.HIVE,
+            SqlDialect.DatabaseProduct.CALCITE);
+
     public String plan(PlannerRequest req) {
         // Null-request is a programmer error and stays as IAE — keep this
         // guard above the IAE→UnsupportedTranslation wrap below so the
@@ -271,6 +300,7 @@ public final class CalciteSqlPlanner {
         if (req == null) {
             throw new IllegalArgumentException("request is null");
         }
+        refuseUnsupportedPercentile(req);
         try {
             return planInternal(req);
         } catch (IllegalArgumentException iae) {
@@ -284,6 +314,41 @@ public final class CalciteSqlPlanner {
             throw new UnsupportedTranslation(
                 "Calcite translator gap: " + iae.getMessage(), iae);
         }
+    }
+
+    /**
+     * #104: REFUSE a median/percentile measure on a backend whose dialect
+     * does not render {@code PERCENTILE_CONT}. Throws a clear
+     * {@link mondrian.olap.MondrianException} — deliberately NOT an
+     * {@link UnsupportedTranslation}, so the segment-load strict-mode guard
+     * surfaces it to the user rather than silently falling back to the
+     * legacy SQL generator (which cannot evaluate it either).
+     */
+    private void refuseUnsupportedPercentile(PlannerRequest req) {
+        if (PERCENTILE_CONT_DIALECTS.contains(dialect.getDatabaseProduct())
+            || !hasPercentileMeasure(req))
+        {
+            return;
+        }
+        throw new mondrian.olap.MondrianException(
+            "Median/percentile measures require a backend that supports "
+            + "PERCENTILE_CONT WITHIN GROUP (e.g. PostgreSQL, Oracle, SQL "
+            + "Server, Snowflake, BigQuery, H2, DuckDB); the current backend ("
+            + dialect.getDatabaseProduct() + ") is not supported.");
+    }
+
+    private static boolean hasPercentileMeasure(PlannerRequest req) {
+        for (PlannerRequest.Measure m : req.measures) {
+            if (m.fn == PlannerRequest.AggFn.PERCENTILE_CONT) {
+                return true;
+            }
+        }
+        for (PlannerRequest arm : req.unionArms) {
+            if (hasPercentileMeasure(arm)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String planInternal(PlannerRequest req) {

@@ -346,6 +346,10 @@ final class M4CubeIngester {
             if (m.aggregator != null) {
                 out.put("aggregator", m.aggregator);
             }
+            // #104 percentile parameter (for aggregator: percentile).
+            if (m.percentile != null) {
+                out.put("percentile", m.percentile);
+            }
             if (m.formatString != null) {
                 out.put("format_string", m.formatString);
             }

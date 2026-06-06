@@ -255,6 +255,8 @@ final class M4CubeBuilder {
         measure.column = M4YamlToXml.str(m.get("column"));
         measure.table = M4YamlToXml.str(m.get("table"));
         measure.aggregator = M4YamlToXml.str(m.get("aggregator"));
+        // #104 percentile parameter (for aggregator: percentile).
+        measure.percentile = M4YamlToXml.str(m.get("percentile"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
         List<MondrianDef.MeasureElement> kids = new ArrayList<>();
