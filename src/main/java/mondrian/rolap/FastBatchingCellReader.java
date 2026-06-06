@@ -296,6 +296,13 @@ public class FastBatchingCellReader implements CellReader {
                 new HashMap<SegmentHeader, SegmentBody>();
 
             for (final BatchLoader.RollupInfo rollup : response.rollups) {
+                // #104: never roll up a non-additive leaf aggregator
+                // (median/percentile) — a coarser grain cannot be derived
+                // from finer-grain sub-aggregates. Fall through to a
+                // fact-grain SQL load instead.
+                if (!rollup.measure.getAggregator().isRollupable()) {
+                    continue;
+                }
                 // Gather the required segments.
                 Map<SegmentHeader, SegmentBody> map =
                     findResidentRollupCandidate(headerBodies, rollup);
@@ -694,6 +701,12 @@ class BatchLoader {
         // Aggregator.supportsFastAggregates() to verify.
         if (MondrianProperties.instance()
                 .EnableInMemoryRollup.get()
+            // #104: non-additive leaf aggregators (median/percentile) are
+            // not rollupable — there is no median-of-medians. (They already
+            // fail supportsFastAggregates() below, but the explicit check
+            // states the intent and guards any future fast-aggregating yet
+            // non-rollupable aggregator.)
+            && measure.getAggregator().isRollupable()
             && measure.getAggregator().supportsFastAggregates(
                 measure.getDatatype())
             && measure.getAggregator().getRollup().supportsFastAggregates(

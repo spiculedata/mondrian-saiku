@@ -9,23 +9,13 @@
 */
 package mondrian.calcite;
 
-import mondrian.olap.Axis;
 import mondrian.olap.Connection;
-import mondrian.olap.DriverManager;
-import mondrian.olap.Position;
-import mondrian.olap.Query;
-import mondrian.olap.Result;
-import mondrian.olap.Util;
-import mondrian.rolap.RolapConnectionProperties;
-import mondrian.test.FoodMartHsqldbBootstrap;
-import mondrian.test.TestContext;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Tested alongside the plain {@code Balance} measure in the same query to
  * confirm mixed real + calc measures de-duplicate together.
  */
-public class BridgeCalcMeasureTest {
+public class BridgeCalcMeasureTest extends AbstractDualFormSchemaTest {
 
     private static final String[] DDL = {
         "DROP TABLE \"cm_fact\" IF EXISTS",
@@ -145,68 +135,29 @@ public class BridgeCalcMeasureTest {
             + "  </Cube>\n";
     }
 
-    private static Connection conn;
+    private static Map<String, Connection> conns;
 
     @BeforeAll
     public static void boot() throws Exception {
-        FoodMartHsqldbBootstrap.ensureExtracted();
-        Util.PropertyList base =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        try (java.sql.Connection c =
-                 java.sql.DriverManager.getConnection(
-                     base.get("Jdbc"), base.get("JdbcUser"),
-                     base.get("JdbcPassword"));
-             Statement st = c.createStatement())
-        {
-            for (String sql : DDL) {
-                st.execute(sql);
-            }
-        }
-        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
-        Util.PropertyList props =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        props.remove(RolapConnectionProperties.Catalog.name());
-        conn = DriverManager.getConnection(props, null, null);
+        conns = bootForms(DDL, SCHEMA);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
-        }
+        closeForms(conns);
     }
 
-    /** "rowCaption|colCaption" → value for a 2-axis grid. */
-    private Map<String, Double> grid(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis cols = r.getAxes()[0];
-        Axis rows = r.getAxes()[1];
-        int ri = 0;
-        for (Position rp : rows.getPositions()) {
-            int ci = 0;
-            for (Position cp : cols.getPositions()) {
-                Object v = r.getCell(new int[]{ci, ri}).getValue();
-                out.put(
-                    rp.get(0).getName() + "|" + cp.get(0).getName(),
-                    v == null ? null : ((Number) v).doubleValue());
-                ci++;
-            }
-            ri++;
-        }
-        r.close();
-        return out;
+    @Override
+    protected Connection conn(String form) {
+        return conns.get(form);
     }
 
     /** Calc-column measure de-duplicates at the rolled-up Segment level,
      *  alongside a plain real-column measure in the same query. */
-    @Test
-    public void calcMeasureBySegmentDedupes() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void calcMeasureBySegmentDedupes(String form) {
+        Map<String, Double> g = grid(form,
             "SELECT {[Measures].[Balance], [Measures].[Net]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
             + "FROM [Accounts]");
@@ -218,9 +169,10 @@ public class BridgeCalcMeasureTest {
     }
 
     /** Leaf level: calc measure correct per customer (naturally distinct). */
-    @Test
-    public void calcMeasureByCustomerLeaf() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void calcMeasureByCustomerLeaf(String form) {
+        Map<String, Double> g = grid(form,
             "SELECT {[Measures].[Net]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Customer].Members ON ROWS\n"
             + "FROM [Accounts]");
@@ -231,9 +183,10 @@ public class BridgeCalcMeasureTest {
 
     /** Weighted allocation over a calc-column measure: each account's
      *  net is split by the owner's weight — SUM((balance - cost) × weight). */
-    @Test
-    public void weightedCalcMeasureByCustomer() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedCalcMeasureByCustomer(String form) {
+        Map<String, Double> g = grid(form,
             "SELECT {[Measures].[Net]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");
@@ -245,9 +198,10 @@ public class BridgeCalcMeasureTest {
     }
 
     /** Weighted calc measure rolled up to Segment (additive, no dedup). */
-    @Test
-    public void weightedCalcMeasureBySegment() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedCalcMeasureBySegment(String form) {
+        Map<String, Double> g = grid(form,
             "SELECT {[Measures].[Net]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");

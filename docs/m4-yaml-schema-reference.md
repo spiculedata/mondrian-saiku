@@ -541,10 +541,29 @@ Each entry in `measures` is either a **measure definition** (has `name`) or a **
 | `name` | yes | `name=` | Measure display name |
 | `column` | no | `column=` | Source column |
 | `table` | no | `table=` | Override table (rare; usually taken from the measure group) |
-| `aggregator` | yes | `aggregator=` | `sum`, `count`, `distinct-count`, `min`, `max`, `avg` |
+| `aggregator` | yes | `aggregator=` | `sum`, `count`, `distinct-count`, `min`, `max`, `avg`, and the non-additive leaf aggregators `median`, `percentile` |
+| `percentile` | no | `percentile=` | For `aggregator: "percentile"`, the percentile to compute (0–100, default 50). Ignored otherwise. |
 | `format_string` | no | `formatString=` | MDX format string (e.g. `"#,###.00"`, `"Standard"`, `"Currency"`) |
 | `datatype` | no | `datatype=` | `Numeric`, `Integer`, `String` |
+| `caption` | no | `caption=` | Display caption |
+| `description` | no | `description=` | Description |
+| `visible` | no | `visible=` | `false` to hide from clients (default `true`) |
 | `properties` | no | `<CalculatedMemberProperty>` | List of `{name, value}` maps (e.g. `MEMBER_ORDINAL`) |
+
+> **Non-additive aggregators** (`median`, `percentile`) compute at the exact queried grain via `PERCENTILE_CONT(...) WITHIN GROUP (ORDER BY column)`. They are **not rolled up** (no median-of-medians) and are excluded from aggregate-table substitution and segment rollup-from-cache. They require the Calcite backend on a database that supports `PERCENTILE_CONT` (PostgreSQL, Oracle, SQL Server, Snowflake, BigQuery, H2, DuckDB, …); other backends are refused with a clear error.
+
+```yaml
+# Median order value (= percentile 50)
+- name: "Median Order Value"
+  column: "order_total"
+  aggregator: "median"
+
+# 90th percentile
+- name: "P90 Latency"
+  column: "latency_ms"
+  aggregator: "percentile"
+  percentile: 90
+```
 
 **Measure reference** — maps to `<MeasureRef>` (used in aggregate measure groups to point at a measure defined in the primary group):
 
@@ -695,6 +714,39 @@ Each entry in `column_refs` has:
   dimension: "Store"
   via_dimension: "Employee"
   via_attribute: "Store Id"
+```
+
+**`bridge`** — a many-to-many relationship: the fact joins to the dimension through an intermediate **bridge table** (e.g. a joint bank account co-owned by several customers). The fact→bridge hop fans out, so measures are allocated either full-count (deduplicated on the fact grain) or split by a weight column. Maps to `<BridgeLink>`. Requires the Calcite backend, and the fact table must declare its grain as a `<Key>` (under `physical_schema.tables`).
+
+| Key | Required | Notes |
+|---|---|---|
+| `type` | yes | `"bridge"` |
+| `dimension` | yes | The many-to-many dimension name |
+| `bridge_table` | yes | The intermediate (bridge) table mapping fact rows to dimension members |
+| `fact_foreign_key_column` | yes | Fact-grain key column on the fact table |
+| `bridge_fact_key_column` | yes | Bridge column matching `fact_foreign_key_column` |
+| `bridge_dimension_key_column` | yes | Bridge column matching the dimension key |
+| `aggregation` | no | `"fullCount"` (default, omit to use it) or `"weighted"` |
+| `weight_column` | no | Allocation-weight column on the bridge; required when `aggregation: "weighted"` |
+
+```yaml
+# Full-count (the default): omit aggregation/weight_column.
+- type: "bridge"
+  dimension: "Customer"
+  bridge_table: "account_owner"
+  fact_foreign_key_column: "account_id"
+  bridge_fact_key_column: "account_id"
+  bridge_dimension_key_column: "customer_id"
+
+# Weighted allocation: split each measure by the bridge weight.
+- type: "bridge"
+  dimension: "Customer"
+  bridge_table: "account_owner"
+  fact_foreign_key_column: "account_id"
+  bridge_fact_key_column: "account_id"
+  bridge_dimension_key_column: "customer_id"
+  aggregation: "weighted"
+  weight_column: "weight"
 ```
 
 **Full measure group example** (from the Sales cube):

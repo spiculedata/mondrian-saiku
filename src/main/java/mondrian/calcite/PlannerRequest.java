@@ -24,7 +24,7 @@ import java.util.List;
  */
 public final class PlannerRequest {
 
-    public enum AggFn { SUM, COUNT, MIN, MAX, AVG }
+    public enum AggFn { SUM, COUNT, MIN, MAX, AVG, PERCENTILE_CONT }
     public enum Order { ASC, DESC }
 
     public static final class Column {
@@ -72,6 +72,11 @@ public final class PlannerRequest {
          *  {@code SUM(operand × weight)}. Orthogonal to the other operand
          *  fields. Only set for weighted bridges. */
         public final Column weightColumn;
+        /** #104 ordered-set aggregate: the fraction (0..1) for
+         *  {@code PERCENTILE_CONT(fraction) WITHIN GROUP (ORDER BY column)}.
+         *  Non-null iff {@link #fn} is {@link AggFn#PERCENTILE_CONT}; the
+         *  ORDER BY target is {@link #column}. */
+        public final Double percentileFraction;
         /** Sentinel value used in {@link #literal} to represent SQL NULL,
          *  distinguishing it from the field being unset (which is also
          *  Java null). */
@@ -116,6 +121,31 @@ public final class PlannerRequest {
             this.caseExpr = caseExpr;
             this.arithExpr = arithExpr;
             this.weightColumn = weightColumn;
+            this.percentileFraction = null;
+        }
+
+        /** #104: a {@code PERCENTILE_CONT(fraction) WITHIN GROUP (ORDER BY
+         *  orderColumn)} ordered-set aggregate measure. */
+        private Measure(
+            String alias, Column orderColumn, double percentileFraction)
+        {
+            this.fn = AggFn.PERCENTILE_CONT;
+            this.column = orderColumn;
+            this.alias = alias;
+            this.distinct = false;
+            this.literal = null;
+            this.caseExpr = null;
+            this.arithExpr = null;
+            this.weightColumn = null;
+            this.percentileFraction = percentileFraction;
+        }
+
+        /** A percentile (median = 0.5) ordered-set aggregate measure that
+         *  orders by {@code orderColumn}. */
+        public static Measure percentile(
+            String alias, Column orderColumn, double fraction)
+        {
+            return new Measure(alias, orderColumn, fraction);
         }
 
         /** Copy of {@code base} that multiplies its operand by

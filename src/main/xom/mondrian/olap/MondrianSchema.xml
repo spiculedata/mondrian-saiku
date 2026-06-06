@@ -1659,9 +1659,20 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
         <Attribute name="aggregator" required="true">
             <Doc>
                 Aggregation function. Allowed values are "sum", "count", "min",
-                "max", "avg", and "distinct-count". ("distinct count" is allowed
-                for backwards compatibility, but is deprecated because XML
-                enumerated attributes in a DTD cannot legally contain spaces.)
+                "max", "avg", "distinct-count", and the non-additive leaf
+                aggregators "median" and "percentile" (#104; require the
+                Calcite backend, correct only at the queried grain).
+                ("distinct count" is allowed for backwards compatibility, but
+                is deprecated because XML enumerated attributes in a DTD
+                cannot legally contain spaces.)
+            </Doc>
+        </Attribute>
+        <Attribute name="percentile" required="false">
+            <Doc>
+                For aggregator="percentile", the percentile to compute, given
+                as a number between 0 and 100 (e.g. "90" for the 90th
+                percentile). Ignored for other aggregators; defaults to 50
+                (the median) when omitted.
             </Doc>
         </Attribute>
         <Attribute name="formatter" required="false">

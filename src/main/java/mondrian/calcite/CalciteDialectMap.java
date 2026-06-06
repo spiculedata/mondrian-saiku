@@ -14,6 +14,7 @@ import org.apache.calcite.sql.SqlDialectFactory;
 import org.apache.calcite.sql.SqlDialectFactoryImpl;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.dialect.BigQuerySqlDialect;
+import org.apache.calcite.sql.dialect.H2SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.apache.calcite.sql.dialect.DuckDBSqlDialect;
@@ -256,6 +257,13 @@ public final class CalciteDialectMap {
         if (p.contains("duckdb")) {
             return QUOTING_DUCKDB;
         }
+        // H2: Calcite's factory flattens it to AnsiSqlDialect (product
+        // UNKNOWN), which loses the DatabaseProduct.H2 that #104's
+        // PERCENTILE_CONT dialect check relies on. The demo runs on H2, so
+        // curate it explicitly to keep the product.
+        if (p.equals("h2")) {
+            return QUOTING_H2;
+        }
         // Calcite ships SqlDialect subclasses for these, but
         // SqlDialectFactoryImpl.create(md) doesn't match the JDBC
         // product-name string returned by their official drivers, so
@@ -327,6 +335,21 @@ public final class CalciteDialectMap {
     private static final SqlDialect QUOTING_DUCKDB =
         new DuckDBSqlDialect(
             DuckDBSqlDialect.DEFAULT_CONTEXT
+                .withIdentifierQuoteString("\""))
+        {
+            @Override
+            protected boolean identifierNeedsQuote(String val) {
+                return true;
+            }
+        };
+
+    /** H2 dialect with force-quoting, preserving {@code DatabaseProduct.H2}
+     *  (Calcite's factory otherwise flattens H2 to a product-less
+     *  AnsiSqlDialect). Needed so #104 recognises H2 as a PERCENTILE_CONT
+     *  backend — the demo's datasource. */
+    private static final SqlDialect QUOTING_H2 =
+        new H2SqlDialect(
+            H2SqlDialect.DEFAULT_CONTEXT
                 .withIdentifierQuoteString("\""))
         {
             @Override

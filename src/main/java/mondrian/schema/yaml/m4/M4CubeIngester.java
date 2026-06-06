@@ -37,6 +37,8 @@ final class M4CubeIngester {
         if (c.defaultMeasure != null) {
             out.put("default_measure", c.defaultMeasure);
         }
+        // #110 display attributes.
+        M4XmlToYaml.putDisplay(out, c.caption, c.description, c.visible);
         if (c.childArray != null) {
             Map<String, Object> annMap = null;
             List<Object> dimList = null;
@@ -240,8 +242,15 @@ final class M4CubeIngester {
 
     private static Map<String, Object> cubeDimension(MondrianDef.Dimension d) {
         if (d.source != null) {
-            // Dimension usage — reference to a shared dimension
+            // Dimension usage — reference to a shared dimension. #109: keep
+            // the role-play `name` when it differs from the source, else two
+            // distinct role-played usages (Order Date / Ship Date over one
+            // Date dimension) collapse to identical anonymous refs and the
+            // dimension_links that target the role names dangle.
             Map<String, Object> out = new LinkedHashMap<>();
+            if (d.name != null && !d.name.equals(d.source)) {
+                out.put("name", d.name);
+            }
             out.put("source", d.source);
             return out;
         }
@@ -346,12 +355,18 @@ final class M4CubeIngester {
             if (m.aggregator != null) {
                 out.put("aggregator", m.aggregator);
             }
+            // #104 percentile parameter (for aggregator: percentile).
+            if (m.percentile != null) {
+                out.put("percentile", m.percentile);
+            }
             if (m.formatString != null) {
                 out.put("format_string", m.formatString);
             }
             if (m.datatype != null) {
                 out.put("datatype", m.datatype);
             }
+            // #110 display attributes.
+            M4XmlToYaml.putDisplay(out, m.caption, m.description, m.visible);
             // Capture CalculatedMemberProperty children (e.g. MEMBER_ORDINAL).
             // Dropping these causes ordinal collisions with calculated members.
             if (m.childArray != null) {
@@ -431,6 +446,32 @@ final class M4CubeIngester {
             }
             if (rl.viaAttribute != null) {
                 out.put("via_attribute", rl.viaAttribute);
+            }
+        } else if (dl instanceof MondrianDef.BridgeLink) {
+            // #107 bridge (many-to-many) link. Mirror of the YAML→XML map in
+            // M4CubeBuilder.buildDimensionLink. Only non-null attributes are
+            // emitted, so an omitted (defaulted) aggregation round-trips
+            // without being materialised as 'fullCount'.
+            MondrianDef.BridgeLink bl = (MondrianDef.BridgeLink) dl;
+            out.put("type", "bridge");
+            out.put("dimension", bl.dimension);
+            if (bl.bridgeTable != null) {
+                out.put("bridge_table", bl.bridgeTable);
+            }
+            if (bl.factForeignKeyColumn != null) {
+                out.put("fact_foreign_key_column", bl.factForeignKeyColumn);
+            }
+            if (bl.bridgeFactKeyColumn != null) {
+                out.put("bridge_fact_key_column", bl.bridgeFactKeyColumn);
+            }
+            if (bl.bridgeDimensionKeyColumn != null) {
+                out.put("bridge_dimension_key_column", bl.bridgeDimensionKeyColumn);
+            }
+            if (bl.aggregation != null) {
+                out.put("aggregation", bl.aggregation);
+            }
+            if (bl.weightColumn != null) {
+                out.put("weight_column", bl.weightColumn);
             }
         }
         return out;

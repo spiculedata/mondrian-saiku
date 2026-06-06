@@ -38,41 +38,29 @@ physical_schema:
     - name: "full_name"
       type: "String"
       expression:
-        oracle: "\n                            {col:fname}  || ' ' || {col:lname}\n\
-          \                        "
-        access: "\n                            {col:fname}  + ' ' + {col:lname}\n\
-          \                        "
-        postgres: "\n                            {col:fname}  || ' ' || {col:lname}\n\
-          \                        "
-        mysql: "\n                            CONCAT({col:fname}, ' ', {col:lname})\n\
-          \                        "
-        mssql: "\n                            {col:fname} + ' ' + {col:lname}\n  \
-          \                      "
-        derby: "\n                            {col:fullname}\n                   \
-          \     "
-        db2: "\n                            CONCAT(CONCAT({col:fname}, ' '), {col:lname})\n\
-          \                        "
-        luciddb: "\n                            {col:fname}  || ' ' || {col:lname}\n\
-          \                        "
-        generic: "\n                            {col:fullname}\n                 \
-          \       "
+        oracle: "{col:fname}  || ' ' || {col:lname}"
+        access: "{col:fname}  + ' ' + {col:lname}"
+        postgres: "{col:fname}  || ' ' || {col:lname}"
+        mysql: "CONCAT({col:fname}, ' ', {col:lname})"
+        mssql: "{col:fname} + ' ' + {col:lname}"
+        derby: "{col:fullname}"
+        db2: "CONCAT(CONCAT({col:fname}, ' '), {col:lname})"
+        luciddb: "{col:fname}  || ' ' || {col:lname}"
+        generic: "{col:fullname}"
   - name: "sales_fact_1997"
     calculated_columns:
     - name: "promotion_sales"
       expression:
-        access: "\n                            Iif({col:sales_fact_1997.promotion_id}\
-          \ = 0, 0,\n                            {col:sales_fact_1997.store_sales})\n\
-          \                        "
-        generic: "\n                        case when {col:sales_fact_1997.promotion_id}\
-          \ = 0 then 0\n                        else {col:sales_fact_1997.store_sales}\
-          \ end\n                    "
+        access: "Iif({col:sales_fact_1997.promotion_id} = 0, 0,\n                \
+          \            {col:sales_fact_1997.store_sales})"
+        generic: "case when {col:sales_fact_1997.promotion_id} = 0 then 0\n      \
+          \                  else {col:sales_fact_1997.store_sales} end"
   - name: "inventory_fact_1997"
     calculated_columns:
     - name: "warehouse_profit"
       expression:
-        generic: "\n                            {col:inventory_fact_1997.warehouse_sales}\n\
-          \                            -\n                            {col:warehouse_cost}\n\
-          \                        "
+        generic: "{col:inventory_fact_1997.warehouse_sales}\n                    \
+          \        -\n                            {col:warehouse_cost}"
   - name: "warehouse"
     key:
     - "warehouse_id"

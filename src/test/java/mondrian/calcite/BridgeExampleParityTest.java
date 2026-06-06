@@ -9,23 +9,13 @@
 */
 package mondrian.calcite;
 
-import mondrian.olap.Axis;
 import mondrian.olap.Connection;
-import mondrian.olap.DriverManager;
-import mondrian.olap.Position;
-import mondrian.olap.Query;
-import mondrian.olap.Result;
-import mondrian.olap.Util;
-import mondrian.rolap.RolapConnectionProperties;
-import mondrian.test.FoodMartHsqldbBootstrap;
-import mondrian.test.TestContext;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,7 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * {@code schema.xml} (two cubes — full-count and weighted — over one fact),
  * retargeted to the test's HSQLDB instead of Postgres.
  */
-public class BridgeExampleParityTest {
+public class BridgeExampleParityTest extends AbstractDualFormSchemaTest {
 
     private static final String[] DDL = {
         "DROP TABLE \"mm_fact\" IF EXISTS",
@@ -175,84 +165,44 @@ public class BridgeExampleParityTest {
                " aggregation='weighted' weightColumn='weight'")
         + "</Schema>\n";
 
-    private static Connection conn;
+    private static Map<String, Connection> conns;
 
     @BeforeAll
     public static void boot() throws Exception {
-        FoodMartHsqldbBootstrap.ensureExtracted();
-        Util.PropertyList base =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        try (java.sql.Connection c =
-                 java.sql.DriverManager.getConnection(
-                     base.get("Jdbc"), base.get("JdbcUser"),
-                     base.get("JdbcPassword"));
-             Statement st = c.createStatement())
-        {
-            for (String sql : DDL) {
-                st.execute(sql);
-            }
-        }
-        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
-        Util.PropertyList props =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        props.remove(RolapConnectionProperties.Catalog.name());
-        conn = DriverManager.getConnection(props, null, null);
+        conns = bootForms(DDL, SCHEMA);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
-        }
+        closeForms(conns);
     }
 
-    private Map<String, Double> rowMap(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis rows = r.getAxes()[1];
-        int i = 0;
-        for (Position pos : rows.getPositions()) {
-            Object v = r.getCell(new int[]{0, i}).getValue();
-            out.put(
-                pos.get(0).getName(),
-                v == null ? null : ((Number) v).doubleValue());
-            i++;
-        }
-        r.close();
-        return out;
-    }
-
-    private Double scalar(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Object v = r.getCell(new int[]{0}).getValue();
-        r.close();
-        return v == null ? null : ((Number) v).doubleValue();
+    @Override
+    protected Connection conn(String form) {
+        return conns.get(form);
     }
 
     // README Query 1 — grand totals.
-    @Test
-    public void grandTotals() {
-        assertEquals(13000.0, scalar(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void grandTotals(String form) {
+        assertEquals(13000.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS"
             + " FROM [Accounts Full Count]"), 0.001);
-        assertEquals(130.0, scalar(
+        assertEquals(130.0, scalar(form, 
             "SELECT {[Measures].[Fees]} ON COLUMNS"
             + " FROM [Accounts Full Count]"), 0.001);
         // Weighted reconciles to the same totals.
-        assertEquals(13000.0, scalar(
+        assertEquals(13000.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS"
             + " FROM [Accounts Weighted]"), 0.001);
     }
 
     // README Query 2 — balance by branch (normal star).
-    @Test
-    public void balanceByBranch() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void balanceByBranch(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,"
             + " [Branch].[Branch].Members ON ROWS"
             + " FROM [Accounts Full Count]");
@@ -261,9 +211,10 @@ public class BridgeExampleParityTest {
     }
 
     // README Query 3 — full-count balance by customer.
-    @Test
-    public void fullCountByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,"
             + " NON EMPTY [Customer].[Customer].[Customer].Members ON ROWS"
             + " FROM [Accounts Full Count]");
@@ -280,9 +231,10 @@ public class BridgeExampleParityTest {
     }
 
     // README — full-count (All) de-duplicates to 13000, not 21000.
-    @Test
-    public void fullCountAllDedupes() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountAllDedupes(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,"
             + " {[Customer].[Customer].[All Customer]} ON ROWS"
             + " FROM [Accounts Full Count]");
@@ -290,9 +242,10 @@ public class BridgeExampleParityTest {
     }
 
     // README Query 4 — weighted balance by customer (sums to 13000).
-    @Test
-    public void weightedByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,"
             + " NON EMPTY [Customer].[Customer].[Customer].Members ON ROWS"
             + " FROM [Accounts Weighted]");
@@ -313,9 +266,10 @@ public class BridgeExampleParityTest {
     }
 
     // README Query 6 — a bridge member in the slicer.
-    @Test
-    public void bridgeSlicerBranchRows() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void bridgeSlicerBranchRows(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,"
             + " NON EMPTY [Branch].[Branch].Members ON ROWS"
             + " FROM [Accounts Full Count]"

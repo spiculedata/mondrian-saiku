@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>pentaho</groupId>
   <artifactId>mondrian</artifactId>
-  <version>4.8.1.21</version>
+  <version>4.8.1.22</version>
   <name>mondrian</name>
   <description>Mondrian OLAP engine (Saiku fork, modernized for Java 8+)</description>
   <url>https://github.com/spiculedata/mondrian-saiku</url>
@@ -123,6 +123,15 @@
       <groupId>hsqldb</groupId>
       <artifactId>hsqldb</artifactId>
       <version>1.8.0.10</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- H2 2.x: test-only backend for ordered-set aggregates
+         (PERCENTILE_CONT / MEDIAN, #104). HSQLDB 1.8 cannot execute these,
+         so the non-additive-aggregator value proofs run against H2. -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <version>2.2.224</version>
       <scope>test</scope>
     </dependency>
     <!-- DuckDB JDBC: alternate FoodMart backend for the Calcite-strict-mode

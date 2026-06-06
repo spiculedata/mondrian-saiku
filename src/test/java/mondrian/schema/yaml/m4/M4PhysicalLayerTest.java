@@ -450,6 +450,122 @@ public class M4PhysicalLayerTest {
         assertEquals(yaml, yaml2);
     }
 
+    // ---- #107 bridge (many-to-many) dimension link ----
+
+    /** Weighted bridge: every attribute set, exercising the full surface. */
+    private static final String BRIDGE_XML =
+        "<Schema name='Bank' metamodelVersion='4.0'>"
+        + "<Cube name='Accounts'>"
+        + "<MeasureGroups><MeasureGroup name='Balances' table='account_fact'>"
+        + "<Measures>"
+        + "<Measure name='Balance' column='balance' aggregator='sum'/>"
+        + "</Measures>"
+        + "<DimensionLinks>"
+        + "<ForeignKeyLink dimension='Date' foreignKeyColumn='date_key'/>"
+        + "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+        + " factForeignKeyColumn='account_id' bridgeFactKeyColumn='account_id'"
+        + " bridgeDimensionKeyColumn='customer_id' aggregation='weighted'"
+        + " weightColumn='weight'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "</Cube></Schema>";
+
+    /** Full-count bridge: aggregation + weight omitted (the default). */
+    private static final String BRIDGE_FULLCOUNT_XML =
+        "<Schema name='Bank' metamodelVersion='4.0'>"
+        + "<Cube name='Accounts'>"
+        + "<MeasureGroups><MeasureGroup name='Balances' table='account_fact'>"
+        + "<Measures>"
+        + "<Measure name='Balance' column='balance' aggregator='sum'/>"
+        + "</Measures>"
+        + "<DimensionLinks>"
+        + "<BridgeLink dimension='Customer' bridgeTable='account_owner'"
+        + " factForeignKeyColumn='account_id' bridgeFactKeyColumn='account_id'"
+        + " bridgeDimensionKeyColumn='customer_id'/>"
+        + "</DimensionLinks>"
+        + "</MeasureGroup></MeasureGroups>"
+        + "</Cube></Schema>";
+
+    /** #104: a percentile measure round-trips with its percentile param. */
+    @Test
+    public void percentileMeasureRoundTrips() {
+        String xml =
+            "<Schema name='S' metamodelVersion='4.0'>"
+            + "<Cube name='C'><MeasureGroups>"
+            + "<MeasureGroup name='G' table='f'>"
+            + "<Measures>"
+            + "<Measure name='Median Amt' column='amt' aggregator='median'/>"
+            + "<Measure name='P90 Amt' column='amt' aggregator='percentile'"
+            + " percentile='90'/>"
+            + "</Measures>"
+            + "</MeasureGroup></MeasureGroups></Cube></Schema>";
+        String yaml = M4XmlToYaml.toYaml(xml);
+        assertTrue(yaml, yaml.contains("aggregator: \"median\"")
+            || yaml.contains("aggregator: median"));
+        assertTrue(yaml, yaml.contains("aggregator: \"percentile\"")
+            || yaml.contains("aggregator: percentile"));
+        assertTrue(yaml, yaml.contains("percentile: \"90\"")
+            || yaml.contains("percentile: 90"));
+        // YAML -> XML preserves the percentile attribute.
+        String back = M4YamlToXml.toXml(yaml);
+        assertTrue(back, back.contains("aggregator=\"percentile\""));
+        assertTrue(back, back.contains("percentile=\"90\""));
+        // Idempotent emit.
+        assertEquals(yaml, M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml)));
+    }
+
+    @Test
+    public void ingestsBridgeLink() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        assertTrue(yaml, yaml.contains("type: \"bridge\"")
+            || yaml.contains("type: bridge"));
+        assertTrue(yaml, yaml.contains("dimension: \"Customer\"")
+            || yaml.contains("dimension: Customer"));
+        assertTrue(yaml, yaml.contains("bridge_table"));
+        assertTrue(yaml, yaml.contains("account_owner"));
+        assertTrue(yaml, yaml.contains("fact_foreign_key_column"));
+        assertTrue(yaml, yaml.contains("bridge_fact_key_column"));
+        assertTrue(yaml, yaml.contains("bridge_dimension_key_column"));
+        assertTrue(yaml, yaml.contains("aggregation"));
+        assertTrue(yaml, yaml.contains("weighted"));
+        assertTrue(yaml, yaml.contains("weight_column"));
+    }
+
+    @Test
+    public void emitsBridgeLink() {
+        // Drive YAML -> XML from the YAML the ingester produced.
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        String xml = M4YamlToXml.toXml(yaml);
+        assertTrue(xml, xml.contains("<BridgeLink"));
+        assertTrue(xml, xml.contains("dimension=\"Customer\""));
+        assertTrue(xml, xml.contains("bridgeTable=\"account_owner\""));
+        assertTrue(xml, xml.contains("factForeignKeyColumn=\"account_id\""));
+        assertTrue(xml, xml.contains("bridgeFactKeyColumn=\"account_id\""));
+        assertTrue(xml, xml.contains("bridgeDimensionKeyColumn=\"customer_id\""));
+        assertTrue(xml, xml.contains("aggregation=\"weighted\""));
+        assertTrue(xml, xml.contains("weightColumn=\"weight\""));
+    }
+
+    @Test
+    public void bridgeLinkRoundTripsThroughEmit() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_XML);
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
+    /** A full-count bridge omits aggregation/weight in YAML (no default
+     *  materialised) and still round-trips identically. */
+    @Test
+    public void fullCountBridgeOmitsDefaultsAndRoundTrips() {
+        String yaml = M4XmlToYaml.toYaml(BRIDGE_FULLCOUNT_XML);
+        assertTrue(yaml, yaml.contains("type: \"bridge\"")
+            || yaml.contains("type: bridge"));
+        assertFalse(yaml, yaml.contains("aggregation"));
+        assertFalse(yaml, yaml.contains("weight_column"));
+        String yaml2 = M4XmlToYaml.toYaml(M4YamlToXml.toXml(yaml));
+        assertEquals(yaml, yaml2);
+    }
+
     // ---- calc members + named sets ----
 
     private static final String CALC_XML =
@@ -620,8 +736,15 @@ public class M4PhysicalLayerTest {
      * token scheme itself is correct; the round-trip breaks in the XML-emit
      * step, not in the encoding step.  Kept as {@code @Ignore} to document
      * the defect without breaking the build.
+     *
+     * <p>Partially improved (#111): {@code M4XmlToYaml.sqlText} now trims
+     * the SQL body, so XOM's leading/trailing indentation no longer
+     * accumulates — which fixes plain-SQL views and the FoodMart corpus.
+     * The INTERIOR case here (whitespace XOM inserts between adjacent
+     * {@code <Column>} mixed-content nodes) is still open, so this stays
+     * {@code @Ignore}.
      */
-    @Ignore("real bug: XOM toXML() adds whitespace TextDef nodes inside <SQL>; yaml != yaml2")
+    @Ignore("XOM toXML() adds whitespace between inline <Column> nodes inside <SQL>; interior case still open")
     @Test
     public void calcColumnSqlInlineColumnRefsRoundTrip() {
         String xml =

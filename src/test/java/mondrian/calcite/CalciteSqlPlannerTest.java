@@ -14,6 +14,7 @@ import mondrian.test.FoodMartHsqldbBootstrap;
 import org.apache.calcite.config.NullCollation;
 import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.dialect.HsqldbSqlDialect;
+import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
 import org.junit.jupiter.api.BeforeAll;import org.junit.jupiter.api.Test;
 
 import static org.junit.Assert.assertFalse;import static org.junit.Assert.assertNotEquals;import static org.junit.Assert.assertNotNull;import static org.junit.Assert.assertTrue;
@@ -68,6 +69,91 @@ public class CalciteSqlPlannerTest {
         assertTrue("expected GROUP BY in: " + sql, lower.contains("group by"));
         assertTrue("expected the_year in: " + sql, lower.contains("the_year"));
         assertTrue("expected SUM in: " + sql, lower.contains("sum("));
+    }
+
+    /** #104: a median (percentile 0.5) measure emits
+     *  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col). */
+    @Test
+    public void medianEmitsPercentileContWithinGroup() {
+        // PERCENTILE_CONT is emitted for a supporting dialect (Postgres).
+        CalciteSqlPlanner planner = plannerFor(PostgresqlSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addJoin(new PlannerRequest.Join(
+                "time_by_day", "time_id", "time_id"))
+            .addGroupBy(new PlannerRequest.Column("time_by_day", "the_year"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "med_sales",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.5))
+            .build();
+        String sql = planner.plan(req);
+        assertNotNull(sql);
+        String lower = sql.toLowerCase();
+        assertTrue("expected PERCENTILE_CONT in: " + sql,
+            lower.contains("percentile_cont("));
+        assertTrue("expected the fraction 0.5 in: " + sql,
+            lower.contains("0.5"));
+        assertTrue("expected WITHIN GROUP in: " + sql,
+            lower.contains("within group"));
+        assertTrue("expected ORDER BY unit_sales in: " + sql,
+            lower.contains("order by") && lower.contains("unit_sales"));
+    }
+
+    /** #104: percentile(0.9) renders the requested fraction. */
+    @Test
+    public void percentile90EmitsFraction() {
+        CalciteSqlPlanner planner = plannerFor(PostgresqlSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "p90_sales",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.9))
+            .build();
+        String sql = planner.plan(req).toLowerCase();
+        assertTrue("expected PERCENTILE_CONT(0.9) in: " + sql,
+            sql.contains("percentile_cont(") && sql.contains("0.9"));
+    }
+
+    /** #104: a percentile measure on a backend without PERCENTILE_CONT
+     *  (HSQLDB) is REFUSED with a clear error, not silently mis-emitted. */
+    @Test
+    public void percentileRefusedOnUnsupportedDialect() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(PlannerRequest.Measure.percentile(
+                "med",
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                0.5))
+            .build();
+        try {
+            planner.plan(req);
+            org.junit.jupiter.api.Assertions.fail(
+                "expected REFUSE on HSQLDB");
+        } catch (RuntimeException e) {
+            String msg = String.valueOf(e.getMessage()).toLowerCase();
+            assertTrue("expected a clear percentile message: " + e.getMessage(),
+                msg.contains("percentile_cont") || msg.contains("percentile"));
+        }
+    }
+
+    /** A non-percentile (plain SUM) query is unaffected by the refuse on a
+     *  non-supporting dialect. */
+    @Test
+    public void plainAggregateAllowedOnAnyDialect() {
+        CalciteSqlPlanner planner = plannerFor(HsqldbSqlDialect.DEFAULT);
+        PlannerRequest req = PlannerRequest.builder("sales_fact_1997")
+            .addGroupBy(
+                new PlannerRequest.Column("sales_fact_1997", "store_id"))
+            .addMeasure(new PlannerRequest.Measure(
+                PlannerRequest.AggFn.SUM,
+                new PlannerRequest.Column("sales_fact_1997", "unit_sales"),
+                "us"))
+            .build();
+        assertNotNull(planner.plan(req));
     }
 
     @Test

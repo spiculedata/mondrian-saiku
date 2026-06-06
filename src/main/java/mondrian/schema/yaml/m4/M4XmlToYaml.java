@@ -62,6 +62,23 @@ public final class M4XmlToYaml {
         if (schema.metamodelVersion != null) {
             header.put("metamodel_version", schema.metamodelVersion);
         }
+        // #110 display attributes.
+        if (schema.caption != null) {
+            header.put("caption", schema.caption);
+        }
+        if (schema.description != null) {
+            header.put("description", schema.description);
+        }
+        if (schema.measuresCaption != null) {
+            header.put("measures_caption", schema.measuresCaption);
+        }
+        // #110: missingLink (default "warning"); emit only when set to a
+        // non-default value so an omitted attribute is not materialised.
+        if (schema.missingLink != null
+            && !"warning".equals(schema.missingLink))
+        {
+            header.put("missing_link", schema.missingLink);
+        }
         root.put("schema", header);
 
         if (schema.childArray != null) {
@@ -126,11 +143,14 @@ public final class M4XmlToYaml {
     {
         Map<String, Object> out = new LinkedHashMap<>();
         List<Object> tables = new ArrayList<>();
+        List<Object> queries = new ArrayList<>();
         List<Object> links = new ArrayList<>();
         if (ps.childArray != null) {
             for (Object child : ps.childArray) {
                 if (child instanceof MondrianDef.Table) {
                     tables.add(table((MondrianDef.Table) child));
+                } else if (child instanceof MondrianDef.Query) {
+                    queries.add(query((MondrianDef.Query) child));
                 } else if (child instanceof MondrianDef.Link) {
                     links.add(link((MondrianDef.Link) child));
                 }
@@ -139,8 +159,41 @@ public final class M4XmlToYaml {
         if (!tables.isEmpty()) {
             out.put("tables", tables);
         }
+        if (!queries.isEmpty()) {
+            out.put("queries", queries);
+        }
         if (!links.isEmpty()) {
             out.put("links", links);
+        }
+        return out;
+    }
+
+    /**
+     * #111: a {@code <Query>} SQL-backed physical table (an
+     * {@code <ExpressionView>} "view" in the physical schema). Emits alias,
+     * keyColumn, and the per-dialect SQL so the view round-trips instead of
+     * vanishing (leaving dimensions referencing a dropped table).
+     */
+    private static Map<String, Object> query(MondrianDef.Query q) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("alias", q.alias);
+        if (q.keyColumn != null) {
+            out.put("key_column", q.keyColumn);
+        }
+        if (q.childArray != null) {
+            for (Object child : q.childArray) {
+                if (child instanceof MondrianDef.ExpressionView) {
+                    MondrianDef.ExpressionView view =
+                        (MondrianDef.ExpressionView) child;
+                    if (view.expressions != null) {
+                        Map<String, Object> expr = new LinkedHashMap<>();
+                        for (MondrianDef.SQL sql : view.expressions) {
+                            expr.put(sql.dialect, sqlText(sql));
+                        }
+                        out.put("expression", expr);
+                    }
+                }
+            }
         }
         return out;
     }
@@ -263,10 +316,36 @@ public final class M4XmlToYaml {
                 // other node types (rare) are silently skipped
             }
         }
-        return buf.toString();
+        // Trim leading/trailing whitespace. XOM's toXML() pretty-prints the
+        // <SQL> body with indentation; without trimming, that indentation is
+        // re-captured on each XML→YAML pass and ACCUMULATES (#111 /
+        // calc-column round-trip), so the conversion never reaches a fixed
+        // point. SQL is insensitive to surrounding whitespace, and interior
+        // text (incl. {col:...} tokens) is preserved.
+        return buf.toString().trim();
     }
 
     // ---- shared dimension helpers ----
+
+    /**
+     * #110: emit the optional display attributes — caption, description, and
+     * visible (only when explicitly false; true is the XOM default) — shared
+     * by every element type that carries them.
+     */
+    static void putDisplay(
+        Map<String, Object> out, String caption, String description,
+        Boolean visible)
+    {
+        if (caption != null) {
+            out.put("caption", caption);
+        }
+        if (description != null) {
+            out.put("description", description);
+        }
+        if (visible != null && !visible) {
+            out.put("visible", false);
+        }
+    }
 
     static Map<String, Object> dimension(MondrianDef.Dimension d) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -288,6 +367,7 @@ public final class M4XmlToYaml {
         if (d.key != null) {
             out.put("key", d.key);
         }
+        putDisplay(out, d.caption, d.description, d.visible);
         // Skip "OTHER" — it is the XOM default and not meaningful
         if (d.type != null && !"OTHER".equals(d.type)) {
             out.put("type", d.type);
@@ -404,6 +484,7 @@ public final class M4XmlToYaml {
         if (!props.isEmpty()) {
             out.put("properties", props);
         }
+        putDisplay(out, a.caption, a.description, a.visible);
         return out;
     }
 

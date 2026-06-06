@@ -9,23 +9,13 @@
 */
 package mondrian.calcite;
 
-import mondrian.olap.Axis;
 import mondrian.olap.Connection;
-import mondrian.olap.DriverManager;
-import mondrian.olap.Position;
-import mondrian.olap.Query;
-import mondrian.olap.Result;
-import mondrian.olap.Util;
-import mondrian.rolap.RolapConnectionProperties;
-import mondrian.test.FoodMartHsqldbBootstrap;
-import mondrian.test.TestContext;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  *       needed — weighted shares roll up additively).</li>
  * </ul>
  */
-public class BridgeMultiLevelTest {
+public class BridgeMultiLevelTest extends AbstractDualFormSchemaTest {
 
     private static final String[] DDL = {
         "DROP TABLE \"mlb_fact\" IF EXISTS",
@@ -141,61 +131,28 @@ public class BridgeMultiLevelTest {
                " aggregation='weighted' weightColumn='weight'")
         + "</Schema>\n";
 
-    private static Connection conn;
+    private static Map<String, Connection> conns;
 
     @BeforeAll
     public static void boot() throws Exception {
-        FoodMartHsqldbBootstrap.ensureExtracted();
-        Util.PropertyList base =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        try (java.sql.Connection c =
-                 java.sql.DriverManager.getConnection(
-                     base.get("Jdbc"), base.get("JdbcUser"),
-                     base.get("JdbcPassword"));
-             Statement st = c.createStatement())
-        {
-            for (String sql : DDL) {
-                st.execute(sql);
-            }
-        }
-        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
-        Util.PropertyList props =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        props.remove(RolapConnectionProperties.Catalog.name());
-        conn = DriverManager.getConnection(props, null, null);
+        conns = bootForms(DDL, SCHEMA);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
-        }
+        closeForms(conns);
     }
 
-    private Map<String, Double> rowMap(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis rows = r.getAxes()[1];
-        int i = 0;
-        for (Position pos : rows.getPositions()) {
-            Object v = r.getCell(new int[]{0, i}).getValue();
-            out.put(
-                pos.get(0).getName(),
-                v == null ? null : ((Number) v).doubleValue());
-            i++;
-        }
-        r.close();
-        return out;
+    @Override
+    protected Connection conn(String form) {
+        return conns.get(form);
     }
 
     /** fullCount rolled up to Segment — the #103 symmetric aggregate. */
-    @Test
-    public void fullCountBySegment() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBySegment(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -205,9 +162,10 @@ public class BridgeMultiLevelTest {
     }
 
     /** Leaf level still correct (no rollup, naturally distinct). */
-    @Test
-    public void fullCountByCustomerLeaf() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountByCustomerLeaf(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -217,9 +175,10 @@ public class BridgeMultiLevelTest {
     }
 
     /** weighted rolls up additively — no dedup needed, but must stay right. */
-    @Test
-    public void weightedBySegment() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBySegment(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[By Segment].[Segment].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");
