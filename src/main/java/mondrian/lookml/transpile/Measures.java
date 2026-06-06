@@ -64,18 +64,19 @@ final class Measures {
     final List<FilterEq> filters = filters(measure);
     final String col = column.get();
     final String qn = baseViewName + "." + measureName;
+    final Optional<String> percentile = percentile(measure, type);
 
     if (filters.isEmpty()) {
-      measures.add(buildMeasure(measureName, col, aggregator, formatString,
-          caption, description, /* visible */ null));
+      measures.add(buildMeasure(measureName, col, aggregator, percentile,
+          formatString, caption, description, /* visible */ null));
       provenance.put(qn, mgPath + "/measure:" + measureName);
       return;
     }
 
     // Filtered measure: hidden base measure + calculated member.
     final String baseName = measureName + BASE_SUFFIX;
-    measures.add(buildMeasure(baseName, col, aggregator, formatString,
-        caption, description, /* visible */ Boolean.FALSE));
+    measures.add(buildMeasure(baseName, col, aggregator, percentile,
+        formatString, caption, description, /* visible */ Boolean.FALSE));
     calculatedMembers.add(buildFilteredCalcMember(measureName, baseName,
         filters, formatString, caption, description));
     provenance.put(qn, cubePath + "/calculatedMember:" + measureName);
@@ -84,13 +85,15 @@ final class Measures {
   // --- builders -----------------------------------------------------------
 
   private static Map<String, Object> buildMeasure(String name, String column,
-      String aggregator, Optional<String> formatString,
-      Optional<String> caption, Optional<String> description,
-      Boolean visible) {
+      String aggregator, Optional<String> percentile,
+      Optional<String> formatString, Optional<String> caption,
+      Optional<String> description, Boolean visible) {
     final Map<String, Object> m = new LinkedHashMap<>();
     m.put("name", name);
     m.put("column", column);
     m.put("aggregator", aggregator);
+    // #104: the percentile attribute (0..100) for aggregator: percentile.
+    percentile.ifPresent(p -> m.put("percentile", p));
     formatString.ifPresent(f -> m.put("format_string", f));
     caption.ifPresent(c -> m.put("caption", c));
     description.ifPresent(d -> m.put("description", d));
@@ -139,6 +142,21 @@ final class Measures {
       return factCountColumn;
     }
     return Optional.of(measureName);
+  }
+
+  /** The percentile attribute for a {@code type: percentile} measure: the
+   * LookML {@code percentile:} value, defaulting to 50. Median maps to
+   * percentile 50 implicitly, so it needs no explicit attribute. Empty for any
+   * other aggregator. */
+  private static Optional<String> percentile(LookmlNode measure, String type) {
+    if (!TranspileKeywords.AGG_PERCENTILE.equals(type)) {
+      return Optional.empty();
+    }
+    return Optional.of(measure.value(TranspileKeywords.PERCENTILE)
+        .map(LookmlNode::asString)
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .orElse(String.valueOf(TranspileKeywords.DEFAULT_PERCENTILE)));
   }
 
   private static String type(LookmlNode measure) {

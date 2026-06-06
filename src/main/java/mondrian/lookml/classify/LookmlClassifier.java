@@ -135,20 +135,23 @@ public final class LookmlClassifier {
     }
   }
 
-  /** Returns a refusal record if any access_filter is an arbitrary predicate,
-   * else empty (a dimension-key access_filter is CLEAN). */
+  /** Returns a DEGRADE record if any access_filter is on an arbitrary fact
+   * column (mapped to a {@code <PredicateGrant>}, #106), else empty (a
+   * dimension-key access_filter is CLEAN; the DimensionGrant case is #115). */
   private Optional<CoverageRecord> classifyAccessFilters(LookmlNode explore,
       String qn, Set<String> dimensionKeys) {
     for (LookmlNode af : explore.children(LookmlKeywords.ACCESS_FILTER)) {
       final Optional<String> field = af.stringValue(LookmlKeywords.FIELD);
       if (!isSimpleDimensionRef(field, dimensionKeys)) {
         return Optional.of(CoverageRecord.builder(Scope.EXPLORE, qn,
-                ReasonCode.REFUSE_ARBITRARY_ACCESS_FILTER,
+                ReasonCode.DEGRADE_PREDICATE_ROW_SECURITY,
                 "explore `" + explore.name().orElse("?")
                     + "` has an access_filter on `" + field.orElse("?")
-                    + "` that is not a simple modelled dimension key; "
-                    + "predicate-based row security lands in #106")
-            .lostCapability("explore not emitted")
+                    + "` (an arbitrary fact column, not a modelled dimension "
+                    + "key); emitted as a <PredicateGrant> bound to a "
+                    + "query-context parameter (#106)")
+            .producedM4("PredicateGrant")
+            .lostCapability("user-attribute value supplied at query time")
             .build());
       }
     }
@@ -212,9 +215,10 @@ public final class LookmlClassifier {
     final FieldClassifier fields = new FieldClassifier(viewName);
     final Optional<JoinEdge> fanOut =
         Optional.ofNullable(fanOutByBaseView.get(viewName));
+    final boolean hasPrimaryKey = declaresPrimaryKey(view);
 
     for (LookmlNode measure : view.children(LookmlKeywords.MEASURE)) {
-      out.add(fields.classifyMeasure(measure, fanOut));
+      out.add(fields.classifyMeasure(measure, fanOut, hasPrimaryKey));
     }
     for (LookmlNode parameter : view.children(LookmlKeywords.PARAMETER)) {
       out.add(fields.classifyParameter(parameter));
@@ -225,6 +229,19 @@ public final class LookmlClassifier {
     for (LookmlNode dg : view.children(LookmlKeywords.DIMENSION_GROUP)) {
       out.add(fields.classifyDimension(dg));
     }
+  }
+
+  /** Whether the view declares a {@code primary_key: yes} dimension — the fact
+   * grain key symmetric (fan-out-safe) aggregation needs (#103). */
+  private boolean declaresPrimaryKey(LookmlNode view) {
+    for (LookmlNode dim : view.children(LookmlKeywords.DIMENSION)) {
+      if (dim.stringValue(LookmlKeywords.PRIMARY_KEY)
+          .map(v -> v.equalsIgnoreCase("yes") || v.equalsIgnoreCase("true"))
+          .orElse(false)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** A derived_table with a persistence policy degrades (policy dropped). */

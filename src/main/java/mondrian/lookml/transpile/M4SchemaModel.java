@@ -34,6 +34,12 @@ final class M4SchemaModel {
   private final Map<String, Object> root = new LinkedHashMap<>();
   private final Map<String, Object> cubes = new LinkedHashMap<>();
 
+  /** Top-level {@code <QueryParameter>} blocks (#105), deduped by name. */
+  private final Map<String, Object> parameters = new LinkedHashMap<>();
+
+  /** Top-level {@code <Role>} blocks (#106), deduped by name. */
+  private final Map<String, Object> roles = new LinkedHashMap<>();
+
   /** table name → its declared key columns (insertion-ordered, deduped). */
   private final Map<String, Set<String>> tableKeys = new LinkedHashMap<>();
 
@@ -63,12 +69,37 @@ final class M4SchemaModel {
     cubes.put(cubeName, cubeBody);
   }
 
+  /** Adds a top-level query-parameter block, deduped by name (#105). */
+  void addParameter(String name, Map<String, Object> parameter) {
+    if (name != null && !name.isEmpty()) {
+      parameters.putIfAbsent(name, parameter);
+    }
+  }
+
+  /** Adds (or returns) a top-level role block, deduped by name (#106). */
+  void addRole(String name, Map<String, Object> role) {
+    if (name != null && !name.isEmpty()) {
+      roles.putIfAbsent(name, role);
+    }
+  }
+
+  /** Whether a parameter with this name has already been declared. */
+  boolean hasParameter(String name) {
+    return parameters.containsKey(name);
+  }
+
   /** Finishes and returns the ordered root map. Physical schema is emitted
    * from the table registry; cubes from the accumulated cube bodies. */
   Map<String, Object> root() {
     root.put("physical_schema", buildPhysicalSchema());
+    if (!parameters.isEmpty()) {
+      root.put("parameters", new ArrayList<>(parameters.values()));
+    }
     if (!cubes.isEmpty()) {
       root.put("cubes", cubes);
+    }
+    if (!roles.isEmpty()) {
+      root.put("roles", new ArrayList<>(roles.values()));
     }
     return root;
   }

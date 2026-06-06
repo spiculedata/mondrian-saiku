@@ -81,6 +81,9 @@ public final class LookmlTranspiler {
     final CubeEmitter cubeEmitter =
         new CubeEmitter(model, viewsByName, eligible, provenance);
 
+    // Top-level query parameters (#105): each eligible parameter declaration.
+    emitParameters(document, eligible, model);
+
     for (LookmlNode explore : document.children(TranspileKeywords.EXPLORE)) {
       final String exploreName = explore.name().orElse("");
       if (exploreName.isEmpty() || !eligible.explore(exploreName)) {
@@ -91,6 +94,23 @@ public final class LookmlTranspiler {
 
     final String yaml = dump(model.root());
     return new TranspileResult(yaml, provenance.build(), classification);
+  }
+
+  /** Emits a top-level {@code <QueryParameter>} for each eligible LookML
+   * {@code parameter:} declaration across all views (#105). */
+  private static void emitParameters(LookmlNode document, Eligibility eligible,
+      M4SchemaModel model) {
+    for (LookmlNode view : document.children(TranspileKeywords.VIEW)) {
+      final String viewName = view.name().orElse("");
+      for (LookmlNode param : view.children(TranspileKeywords.PARAMETER)) {
+        final String name = param.name().orElse("");
+        if (name.isEmpty() || !eligible.field(viewName, name)) {
+          continue;
+        }
+        QueryParameters.build(param)
+            .ifPresent(p -> model.addParameter(name, p));
+      }
+    }
   }
 
   private static Map<String, LookmlNode> indexViews(LookmlNode document) {
@@ -175,7 +195,13 @@ public final class LookmlTranspiler {
   /** Strips a leading {@code ${TABLE}.} from a dim/measure {@code sql:},
    * returning the bare column, or empty if there is no simple column. */
   static Optional<String> columnFromSql(LookmlNode field) {
-    final Optional<String> sql = field.stringValue(TranspileKeywords.SQL);
+    return columnFromSql(field, TranspileKeywords.SQL);
+  }
+
+  /** As {@link #columnFromSql(LookmlNode)} but reading an arbitrary SQL-bearing
+   * key (e.g. {@code sql_start} / {@code sql_end} on a duration). */
+  static Optional<String> columnFromSql(LookmlNode field, String key) {
+    final Optional<String> sql = field.stringValue(key);
     if (sql.isEmpty()) {
       return Optional.empty();
     }

@@ -31,6 +31,9 @@ final class TranspileKeywords {
   static final String JOIN = "join";
   static final String MEASURE = "measure";
   static final String DIMENSION = "dimension";
+  static final String DIMENSION_GROUP = "dimension_group";
+  static final String PARAMETER = "parameter";
+  static final String ACCESS_FILTER = "access_filter";
   static final String DERIVED_TABLE = "derived_table";
 
   // --- scalar keys --------------------------------------------------------
@@ -38,15 +41,38 @@ final class TranspileKeywords {
   static final String SQL = "sql";
   static final String SQL_ON = "sql_on";
   static final String SQL_TABLE_NAME = "sql_table_name";
+  static final String SQL_START = "sql_start";
+  static final String SQL_END = "sql_end";
   static final String FOREIGN_KEY = "foreign_key";
   static final String FROM = "from";
   static final String VIEW_NAME = "view_name";
   static final String RELATIONSHIP = "relationship";
+  static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
+  static final String TIERS = "tiers";
+  static final String INTERVALS = "intervals";
+  static final String PERCENTILE = "percentile";
+  static final String FIELD = "field";
+  static final String USER_ATTRIBUTE = "user_attribute";
   static final String LABEL = "label";
   static final String DESCRIPTION = "description";
+  static final String DEFAULT_VALUE = "default_value";
+  static final String ALLOWED_VALUE = "allowed_value";
+  static final String VALUE = "value";
   static final String VALUE_FORMAT = "value_format";
   static final String VALUE_FORMAT_NAME = "value_format_name";
+
+  // --- relationship cardinality that fans the fact out -------------------
+  static final String REL_ONE_TO_MANY = "one_to_many";
+
+  // --- dimension types mapped to native M4 binning / duration (#108) -----
+  static final String TYPE_TIER = "tier";
+  static final String TYPE_DURATION = "duration";
+
+  // --- percentile-family aggregators (#104) ------------------------------
+  static final String AGG_MEDIAN = "median";
+  static final String AGG_PERCENTILE = "percentile";
+  static final int DEFAULT_PERCENTILE = 50;
 
   // --- the ${TABLE}. prefix a dim/measure sql strips to a bare column -----
   static final String TABLE_REF_PREFIX = "${TABLE}.";
@@ -76,6 +102,8 @@ final class TranspileKeywords {
           .put("average", "avg")
           .put("avg", "avg")
           .put("count_distinct", "distinct-count")
+          .put("median", "median")
+          .put("percentile", "percentile")
           .build();
 }
 

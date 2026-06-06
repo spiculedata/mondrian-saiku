@@ -283,6 +283,197 @@ public class LookmlTranspilerTest {
     assertTrue(result.yaml().contains("top_amount"), result.yaml());
   }
 
+  // --- #104 median / percentile -------------------------------------------
+
+  /** A type: median / percentile measure emits an M4 median/percentile
+   * aggregator (with the percentile attribute), #104. */
+  @Test
+  public void percentileFamilyEmitsAggregators() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: med { type: median sql: ${TABLE}.amount ;; }\n"
+        + "  measure: p90 { type: percentile percentile: 90"
+        + "    sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("aggregator: \"median\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"percentile\""), yaml);
+    assertTrue(yaml.contains("percentile: \"90\"")
+        || yaml.contains("percentile: 90"), yaml);
+  }
+
+  /** End-to-end: a percentile measure loads and computes on H2
+   * (PERCENTILE_CONT-capable). amounts = 100,200,50,400,250 → P50 = 200. */
+  @Test
+  public void endToEndPercentileMedian() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: status { type: string sql: ${TABLE}.status ;; }\n"
+        + "  measure: median_amount { type: median sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: orders { }\n";
+    TranspileResult result = transpile(lookml);
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[median_amount]} ON COLUMNS,\n"
+          + " {[status].[status].Members} ON ROWS\n"
+          + "FROM [orders]");
+      // complete: 100,200,400 → median 200; cancelled: 50,250 → median 150.
+      assertEquals(200.0, g.get("complete|median_amount"), 0.001);
+      assertEquals(150.0, g.get("cancelled|median_amount"), 0.001);
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- #108 tier / duration -----------------------------------------------
+
+  /** A type: tier dimension emits an M4 attribute with a <Tier> + bins. */
+  @Test
+  public void tierDimensionEmitsTierBins() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: size_tier { type: tier tiers: [100, 300]\n"
+        + "    sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("tier:"), yaml);
+    assertTrue(yaml.contains("bins:"), yaml);
+    assertTrue(yaml.contains("boundary: \"100\"")
+        || yaml.contains("boundary: 100"), yaml);
+  }
+
+  /** A duration dimension_group emits an M4 attribute with a <Duration>. */
+  @Test
+  public void durationDimensionGroupEmitsDuration() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension_group: lead { type: duration\n"
+        + "    intervals: [day]\n"
+        + "    sql_start: ${TABLE}.order_date ;;\n"
+        + "    sql_end: ${TABLE}.ship_date ;; }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("duration:"), yaml);
+    assertTrue(yaml.contains("start_column: \"order_date\""), yaml);
+    assertTrue(yaml.contains("end_column: \"ship_date\""), yaml);
+  }
+
+  /** End-to-end: a tier dimension bins rows and counts per bin on H2.
+   * amounts = 100,200,50,400,250; tiers [100,300] → bins &lt;100 (50),
+   * 100–300 (100,200,250), &ge;300 (400). */
+  @Test
+  public void endToEndTierBinsCount() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: amount_tier { type: tier tiers: [100, 300]\n"
+        + "    sql: ${TABLE}.amount ;; }\n"
+        + "  measure: order_count { type: count }\n"
+        + "}\n"
+        + "explore: orders { }\n";
+    TranspileResult result = transpile(lookml);
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[order_count]} ON COLUMNS,\n"
+          + " {[amount_tier].[amount_tier].Members} ON ROWS\n"
+          + "FROM [orders]");
+      assertEquals(1.0, g.get("< 100|order_count"), 0.001, g.toString());
+      assertEquals(3.0, g.get("100–300|order_count"), 0.001, g.toString());
+      assertEquals(1.0, g.get("≥ 300|order_count"), 0.001, g.toString());
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- #105 parameter declaration → QueryParameter ------------------------
+
+  /** A bounded parameter declaration emits a top-level <QueryParameter>. */
+  @Test
+  public void parameterDeclarationEmitsQueryParameter() {
+    // Realistic LookML: `default_value:` is a quoted scalar (the parser no
+    // longer treats it as a code-valued key — see the parser-robustness fix
+    // that removed it from CODE_PROPERTY_NAMES).
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  parameter: region {\n"
+        + "    type: string\n"
+        + "    default_value: \"EAST\"\n"
+        + "    allowed_value: { label: \"East\" value: \"EAST\" }\n"
+        + "    allowed_value: { label: \"West\" value: \"WEST\" }\n"
+        + "  }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("parameters:"), yaml);
+    assertTrue(yaml.contains("name: \"region\""), yaml);
+    assertTrue(yaml.contains("default_value: \"EAST\""), yaml);
+    assertTrue(yaml.contains("allowed_values:"), yaml);
+    assertTrue(yaml.contains("WEST"), yaml);
+  }
+
+  // --- #106 arbitrary access_filter → PredicateGrant ----------------------
+
+  /** An access_filter on an arbitrary fact column emits a generated Role with
+   * a PredicateGrant bound to a generated query parameter. */
+  @Test
+  public void arbitraryAccessFilterEmitsPredicateGrant() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  access_filter: { field: orders.tenant_id"
+        + "    user_attribute: tenant_id }\n"
+        + "}\n";
+    String yaml = transpile(lookml).yaml();
+    assertTrue(yaml.contains("predicate_grants:"), yaml);
+    assertTrue(yaml.contains("measure_group:"), yaml);
+    assertTrue(yaml.contains("column: \"tenant_id\""), yaml);
+    assertTrue(yaml.contains("roles:") || yaml.contains("parameters:"), yaml);
+  }
+
+  // --- #103 fan-out symmetric aggregate (with declared fact PK) -----------
+
+  /** A sum on the one-side of a one_to_many, with a declared primary key, is
+   * emitted (the fact table declares its grain key so symmetric aggregation
+   * applies). The fact table's physical key is declared. */
+  @Test
+  public void fanOutSumWithPkEmitsFactGrainKey() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: revenue { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "view: items {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: items { type: left_outer relationship: one_to_many\n"
+        + "    sql_on: ${orders.order_id} = ${items.user_id} ;; }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    // revenue classified CLEAN (symmetric-safe) and emitted.
+    assertTrue(result.yaml().contains("revenue"), result.yaml());
+    // the fact table declares its grain key (order_id) in the physical schema.
+    assertTrue(result.yaml().contains("order_id"), result.yaml());
+  }
+
   // --- Test 6: golden-compare the core YAML (stable shape) ----------------
 
   @Test

@@ -35,31 +35,34 @@ public enum ReasonCode {
 
   /** A {@code sum}/{@code average}/... measure on the "one" side of a
    * {@code one_to_many} the explore fans out: a symmetric-aggregate-dependent
-   * measure that would be silently wrong. Becomes CLEAN once symmetric
-   * aggregates land (#103). */
+   * measure that would be silently wrong without fan-out-safe aggregation.
+   *
+   * <p>Symmetric (fan-out-safe) aggregation shipped in 4.8.1.x (#103), so the
+   * common single-grain fan-out now classifies CLEAN (the measure-group grain
+   * lets the engine aggregate safely). This code is retained for the cases the
+   * importer still cannot emit safely: a genuine, unbridged many-to-many fan-out
+   * that needs a {@code <BridgeLink>} the importer cannot synthesise yet (see
+   * {@link #DEGRADE_FANOUT_BRIDGE_PARTIAL}, #107). Refuse, never silently wrong.
+   *
+   * <p>Flip target stays {@code #103}: symmetric aggregation is the headline
+   * mechanism that turns fan-out refusals CLEAN; the residual unbridged m2m
+   * subset is finished by the bridge, #107. */
   REFUSE_FANOUT_SYMMETRIC_AGGREGATE(Classification.REFUSE, "#103"),
 
   /** Liquid templating ({@code {{ }}} / {@code {% %}}) in a {@code sql},
-   * {@code filter} or {@code label}: not statically resolvable. */
+   * {@code filter} or {@code label}: not statically resolvable. This still
+   * covers a {@code parameter}'s <em>use</em> in {@code {% parameter %}}
+   * field-switching SQL — only a parameter's bounded <em>declaration</em> maps
+   * to {@link #CLEAN} (a {@code <QueryParameter>}, #105). */
   REFUSE_LIQUID(Classification.REFUSE, null),
-
-  /** A {@code parameter} field used for field/SQL switching. Bounded,
-   * enumerated parameters become CLEAN once query-context parameters land
-   * (#105). */
-  REFUSE_PARAMETER_FIELD(Classification.REFUSE, "#105"),
-
-  /** A {@code type: median} or {@code type: percentile} measure
-   * (non-additive aggregator). Becomes CLEAN once non-additive aggregators
-   * land (#99 companion). */
-  REFUSE_MEDIAN_PERCENTILE(Classification.REFUSE, "#99"),
 
   /** A {@code type: list} field (a multi-valued, non-OLAP field). */
   REFUSE_TYPE_LIST(Classification.REFUSE, null),
 
-  /** An {@code access_filter} with an arbitrary predicate (not a simple
-   * equality on a modelled dimension key). Becomes CLEAN once predicate-based
-   * row security lands (#106). */
-  REFUSE_ARBITRARY_ACCESS_FILTER(Classification.REFUSE, "#106"),
+  /** A measure with an aggregator that has no static M4 mapping
+   * (e.g. {@code sum_distinct}/{@code average_distinct}/{@code
+   * percentile_distinct}); emitting it would be silently wrong. */
+  REFUSE_UNSUPPORTED_AGGREGATOR(Classification.REFUSE, null),
 
   /** A construct guarded by {@code required_access_grants}: visibility depends
    * on grants the importer cannot evaluate. */
@@ -79,6 +82,31 @@ public enum ReasonCode {
   /** A {@code filters:} on a measure contains Liquid; the measure is emitted
    * without the filter (the filter capability is lost). */
   DEGRADE_FILTERED_MEASURE_LIQUID(Classification.DEGRADE, null),
+
+  // --- DEGRADE: formerly REFUSE, now emitted with a caveat (shipped #99) ---
+
+  /** A {@code type: median}/{@code percentile} measure. Non-additive
+   * aggregators shipped in 4.8.1.x (#104), so the measure is now emitted as an
+   * M4 {@code aggregator="median"}/{@code "percentile"} measure. It DEGRADEs
+   * (not CLEAN) only because the runtime requires a {@code PERCENTILE_CONT}-
+   * capable backend; the importer cannot know the target dialect at import
+   * time. */
+  DEGRADE_PERCENTILE_DIALECT(Classification.DEGRADE, "#104"),
+
+  /** An {@code access_filter} on an arbitrary fact <em>column</em> (not a
+   * modelled dimension key). Predicate-based row security shipped in 4.8.1.x
+   * (#106), so it is now emitted as a {@code <PredicateGrant>} on a generated
+   * {@code <Role>}, bound to a query-context parameter (the user attribute). It
+   * DEGRADEs because the user-attribute value binding is supplied at query time,
+   * not by the imported model. */
+  DEGRADE_PREDICATE_ROW_SECURITY(Classification.DEGRADE, "#106"),
+
+  /** A fan-out additive aggregate the importer cannot fully bridge: the
+   * fan-out-safe (#103) measure-group grain is emitted, but a genuine
+   * many-to-many that needs a {@code <BridgeLink>} (#107) is only partially
+   * handled (the bridge link is not synthesised). The numbers may be wrong for
+   * the m2m case, so callers should treat this as a known gap. */
+  DEGRADE_FANOUT_BRIDGE_PARTIAL(Classification.DEGRADE, "#107"),
 
   // --- CLEAN --------------------------------------------------------------
 

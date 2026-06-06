@@ -43,6 +43,7 @@ final class LookmlKeywords {
   static final String FROM = "from";
   static final String VIEW_NAME = "view_name";
   static final String FIELD = "field";
+  static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
   static final String LABEL = "label";
   static final String HTML = "html";
@@ -69,12 +70,24 @@ final class LookmlKeywords {
   static final ImmutableSet<String> ADDITIVE_AGGREGATE_TYPES =
       ImmutableSet.of("sum", "average", "avg", "count");
 
-  // --- measure types that are refused outright ----------------------------
+  // --- percentile-family measure types now supported via #104 -------------
+  // (median / percentile map to an M4 aggregator that needs a
+  // PERCENTILE_CONT-capable backend, so they DEGRADE rather than REFUSE).
+  static final String TYPE_MEDIAN = "median";
+  static final String TYPE_PERCENTILE = "percentile";
+  static final ImmutableSet<String> PERCENTILE_FAMILY_TYPES =
+      ImmutableSet.of(TYPE_MEDIAN, TYPE_PERCENTILE);
+
+  // --- measure types still refused (no static M4 mapping) -----------------
   static final ImmutableSet<String> NON_ADDITIVE_REFUSED_TYPES =
-      ImmutableSet.of("median", "percentile",
-          "percentile_distinct", "average_distinct", "sum_distinct");
+      ImmutableSet.of("percentile_distinct", "average_distinct",
+          "sum_distinct");
 
   static final String TYPE_LIST = "list";
+
+  // --- dimension / dimension_group types mapped via #108 ------------------
+  static final String TYPE_TIER = "tier";
+  static final String TYPE_DURATION = "duration";
 
   /** SQL-bearing / templated keys to scan for Liquid on a field. */
   static final ImmutableSet<String> LIQUID_SCAN_KEYS =
