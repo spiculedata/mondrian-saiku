@@ -761,6 +761,40 @@ public class SqlTupleReader implements TupleReader {
                                 CalcitePlannerAdapters.fromTupleRead(
                                     readLevels, constraint);
                             String calciteSql = planner.plan(req);
+                            // #123: the legacy `types` list and the per-target
+                            // ColumnLayout (key / name / order-by / property
+                            // ordinals) were built against the *legacy* SELECT
+                            // above and are reused to decode this result set.
+                            // The Calcite tuple-read projects only the level
+                            // *key* columns (CalcitePlannerAdapters
+                            // #fromTupleRead), whereas the legacy SELECT also
+                            // emits each level's name / caption / member
+                            // *property* columns. For a level carrying explicit
+                            // properties (e.g. [Store].[Store Name], 8
+                            // properties -> 12 legacy columns vs 4 Calcite key
+                            // columns) the two no longer agree, so adopting
+                            // calciteSql would (a) trip the "types cardinality
+                            // != column count" assertion in
+                            // SqlStatement.guessTypes, and (b) — worse — decode
+                            // members through stale layout ordinals that point
+                            // past the end of the narrower result set. The SQL
+                            // string and the type/layout metadata must stay in
+                            // lockstep, so a column-count divergence means this
+                            // request shape is not safely swappable: signal an
+                            // UnsupportedTranslation and let the catch below
+                            // fall back to the self-consistent legacy SQL
+                            // (which projects, types and decodes all 12 columns
+                            // correctly, properties included).
+                            if (req.projections.size() != types.size()) {
+                                throw new mondrian.calcite
+                                    .UnsupportedTranslation(
+                                    "Calcite tuple-read projection count "
+                                    + req.projections.size()
+                                    + " does not match legacy column count "
+                                    + types.size()
+                                    + "; legacy ColumnLayout would misdecode "
+                                    + "the result set");
+                            }
                             if (Boolean.getBoolean("mondrian.calcite.trace")) {
                                 System.err.println(
                                     "[calcite-ok tuple] " + calciteSql);
