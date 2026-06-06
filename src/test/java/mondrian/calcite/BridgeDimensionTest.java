@@ -9,24 +9,13 @@
 */
 package mondrian.calcite;
 
-import mondrian.olap.Axis;
 import mondrian.olap.Connection;
-import mondrian.olap.DriverManager;
-import mondrian.olap.Position;
-import mondrian.olap.Query;
-import mondrian.olap.Result;
-import mondrian.olap.Util;
-import mondrian.rolap.RolapConnectionProperties;
-import mondrian.test.FoodMartHsqldbBootstrap;
-import mondrian.test.TestContext;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -64,7 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Calcite bridge read/aggregate (Phases 3–4) lands; they are the acceptance
  * criteria for those phases.
  */
-public class BridgeDimensionTest {
+public class BridgeDimensionTest extends AbstractDualFormSchemaTest {
 
     private static final String[] DDL = {
         "DROP TABLE \"account_fact\" IF EXISTS",
@@ -156,85 +145,39 @@ public class BridgeDimensionTest {
             + "  </Cube>\n";
     }
 
-    private static Connection conn;
+    private static Map<String, Connection> conns;
 
     @BeforeAll
     public static void boot() throws Exception {
-        FoodMartHsqldbBootstrap.ensureExtracted();
-        Util.PropertyList base =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        try (java.sql.Connection c =
-                 java.sql.DriverManager.getConnection(
-                     base.get("Jdbc"), base.get("JdbcUser"),
-                     base.get("JdbcPassword"));
-             Statement st = c.createStatement())
-        {
-            for (String sql : DDL) {
-                st.execute(sql);
-            }
-        }
-        // The Calcite planner cache memoises the JDBC catalog (table list)
-        // process-wide on first use. A prior test class (e.g. the parity
-        // fuzzer) may have warmed it against the FoodMart tables only, so
-        // the bridge tables we just created would be invisible ("Table
-        // 'account_fact' not found"). Drop the cache so the planner
-        // re-reflects the database including the freshly-created fixture.
-        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
-        Util.PropertyList props =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        props.remove(RolapConnectionProperties.Catalog.name());
-        conn = DriverManager.getConnection(props, null, null);
+        conns = bootForms(DDL, SCHEMA);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
-        }
+        closeForms(conns);
     }
 
-    /** Run an MDX query and return rowMemberCaption → cell value (axis 1). */
-    private Map<String, Double> rowMap(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis rows = r.getAxes()[1];
-        int i = 0;
-        for (Position pos : rows.getPositions()) {
-            Object v = r.getCell(new int[]{0, i}).getValue();
-            out.put(
-                pos.get(0).getName(),
-                v == null ? null : ((Number) v).doubleValue());
-            i++;
-        }
-        r.close();
-        return out;
-    }
-
-    private double grandTotal(String cube) {
-        Query q = conn.parseQuery(
-            "SELECT {[Measures].[Balance]} ON COLUMNS FROM [" + cube + "]");
-        Result r = conn.execute(q);
-        double v = ((Number) r.getCell(new int[]{0}).getValue()).doubleValue();
-        r.close();
-        return v;
+    @Override
+    protected Connection conn(String form) {
+        return conns.get(form);
     }
 
     // ---- enabled now: fixture + non-bridge (ForeignKeyLink) paths -----
 
     /** Grand total Balance — no dimension, no bridge. Works today. */
-    @Test
-    public void grandTotalBalance() {
-        assertEquals(1800.0, grandTotal("AccountsFull"), 0.001);
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void grandTotalBalance(String form) {
+        assertEquals(1800.0, scalar(form,
+            "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsFull]"),
+            0.001);
     }
 
     /** Balance by Year — a plain ForeignKeyLink. Works today. */
-    @Test
-    public void balanceByYear() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void balanceByYear(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " [Date].[Calendar].[Year].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -245,9 +188,10 @@ public class BridgeDimensionTest {
     // ---- acceptance tests for Phases 3-4 (bridge read + aggregate) ----
 
     /** fullCount: each member counted in full, deduped per account grain. */
-    @Test
-    public void fullCountBalanceByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBalanceByCustomer(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -257,23 +201,21 @@ public class BridgeDimensionTest {
     }
 
     /** fullCount All Customers dedupes the fan-out to 1800 (not naive 3100). */
-    @Test
-    public void fullCountAllCustomersDedupes() {
-        Query q = conn.parseQuery(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountAllCustomersDedupes(String form) {
+        assertEquals(1800.0, cell00(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " {[Customer].[Customer].[All Customer]} ON ROWS\n"
-            + "FROM [AccountsFull]");
-        Result r = conn.execute(q);
-        double all =
-            ((Number) r.getCell(new int[]{0, 0}).getValue()).doubleValue();
-        r.close();
-        assertEquals(1800.0, all, 0.001, "deduped, not the naive 3100");
+            + "FROM [AccountsFull]"),
+            0.001, "deduped, not the naive 3100");
     }
 
     /** weighted: each balance split by ownership weight; reconciles to 1800. */
-    @Test
-    public void weightedBalanceByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBalanceByCustomer(String form) {
+        Map<String, Double> m = rowMap(form,
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");

@@ -9,23 +9,18 @@
 */
 package mondrian.calcite;
 
-import mondrian.olap.Axis;
 import mondrian.olap.Connection;
 import mondrian.olap.DriverManager;
-import mondrian.olap.Position;
 import mondrian.olap.Query;
-import mondrian.olap.Result;
 import mondrian.olap.Util;
 import mondrian.rolap.RolapConnectionProperties;
-import mondrian.test.FoodMartHsqldbBootstrap;
 import mondrian.test.TestContext;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import java.sql.Statement;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -67,7 +62,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *   dim_customer also has Dave (no ownership rows)
  * </pre>
  */
-public class BridgeDimensionScenariosTest {
+public class BridgeDimensionScenariosTest extends AbstractDualFormSchemaTest {
 
     private static final String[] DDL = {
         "DROP TABLE \"sc_fact\" IF EXISTS",
@@ -180,126 +175,29 @@ public class BridgeDimensionScenariosTest {
                " aggregation='weighted' weightColumn='weight'")
         + "</Schema>\n";
 
-    private static Connection conn;
+    private static Map<String, Connection> conns;
 
     @BeforeAll
     public static void boot() throws Exception {
-        FoodMartHsqldbBootstrap.ensureExtracted();
-        Util.PropertyList base =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        try (java.sql.Connection c =
-                 java.sql.DriverManager.getConnection(
-                     base.get("Jdbc"), base.get("JdbcUser"),
-                     base.get("JdbcPassword"));
-             Statement st = c.createStatement())
-        {
-            for (String sql : DDL) {
-                st.execute(sql);
-            }
-        }
-        // Re-reflect the JDBC catalog so the planner sees the fixture tables
-        // (the cache is process-wide and a prior class may have warmed it).
-        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
-        Util.PropertyList props =
-            Util.parseConnectString(TestContext.getDefaultConnectString());
-        props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        props.remove(RolapConnectionProperties.Catalog.name());
-        conn = DriverManager.getConnection(props, null, null);
+        conns = bootForms(DDL, SCHEMA);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
-        }
+        closeForms(conns);
     }
 
-    // ---- helpers ------------------------------------------------------
-
-    /** Row caption → value for the single measure on COLUMNS (axis 1). */
-    private Map<String, Double> rowMap(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis rows = r.getAxes()[1];
-        int i = 0;
-        for (Position pos : rows.getPositions()) {
-            Object v = r.getCell(new int[]{0, i}).getValue();
-            out.put(
-                pos.get(0).getName(),
-                v == null ? null : ((Number) v).doubleValue());
-            i++;
-        }
-        r.close();
-        return out;
-    }
-
-    /** Single-cell scalar from a COLUMNS-only query. */
-    private Double scalar(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Object v = r.getCell(new int[]{0}).getValue();
-        r.close();
-        return v == null ? null : ((Number) v).doubleValue();
-    }
-
-    /** "rowCaption|colCaption" → value for a 2-axis grid. */
-    private Map<String, Double> grid(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis cols = r.getAxes()[0];
-        Axis rows = r.getAxes()[1];
-        int ri = 0;
-        for (Position rp : rows.getPositions()) {
-            int ci = 0;
-            for (Position cp : cols.getPositions()) {
-                Object v = r.getCell(new int[]{ci, ri}).getValue();
-                out.put(
-                    rp.get(0).getName() + "|" + cp.get(0).getName(),
-                    v == null ? null : ((Number) v).doubleValue());
-                ci++;
-            }
-            ri++;
-        }
-        r.close();
-        return out;
-    }
-
-    /** Pipe-joined caption of every member in each ROW tuple → value.
-     *  Used when a single axis carries a crossjoin (e.g. Customer × Branch),
-     *  so each row position holds more than one member. */
-    private Map<String, Double> rowTupleMap(String mdx) {
-        Query q = conn.parseQuery(mdx);
-        Result r = conn.execute(q);
-        Map<String, Double> out = new LinkedHashMap<>();
-        Axis rows = r.getAxes()[1];
-        int i = 0;
-        for (Position pos : rows.getPositions()) {
-            StringBuilder key = new StringBuilder();
-            for (int p = 0; p < pos.size(); p++) {
-                if (p > 0) {
-                    key.append("|");
-                }
-                key.append(pos.get(p).getName());
-            }
-            Object v = r.getCell(new int[]{0, i}).getValue();
-            out.put(
-                key.toString(),
-                v == null ? null : ((Number) v).doubleValue());
-            i++;
-        }
-        r.close();
-        return out;
+    @Override
+    protected Connection conn(String form) {
+        return conns.get(form);
     }
 
     // ---- full-count: leaf + All ---------------------------------------
 
-    @Test
-    public void fullCountBalanceByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBalanceByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -308,9 +206,10 @@ public class BridgeDimensionScenariosTest {
         assertEquals(300.0, m.get("Carol"), 0.001);
     }
 
-    @Test
-    public void fullCountFeesByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountFeesByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Fees]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -319,21 +218,23 @@ public class BridgeDimensionScenariosTest {
         assertEquals(3.0, m.get("Carol"), 0.001);
     }
 
-    @Test
-    public void fullCountAllDedupesToFactTotals() {
-        assertEquals(1800.0, scalar(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountAllDedupesToFactTotals(String form) {
+        assertEquals(1800.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsFull]"),
             0.001);
-        assertEquals(18.0, scalar(
+        assertEquals(18.0, scalar(form, 
             "SELECT {[Measures].[Fees]} ON COLUMNS FROM [AccountsFull]"),
             0.001);
     }
 
     // ---- weighted: leaf + All -----------------------------------------
 
-    @Test
-    public void weightedBalanceByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBalanceByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");
@@ -342,9 +243,10 @@ public class BridgeDimensionScenariosTest {
         assertEquals(225.0, m.get("Carol"), 0.001);
     }
 
-    @Test
-    public void weightedFeesByCustomer() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedFeesByCustomer(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Fees]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");
@@ -353,20 +255,22 @@ public class BridgeDimensionScenariosTest {
         assertEquals(2.25, m.get("Carol"), 0.001);
     }
 
-    @Test
-    public void weightedAllReconcilesToFactTotal() {
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedAllReconcilesToFactTotal(String form) {
         // Weights sum to 1 per account, so the All level equals the fact
         // total regardless of allocation.
-        assertEquals(1800.0, scalar(
+        assertEquals(1800.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsWeighted]"),
             0.001);
     }
 
     // ---- bridge × normal FK dimension ---------------------------------
 
-    @Test
-    public void fullCountBridgeCrossRegion() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBridgeCrossRegion(String form) {
+        Map<String, Double> g = grid(form, 
             "SELECT NON EMPTY [Region].[Region].Members ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]\n"
@@ -379,9 +283,10 @@ public class BridgeDimensionScenariosTest {
         assertNull(g.get("Alice|South"));
     }
 
-    @Test
-    public void weightedBridgeCrossRegion() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBridgeCrossRegion(String form) {
+        Map<String, Double> g = grid(form, 
             "SELECT NON EMPTY [Region].[Region].Members ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]\n"
@@ -394,14 +299,15 @@ public class BridgeDimensionScenariosTest {
 
     /** The bridge dimension on the COLUMNS axis (the transpose of the cross
      *  above): bridge members on columns, a normal FK dim on rows. */
-    @Test
-    public void bridgeOnColumnsRegionOnRows() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void bridgeOnColumnsRegionOnRows(String form) {
+        Map<String, Double> g = grid(form, 
             "SELECT NON EMPTY [Customer].[Customer].Members ON COLUMNS,\n"
             + " NON EMPTY [Region].[Region].Members ON ROWS\n"
             + "FROM [AccountsFull]\n"
             + "WHERE [Measures].[Balance]");
-        // grid() keys are rowCaption|colCaption → "Region|Customer".
+        // grid(form, ) keys are rowCaption|colCaption → "Region|Customer".
         assertEquals(1300.0, g.get("North|Alice"), 0.001);
         assertEquals(1000.0, g.get("North|Bob"), 0.001);
         assertEquals(300.0, g.get("North|Carol"), 0.001);
@@ -414,9 +320,10 @@ public class BridgeDimensionScenariosTest {
     /** A crossjoin of the bridge dimension with a normal FK dimension on a
      *  single axis (Customer × Branch on ROWS), so one segment load groups
      *  by a (bridge, non-bridge) tuple. Full-count allocation. */
-    @Test
-    public void fullCountBridgeCrossNonBridgeSameAxis() {
-        Map<String, Double> m = rowTupleMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBridgeCrossNonBridgeSameAxis(String form) {
+        Map<String, Double> m = rowTupleMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members"
             + " * [Region].[Region].Members ON ROWS\n"
@@ -431,9 +338,10 @@ public class BridgeDimensionScenariosTest {
     }
 
     /** The same same-axis crossjoin under weighted allocation. */
-    @Test
-    public void weightedBridgeCrossNonBridgeSameAxis() {
-        Map<String, Double> m = rowTupleMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBridgeCrossNonBridgeSameAxis(String form) {
+        Map<String, Double> m = rowTupleMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members"
             + " * [Region].[Region].Members ON ROWS\n"
@@ -446,30 +354,33 @@ public class BridgeDimensionScenariosTest {
 
     // ---- bridge member in the slicer ----------------------------------
 
-    @Test
-    public void fullCountBridgeMemberSlicer() {
-        assertEquals(1300.0, scalar(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBridgeMemberSlicer(String form) {
+        assertEquals(1300.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS\n"
             + "FROM [AccountsFull]\n"
             + "WHERE [Customer].[Customer].[Alice]"), 0.001);
-        assertEquals(1500.0, scalar(
+        assertEquals(1500.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS\n"
             + "FROM [AccountsFull]\n"
             + "WHERE [Customer].[Customer].[Bob]"), 0.001);
     }
 
-    @Test
-    public void weightedBridgeMemberSlicer() {
-        assertEquals(575.0, scalar(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void weightedBridgeMemberSlicer(String form) {
+        assertEquals(575.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS\n"
             + "FROM [AccountsWeighted]\n"
             + "WHERE [Customer].[Customer].[Alice]"), 0.001);
     }
 
     /** Normal dimension on rows, bridge member slicing. */
-    @Test
-    public void regionRowsBridgeSlicerFullCount() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void regionRowsBridgeSlicerFullCount(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Region].[Region].Members ON ROWS\n"
             + "FROM [AccountsFull]\n"
@@ -480,9 +391,10 @@ public class BridgeDimensionScenariosTest {
 
     // ---- multiple measures together over a bridge ---------------------
 
-    @Test
-    public void multipleMeasuresOverBridge() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void multipleMeasuresOverBridge(String form) {
+        Map<String, Double> g = grid(form, 
             "SELECT {[Measures].[Balance], [Measures].[Fees]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsWeighted]");
@@ -494,22 +406,24 @@ public class BridgeDimensionScenariosTest {
 
     // ---- single-owner vs multi-owner; explicit member sets ------------
 
-    @Test
-    public void singleOwnerAccountExplicitMember() {
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void singleOwnerAccountExplicitMember(String form) {
         // Carol owns only a fraction of one account.
-        assertEquals(300.0, scalar(
+        assertEquals(300.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS\n"
             + "FROM [AccountsFull]\n"
             + "WHERE [Customer].[Customer].[Carol]"), 0.001);
-        assertEquals(225.0, scalar(
+        assertEquals(225.0, scalar(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS\n"
             + "FROM [AccountsWeighted]\n"
             + "WHERE [Customer].[Customer].[Carol]"), 0.001);
     }
 
-    @Test
-    public void explicitMemberSetRows() {
-        Map<String, Double> m = rowMap(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void explicitMemberSetRows(String form) {
+        Map<String, Double> m = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " {[Customer].[Customer].[Bob],"
             + " [Customer].[Customer].[Carol]} ON ROWS\n"
@@ -520,17 +434,18 @@ public class BridgeDimensionScenariosTest {
 
     // ---- NON EMPTY suppression of an unowned customer -----------------
 
-    @Test
-    public void daveUnownedIsNullThenSuppressed() {
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void daveUnownedIsNullThenSuppressed(String form) {
         // Without NON EMPTY, Dave appears with a null cell.
-        Map<String, Double> all = rowMap(
+        Map<String, Double> all = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
         assertTrue(all.containsKey("Dave"), "Dave present without NON EMPTY");
         assertNull(all.get("Dave"), "Dave has no accounts → null");
         // With NON EMPTY, Dave is suppressed.
-        Map<String, Double> ne = rowMap(
+        Map<String, Double> ne = rowMap(form, 
             "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]");
@@ -539,9 +454,10 @@ public class BridgeDimensionScenariosTest {
 
     // ---- bridge × bridge-independent time dimension -------------------
 
-    @Test
-    public void fullCountBridgeCrossYear() {
-        Map<String, Double> g = grid(
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void fullCountBridgeCrossYear(String form) {
+        Map<String, Double> g = grid(form, 
             "SELECT [Date].[Calendar].[Year].Members ON COLUMNS,\n"
             + " NON EMPTY [Customer].[Customer].Members ON ROWS\n"
             + "FROM [AccountsFull]\n"
@@ -555,8 +471,9 @@ public class BridgeDimensionScenariosTest {
 
     // ---- legacy backend must reject a bridge query loudly -------------
 
-    @Test
-    public void legacyBackendRejectsBridge() {
+    @ParameterizedTest
+    @MethodSource("forms")
+    public void legacyBackendRejectsBridge(String form) {
         // A bridge tuple read has no legacy SQL path, so the legacy backend
         // must fail loudly rather than silently mis-count. Use a FRESH
         // connection so the customer members are not already cached from the

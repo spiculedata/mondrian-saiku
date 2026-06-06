@@ -18,9 +18,13 @@ import mondrian.olap.Result;
 import mondrian.olap.Util;
 import mondrian.rolap.RolapConnectionProperties;
 
+import mondrian.schema.yaml.m4.M4XmlToYaml;
+import mondrian.schema.yaml.m4.M4YamlToXml;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.sql.Statement;
 import java.util.LinkedHashMap;
@@ -119,7 +123,9 @@ public class PercentileH2EndToEndTest {
     private static final String H2_URL =
         "jdbc:h2:mem:pctile_e2e;DB_CLOSE_DELAY=-1";
 
-    private static Connection conn;
+    /** xml-form and yaml-form (XML→YAML→XML) connections — the schema must
+     *  parse identically from both representations. */
+    private static final Map<String, Connection> CONNS = new LinkedHashMap<>();
 
     @BeforeAll
     public static void boot() throws Exception {
@@ -138,6 +144,12 @@ public class PercentileH2EndToEndTest {
                 st.execute(sql);
             }
         }
+        CONNS.put("xml", connect(SCHEMA));
+        CONNS.put("yaml",
+            connect(M4YamlToXml.toXml(M4XmlToYaml.toYaml(SCHEMA))));
+    }
+
+    private static Connection connect(String catalog) {
         Util.PropertyList props = new Util.PropertyList();
         props.put("Provider", "mondrian");
         props.put(RolapConnectionProperties.Jdbc.name(), H2_URL);
@@ -146,20 +158,23 @@ public class PercentileH2EndToEndTest {
         props.put(RolapConnectionProperties.JdbcUser.name(), "sa");
         props.put(RolapConnectionProperties.JdbcPassword.name(), "");
         props.put("UseSchemaPool", "false");
-        props.put(RolapConnectionProperties.CatalogContent.name(), SCHEMA);
-        conn = DriverManager.getConnection(props, null, null);
+        props.put(RolapConnectionProperties.CatalogContent.name(), catalog);
+        return DriverManager.getConnection(props, null, null);
     }
 
     @AfterAll
     public static void close() {
-        if (conn != null) {
-            conn.close();
-            conn = null;
+        for (Connection c : CONNS.values()) {
+            if (c != null) {
+                c.close();
+            }
         }
+        CONNS.clear();
     }
 
     /** "row|col" → value. */
-    private Map<String, Double> grid(String mdx) {
+    private Map<String, Double> grid(String form, String mdx) {
+        Connection conn = CONNS.get(form);
         Query q = conn.parseQuery(mdx);
         Result r = conn.execute(q);
         Map<String, Double> out = new LinkedHashMap<>();
@@ -182,10 +197,12 @@ public class PercentileH2EndToEndTest {
     }
 
     /** The shipped Account Statistics cube: median + p90 balance by branch,
-     *  executed through the full engine on H2. */
-    @Test
-    public void medianAndPercentileByBranch() {
-        Map<String, Double> g = grid(
+     *  executed through the full engine on H2 — from both the XML and the
+     *  YAML form of the schema. */
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void medianAndPercentileByBranch(String form) {
+        Map<String, Double> g = grid(form,
             "SELECT {[Measures].[Median Balance], [Measures].[P90 Balance]}"
             + " ON COLUMNS,\n"
             + " [Branch].[Branch].Members ON ROWS\n"
