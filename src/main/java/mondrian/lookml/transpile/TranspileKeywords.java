@@ -104,6 +104,13 @@ final class TranspileKeywords {
           .put("count_distinct", "distinct-count")
           .put("median", "median")
           .put("percentile", "percentile")
+          // #117: a sum_distinct / average_distinct only reaches the emitter
+          // when the classifier proved its sql_distinct_key de-duplicates on
+          // the base view primary key (one row per key → de-dup is a no-op),
+          // so it collapses to a plain SUM / AVG. Fan-out safety is supplied by
+          // the #103 symmetric path (the fact grain key is registered already).
+          .put("sum_distinct", "sum")
+          .put("average_distinct", "avg")
           .build();
 }
 

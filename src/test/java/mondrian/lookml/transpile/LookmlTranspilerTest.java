@@ -213,6 +213,45 @@ public class LookmlTranspilerTest {
     assertTrue(yaml.contains("aggregator: \"distinct-count\""), yaml);
   }
 
+  /** #117: a sum_distinct / average_distinct keyed on the base view primary
+   * key emits a plain SUM / AVG measure (de-dup is a no-op on the fact grain).
+   * A distinct-key measure whose key is NOT the primary key is refused and not
+   * emitted. */
+  @Test
+  public void distinctKeyAggregatorMapping() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total_d {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${id} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "  measure: avg_d {\n"
+        + "    type: average_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.order_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "  measure: bad_d {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${other.k} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    // total_d → sum, avg_d → avg, both on the amount column.
+    assertTrue(yaml.contains("name: \"total_d\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"sum\""), yaml);
+    assertTrue(yaml.contains("name: \"avg_d\""), yaml);
+    assertTrue(yaml.contains("aggregator: \"avg\""), yaml);
+    // bad_d (non-PK distinct key) is refused: not emitted.
+    assertFalse(yaml.contains("bad_d"), yaml);
+  }
+
   // --- Test 3: filtered measure → calculated member -----------------------
 
   @Test
@@ -325,6 +364,49 @@ public class LookmlTranspilerTest {
       // complete: 100,200,400 → median 200; cancelled: 50,250 → median 150.
       assertEquals(200.0, g.get("complete|median_amount"), 0.001);
       assertEquals(150.0, g.get("cancelled|median_amount"), 0.001);
+    } finally {
+      conn.close();
+    }
+  }
+
+  // --- #117 sum_distinct / average_distinct -------------------------------
+
+  /** End-to-end: a sum_distinct keyed on the fact primary key (one row per
+   * order) equals a plain SUM — the de-dup is a no-op on the fact grain. Run
+   * through a many_to_one join to a conformed country dimension; totals match
+   * the plain {@code total_amount} acceptance test (GB=350, US=650). #117. */
+  @Test
+  public void endToEndSumDistinctOnPrimaryKey() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: distinct_total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${id} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    assertTrue(result.yaml().contains("name: \"distinct_total\""),
+        result.yaml());
+    Connection conn = connect(result.toXml());
+    try {
+      Map<String, Double> g = grid(conn,
+          "SELECT {[Measures].[distinct_total]} ON COLUMNS,\n"
+          + " [users].[country].Members ON ROWS\n"
+          + "FROM [orders]");
+      assertEquals(350.0, g.get("GB|distinct_total"), 0.001);
+      assertEquals(650.0, g.get("US|distinct_total"), 0.001);
     } finally {
       conn.close();
     }

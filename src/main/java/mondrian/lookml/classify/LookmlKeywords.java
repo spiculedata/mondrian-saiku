@@ -45,6 +45,7 @@ final class LookmlKeywords {
   static final String FIELD = "field";
   static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
+  static final String SQL_DISTINCT_KEY = "sql_distinct_key";
   static final String LABEL = "label";
   static final String HTML = "html";
   static final String SQL = "sql";
@@ -78,10 +79,19 @@ final class LookmlKeywords {
   static final ImmutableSet<String> PERCENTILE_FAMILY_TYPES =
       ImmutableSet.of(TYPE_MEDIAN, TYPE_PERCENTILE);
 
+  // --- distinct-key aggregators mapped via #117 ---------------------------
+  // sum_distinct / average_distinct de-duplicate on a sql_distinct_key before
+  // aggregating. When that key resolves to the base view's primary key (one
+  // row per key in the fact), the de-dup is a no-op and the measure maps to a
+  // plain SUM/AVG (fan-out-safe via the #103 symmetric path when bridged).
+  static final String TYPE_SUM_DISTINCT = "sum_distinct";
+  static final String TYPE_AVERAGE_DISTINCT = "average_distinct";
+  static final ImmutableSet<String> DISTINCT_KEY_AGGREGATE_TYPES =
+      ImmutableSet.of(TYPE_SUM_DISTINCT, TYPE_AVERAGE_DISTINCT);
+
   // --- measure types still refused (no static M4 mapping) -----------------
   static final ImmutableSet<String> NON_ADDITIVE_REFUSED_TYPES =
-      ImmutableSet.of("percentile_distinct", "average_distinct",
-          "sum_distinct");
+      ImmutableSet.of("percentile_distinct");
 
   static final String TYPE_LIST = "list";
 

@@ -45,7 +45,7 @@ final class FieldClassifier {
    * fact grain symmetric aggregation needs).
    */
   CoverageRecord classifyMeasure(LookmlNode measure,
-      Optional<JoinEdge> fanOutEdge, boolean hasPrimaryKey) {
+      Optional<JoinEdge> fanOutEdge, PrimaryKey primaryKey) {
     final String qn = qualifiedName(measure);
     final String type = lowerType(measure);
 
@@ -53,6 +53,14 @@ final class FieldClassifier {
     final Optional<ReasonCode> guard = guardRefusals(measure, type);
     if (guard.isPresent()) {
       return refusal(qn, guard.get(), measure, type, fanOutEdge);
+    }
+
+    // Distinct-key aggregators (#117): sum_distinct / average_distinct map to a
+    // plain SUM/AVG only when the sql_distinct_key resolves to the base view's
+    // own primary key (one row per key → de-dup is a no-op). Otherwise the
+    // engine cannot de-duplicate at measure level, so it stays REFUSE.
+    if (LookmlKeywords.DISTINCT_KEY_AGGREGATE_TYPES.contains(type)) {
+      return classifyDistinctAggregate(qn, measure, type, primaryKey);
     }
 
     // Percentile-family (#104): emit as an M4 median/percentile aggregator,
@@ -67,7 +75,7 @@ final class FieldClassifier {
     // fact declares a grain key. Without a primary key, emitting the sum would
     // be silently wrong, so it stays REFUSE.
     if (LookmlKeywords.ADDITIVE_AGGREGATE_TYPES.contains(type)
-        && fanOutEdge.isPresent() && !hasPrimaryKey) {
+        && fanOutEdge.isPresent() && !primaryKey.isPresent()) {
       return refusal(qn, ReasonCode.REFUSE_FANOUT_SYMMETRIC_AGGREGATE, measure,
           type, fanOutEdge);
     }
@@ -77,6 +85,51 @@ final class FieldClassifier {
             + ") converts with full fidelity"
             + (fanOutEdge.isPresent()
                 ? " (fan-out-safe via symmetric aggregation, #103)" : ""));
+  }
+
+  /**
+   * Classifies a {@code sum_distinct} / {@code average_distinct} measure
+   * (#117). CLEAN when its {@code sql_distinct_key} (or the primary-key
+   * fallback) resolves to the base view's own {@code primary_key: yes}
+   * dimension — then the de-dup is a no-op and it maps to a plain SUM/AVG, made
+   * fan-out-safe by the #103 symmetric path when queried through a bridge.
+   * Otherwise the de-dup grain is not the fact grain and the engine cannot
+   * honour it at measure level, so it stays REFUSE (never silently wrong).
+   */
+  private CoverageRecord classifyDistinctAggregate(String qn,
+      LookmlNode measure, String type, PrimaryKey primaryKey) {
+    if (!primaryKey.isPresent()) {
+      return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
+          type, Optional.empty());
+    }
+    final Optional<String> rawKey =
+        measure.stringValue(LookmlKeywords.SQL_DISTINCT_KEY);
+    // No explicit key → fall back to the base view's primary key (de-dup on
+    // the fact grain is a no-op).
+    if (rawKey.isEmpty()) {
+      return distinctClean(qn, measure, type);
+    }
+    final Optional<String> resolved = DistinctKey.resolveSameView(rawKey.get());
+    if (resolved.isPresent() && primaryKey.matches(resolved.get())) {
+      return distinctClean(qn, measure, type);
+    }
+    return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure, type,
+        Optional.empty());
+  }
+
+  private CoverageRecord distinctClean(String qn, LookmlNode measure,
+      String type) {
+    return clean(qn, Scope.FIELD,
+        "measure `" + simpleName(measure) + "` (" + type
+            + ") de-duplicates on the base view primary key (the fact grain), "
+            + "so it maps to a plain " + plainAggregator(type)
+            + " — fan-out-safe via symmetric aggregation (#117/#103)");
+  }
+
+  /** The plain M4 aggregator a distinct-key measure collapses to once the
+   * de-dup is shown to be a no-op. */
+  private static String plainAggregator(String type) {
+    return LookmlKeywords.TYPE_AVERAGE_DISTINCT.equals(type) ? "avg" : "sum";
   }
 
   /** Classifies a {@code parameter:} field. A bounded parameter declaration
@@ -223,6 +276,48 @@ final class FieldClassifier {
     return field.stringValue(LookmlKeywords.TYPE)
         .map(s -> s.toLowerCase(Locale.ROOT))
         .orElse("");
+  }
+
+  /**
+   * The base view's {@code primary_key: yes} dimension, if any: its name and
+   * resolved column (the fact grain). A {@code sql_distinct_key} that resolves
+   * to either is de-duplicating on the fact grain (#117).
+   */
+  static final class PrimaryKey {
+    private static final PrimaryKey NONE = new PrimaryKey(null, null);
+    private final String dimensionName;
+    private final String column;
+
+    private PrimaryKey(String dimensionName, String column) {
+      this.dimensionName = dimensionName;
+      this.column = column;
+    }
+
+    /** The absent primary key. */
+    static PrimaryKey none() {
+      return NONE;
+    }
+
+    /** A primary key on dimension {@code name} resolving to {@code column}. */
+    static PrimaryKey of(String name, String column) {
+      return new PrimaryKey(
+          name == null ? null : name.toLowerCase(Locale.ROOT),
+          column == null ? null : column.toLowerCase(Locale.ROOT));
+    }
+
+    boolean isPresent() {
+      return dimensionName != null;
+    }
+
+    /** Whether a resolved distinct-key name matches this primary key (by
+     * dimension name or by underlying column). */
+    boolean matches(String resolvedKey) {
+      if (!isPresent() || resolvedKey == null) {
+        return false;
+      }
+      final String k = resolvedKey.toLowerCase(Locale.ROOT);
+      return k.equals(dimensionName) || k.equals(column);
+    }
   }
 }
 

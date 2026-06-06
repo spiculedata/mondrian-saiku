@@ -215,10 +215,10 @@ public final class LookmlClassifier {
     final FieldClassifier fields = new FieldClassifier(viewName);
     final Optional<JoinEdge> fanOut =
         Optional.ofNullable(fanOutByBaseView.get(viewName));
-    final boolean hasPrimaryKey = declaresPrimaryKey(view);
+    final FieldClassifier.PrimaryKey primaryKey = primaryKeyOf(view);
 
     for (LookmlNode measure : view.children(LookmlKeywords.MEASURE)) {
-      out.add(fields.classifyMeasure(measure, fanOut, hasPrimaryKey));
+      out.add(fields.classifyMeasure(measure, fanOut, primaryKey));
     }
     for (LookmlNode parameter : view.children(LookmlKeywords.PARAMETER)) {
       out.add(fields.classifyParameter(parameter));
@@ -231,17 +231,30 @@ public final class LookmlClassifier {
     }
   }
 
-  /** Whether the view declares a {@code primary_key: yes} dimension — the fact
-   * grain key symmetric (fan-out-safe) aggregation needs (#103). */
-  private boolean declaresPrimaryKey(LookmlNode view) {
+  /** The view's {@code primary_key: yes} dimension as a {@link
+   * FieldClassifier.PrimaryKey} (its name and resolved column) — the fact grain
+   * symmetric (fan-out-safe) aggregation needs (#103) and a {@code
+   * sql_distinct_key} can de-duplicate on (#117). Absent if none declared. */
+  private FieldClassifier.PrimaryKey primaryKeyOf(LookmlNode view) {
     for (LookmlNode dim : view.children(LookmlKeywords.DIMENSION)) {
-      if (dim.stringValue(LookmlKeywords.PRIMARY_KEY)
+      final boolean isPk = dim.stringValue(LookmlKeywords.PRIMARY_KEY)
           .map(v -> v.equalsIgnoreCase("yes") || v.equalsIgnoreCase("true"))
-          .orElse(false)) {
-        return true;
+          .orElse(false);
+      if (isPk) {
+        final String name = dim.name().orElse("");
+        return FieldClassifier.PrimaryKey.of(name, primaryKeyColumn(dim, name));
       }
     }
-    return false;
+    return FieldClassifier.PrimaryKey.none();
+  }
+
+  /** The column a primary-key dimension reads: its {@code ${TABLE}.col} sql
+   * column else its own name. Mirrors the transpiler's column resolution
+   * without depending on it (separate package). */
+  private String primaryKeyColumn(LookmlNode dim, String dimName) {
+    return DistinctKey.resolveSameView(
+            dim.stringValue(LookmlKeywords.SQL).orElse(""))
+        .orElse(dimName);
   }
 
   /** A derived_table with a persistence policy degrades (policy dropped). */

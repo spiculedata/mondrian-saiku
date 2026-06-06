@@ -297,6 +297,102 @@ class LookmlClassifierTest {
         record(classify(lookml), "orders.skus").reasonCode());
   }
 
+  // --- sum_distinct / average_distinct (#117) ---------------------------
+
+  /** A sum_distinct whose sql_distinct_key resolves to the base view's own
+   * primary_key dimension de-duplicates on the fact grain — one row per key —
+   * so it equals a plain SUM and is CLEAN. Mapped to a symmetric-aggregate-safe
+   * SUM (#117 / #103). */
+  @Test void sumDistinctOnPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${id} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    final CoverageRecord rec = record(classify(lookml), "orders.total");
+    assertEquals(Classification.CLEAN, rec.classification());
+    assertEquals(ReasonCode.CLEAN, rec.reasonCode());
+  }
+
+  /** average_distinct keyed on the primary key is likewise CLEAN. */
+  @Test void averageDistinctOnPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: avg_amt {\n"
+        + "    type: average_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.order_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.avg_amt").reasonCode());
+  }
+
+  /** A sum_distinct whose sql_distinct_key is NOT the base view primary key
+   * (here a joined-view key) cannot be de-duplicated at measure level by the
+   * engine — a plain SUM would be silently wrong — so it stays REFUSE. */
+  @Test void sumDistinctOnNonPrimaryKeyStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${customer.sfid} ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** A sum_distinct with no sql_distinct_key and no primary_key fallback stays
+   * REFUSE (no resolvable de-dup grain). */
+  @Test void sumDistinctWithNoResolvableKeyStaysRefused() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** A sum_distinct with no explicit sql_distinct_key falls back to the base
+   * view's primary_key dimension — CLEAN. */
+  @Test void sumDistinctFallsBackToPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
   // --- access_filter / access grants ------------------------------------
 
   /** An access_filter on a simple modelled dimension key is CLEAN; an
