@@ -67,6 +67,10 @@ public final class M4YamlToXml {
             Map<?, ?> sm = (Map<?, ?>) schemaNode;
             schema.name = str(sm.get("name"));
             schema.metamodelVersion = str(sm.get("metamodel_version"));
+            // #110 display attributes.
+            schema.caption = str(sm.get("caption"));
+            schema.description = str(sm.get("description"));
+            schema.measuresCaption = str(sm.get("measures_caption"));
         } else {
             schema.name = str(schemaNode);
         }
@@ -240,6 +244,10 @@ public final class M4YamlToXml {
         d.table = str(dim.get("table"));
         d.key = str(dim.get("key"));
         d.type = str(dim.get("type"));
+        // #110 display attributes.
+        d.caption = str(dim.get("caption"));
+        d.description = str(dim.get("description"));
+        d.visible = boolOrNull(dim.get("visible"));
         List<MondrianDef.DimensionElement> dimKids = new ArrayList<>();
         // Annotations go first
         Object annObj = dim.get("annotations");
@@ -278,6 +286,10 @@ public final class M4YamlToXml {
         a.name = str(m.get("name"));
         a.table = str(m.get("table"));
         a.keyColumn = str(m.get("key_column"));
+        // #110 display attributes.
+        a.caption = str(m.get("caption"));
+        a.description = str(m.get("description"));
+        a.visible = boolOrNull(m.get("visible"));
         a.nameColumn = str(m.get("name_column"));
         a.orderByColumn = str(m.get("order_by_column"));
         a.captionColumn = str(m.get("caption_column"));
@@ -387,6 +399,13 @@ public final class M4YamlToXml {
         return Boolean.valueOf(String.valueOf(o));
     }
 
+    /** Null-preserving boolean read: absent (null) stays null rather than
+     *  collapsing to false — so an omitted default-true flag (e.g. #110
+     *  {@code visible}) is not materialised on round-trip. */
+    static Boolean boolOrNull(Object o) {
+        return o == null ? null : boolToBoolean(o);
+    }
+
     private static MondrianDef.PhysicalSchema buildPhysicalSchema(
         Map<?, ?> phys)
     {
@@ -398,6 +417,14 @@ public final class M4YamlToXml {
             for (Object t : (List<?>) tables) {
                 if (t instanceof Map) {
                     kids.add(buildTable((Map<?, ?>) t));
+                }
+            }
+        }
+        Object queries = phys.get("queries");
+        if (queries instanceof List) {
+            for (Object q : (List<?>) queries) {
+                if (q instanceof Map) {
+                    kids.add(buildQuery((Map<?, ?>) q));
                 }
             }
         }
@@ -414,6 +441,19 @@ public final class M4YamlToXml {
                 kids.toArray(new MondrianDef.PhysicalSchemaElement[0]);
         }
         return ps;
+    }
+
+    /** #111: build a {@code <Query>} SQL-backed physical table. */
+    private static MondrianDef.Query buildQuery(Map<?, ?> q) {
+        MondrianDef.Query query = new MondrianDef.Query();
+        query.alias = str(q.get("alias"));
+        query.keyColumn = str(q.get("key_column"));
+        MondrianDef.ExpressionView view =
+            buildExpressionView(q.get("expression"));
+        if (view != null) {
+            query.childArray = new MondrianDef.QueryElement[] {view};
+        }
+        return query;
     }
 
     private static MondrianDef.Link buildLink(Map<?, ?> l) {
@@ -478,25 +518,35 @@ public final class M4YamlToXml {
             new MondrianDef.CalculatedColumnDef();
         ccd.name = str(d.get("name"));
         ccd.type = str(d.get("type"));
-        Object expr = d.get("expression");
-        if (expr instanceof Map) {
-            MondrianDef.ExpressionView view = new MondrianDef.ExpressionView();
-            List<MondrianDef.SQL> sqls = new ArrayList<>();
-            for (Map.Entry<?, ?> e : ((Map<?, ?>) expr).entrySet()) {
-                String dialect = str(e.getKey());
-                if (dialect == null) {
-                    continue;
-                }
-                String body = str(e.getValue());
-                MondrianDef.SQL sql = new MondrianDef.SQL();
-                sql.dialect = dialect;
-                sql.children = parseSqlMixedContent(body == null ? "" : body);
-                sqls.add(sql);
-            }
-            view.expressions = sqls.toArray(new MondrianDef.SQL[0]);
-            ccd.expression = view;
-        }
+        ccd.expression = buildExpressionView(d.get("expression"));
         return ccd;
+    }
+
+    /**
+     * Build a {@link MondrianDef.ExpressionView} from a YAML
+     * {@code expression: {dialect: sql, ...}} map. Shared by calculated
+     * columns and #111 {@code <Query>} physical tables. Returns null when
+     * the value is not a map.
+     */
+    static MondrianDef.ExpressionView buildExpressionView(Object expr) {
+        if (!(expr instanceof Map)) {
+            return null;
+        }
+        MondrianDef.ExpressionView view = new MondrianDef.ExpressionView();
+        List<MondrianDef.SQL> sqls = new ArrayList<>();
+        for (Map.Entry<?, ?> e : ((Map<?, ?>) expr).entrySet()) {
+            String dialect = str(e.getKey());
+            if (dialect == null) {
+                continue;
+            }
+            String body = str(e.getValue());
+            MondrianDef.SQL sql = new MondrianDef.SQL();
+            sql.dialect = dialect;
+            sql.children = parseSqlMixedContent(body == null ? "" : body);
+            sqls.add(sql);
+        }
+        view.expressions = sqls.toArray(new MondrianDef.SQL[0]);
+        return view;
     }
 
     /**

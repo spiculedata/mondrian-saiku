@@ -35,6 +35,10 @@ final class M4CubeBuilder {
         MondrianDef.Cube cube = new MondrianDef.Cube();
         cube.name = name;
         cube.defaultMeasure = M4YamlToXml.str(body.get("default_measure"));
+        // #110 display attributes.
+        cube.caption = M4YamlToXml.str(body.get("caption"));
+        cube.description = M4YamlToXml.str(body.get("description"));
+        cube.visible = M4YamlToXml.boolOrNull(body.get("visible"));
         List<MondrianDef.CubeElement> cubeKids = new ArrayList<>();
         // Annotations go first (cube-level)
         Object annObj = body.get("annotations");
@@ -178,9 +182,12 @@ final class M4CubeBuilder {
     private static MondrianDef.Dimension buildCubeDimension(Map<?, ?> m) {
         Object source = m.get("source");
         if (source != null) {
-            // Usage reference to a shared dimension
+            // Usage reference to a shared dimension. #109: re-apply the
+            // role-play name so distinct usages over one shared dimension
+            // keep their identity (and their dimension_links resolve).
             MondrianDef.Dimension d = new MondrianDef.Dimension();
             d.source = M4YamlToXml.str(source);
+            d.name = M4YamlToXml.str(m.get("name"));
             return d;
         }
         // Local dimension definition — delegate to shared buildDimension helper
@@ -259,6 +266,10 @@ final class M4CubeBuilder {
         measure.percentile = M4YamlToXml.str(m.get("percentile"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
+        // #110 display attributes.
+        measure.caption = M4YamlToXml.str(m.get("caption"));
+        measure.description = M4YamlToXml.str(m.get("description"));
+        measure.visible = M4YamlToXml.boolOrNull(m.get("visible"));
         List<MondrianDef.MeasureElement> kids = new ArrayList<>();
         // Annotations go first
         Object annObj = m.get("annotations");

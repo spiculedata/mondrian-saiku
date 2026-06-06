@@ -736,8 +736,15 @@ public class M4PhysicalLayerTest {
      * token scheme itself is correct; the round-trip breaks in the XML-emit
      * step, not in the encoding step.  Kept as {@code @Ignore} to document
      * the defect without breaking the build.
+     *
+     * <p>Partially improved (#111): {@code M4XmlToYaml.sqlText} now trims
+     * the SQL body, so XOM's leading/trailing indentation no longer
+     * accumulates — which fixes plain-SQL views and the FoodMart corpus.
+     * The INTERIOR case here (whitespace XOM inserts between adjacent
+     * {@code <Column>} mixed-content nodes) is still open, so this stays
+     * {@code @Ignore}.
      */
-    @Ignore("real bug: XOM toXML() adds whitespace TextDef nodes inside <SQL>; yaml != yaml2")
+    @Ignore("XOM toXML() adds whitespace between inline <Column> nodes inside <SQL>; interior case still open")
     @Test
     public void calcColumnSqlInlineColumnRefsRoundTrip() {
         String xml =
