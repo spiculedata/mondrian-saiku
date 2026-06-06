@@ -541,10 +541,29 @@ Each entry in `measures` is either a **measure definition** (has `name`) or a **
 | `name` | yes | `name=` | Measure display name |
 | `column` | no | `column=` | Source column |
 | `table` | no | `table=` | Override table (rare; usually taken from the measure group) |
-| `aggregator` | yes | `aggregator=` | `sum`, `count`, `distinct-count`, `min`, `max`, `avg` |
+| `aggregator` | yes | `aggregator=` | `sum`, `count`, `distinct-count`, `min`, `max`, `avg`, and the non-additive leaf aggregators `median`, `percentile` |
+| `percentile` | no | `percentile=` | For `aggregator: "percentile"`, the percentile to compute (0–100, default 50). Ignored otherwise. |
 | `format_string` | no | `formatString=` | MDX format string (e.g. `"#,###.00"`, `"Standard"`, `"Currency"`) |
 | `datatype` | no | `datatype=` | `Numeric`, `Integer`, `String` |
+| `caption` | no | `caption=` | Display caption |
+| `description` | no | `description=` | Description |
+| `visible` | no | `visible=` | `false` to hide from clients (default `true`) |
 | `properties` | no | `<CalculatedMemberProperty>` | List of `{name, value}` maps (e.g. `MEMBER_ORDINAL`) |
+
+> **Non-additive aggregators** (`median`, `percentile`) compute at the exact queried grain via `PERCENTILE_CONT(...) WITHIN GROUP (ORDER BY column)`. They are **not rolled up** (no median-of-medians) and are excluded from aggregate-table substitution and segment rollup-from-cache. They require the Calcite backend on a database that supports `PERCENTILE_CONT` (PostgreSQL, Oracle, SQL Server, Snowflake, BigQuery, H2, DuckDB, …); other backends are refused with a clear error.
+
+```yaml
+# Median order value (= percentile 50)
+- name: "Median Order Value"
+  column: "order_total"
+  aggregator: "median"
+
+# 90th percentile
+- name: "P90 Latency"
+  column: "latency_ms"
+  aggregator: "percentile"
+  percentile: 90
+```
 
 **Measure reference** — maps to `<MeasureRef>` (used in aggregate measure groups to point at a measure defined in the primary group):
 
