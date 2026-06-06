@@ -9,6 +9,9 @@
 */
 package mondrian.lookml.report;
 
+import mondrian.lookml.json.ExploreJsonReader;
+import mondrian.lookml.parse.FlattenResult;
+import mondrian.lookml.parse.LookmlFlattener;
 import mondrian.lookml.parse.LookmlNode;
 import mondrian.lookml.parse.LookmlParseException;
 import mondrian.lookml.parse.LookmlParser;
@@ -51,9 +54,19 @@ import java.nio.file.FileVisitOption;
  * {@code explore:} / {@code model:} blocks); a file that fails to parse is
  * collected under "Unparseable files" rather than aborting the whole batch; and
  * {@code *.dashboard.lkml} files (YAML-structured dashboards) are skipped and
- * listed under "Skipped files". {@code include:} / {@code extends} /
- * {@code @{}} cross-file resolution is a documented v1 limitation (consistent
- * with #100): unresolved references are classified on their literal text.
+ * listed under "Skipped files". The merged document is then run through the
+ * {@link mondrian.lookml.parse.LookmlFlattener} (issue #116): {@code include:}
+ * (already satisfied by the merge), {@code extends:}, refinements
+ * ({@code +view}/{@code +explore}) and {@code @{}} constants are resolved so a
+ * construct that only becomes additive/Liquid/secured after refinement is
+ * classified on the RESOLVED model. A reference that cannot be resolved is
+ * reported as a {@code flatten:} diagnostic on stderr and left as-parsed (never
+ * silently dropped).
+ *
+ * <p>An alternative input, {@code --explore-json <file>}, reads a pre-resolved
+ * Looker {@code LookmlModelExplore} JSON (issue #116, part B) via
+ * {@link mondrian.lookml.json.ExploreJsonReader}; that path is already flattened
+ * by Looker, so it skips the flatten pass.
  *
  * <p>By default the Markdown report is printed to stdout; {@code -o} writes it
  * to a file and {@code --json} additionally writes the machine-readable JSON.
@@ -78,8 +91,12 @@ public final class LookmlReportCli {
       "usage:\n"
       + "  lookml-report report <path> [-o report.md] [--json report.json]"
       + " [--fail-on-refuse]\n"
+      + "  lookml-report report --explore-json <file> [-o report.md]"
+      + " [--json report.json] [--fail-on-refuse]\n"
       + "\n"
-      + "  <path> is a .lkml file or a directory of .lkml files.\n";
+      + "  <path> is a .lkml file or a directory of .lkml files. A directory is\n"
+      + "  flattened (include/extends/refinements/@{} resolved) before report.\n"
+      + "  --explore-json reads a pre-resolved Looker LookmlModelExplore JSON.\n";
 
   private static final String LKML_SUFFIX = ".lkml";
   private static final int RC_OK = 0;
@@ -114,6 +131,9 @@ public final class LookmlReportCli {
 
   private static int report(String[] args, PrintStream out, PrintStream err) {
     final Options opts = Options.parse(args);
+    if (opts.exploreJson != null) {
+      return reportExploreJson(opts, out, err);
+    }
     if (opts.path == null) {
       err.println("error: report requires an input path");
       err.print(USAGE);
@@ -149,8 +169,15 @@ public final class LookmlReportCli {
 
     final CoverageReport coverage;
     try {
-      final LookmlNode doc = LookmlParser.parse(ingest.lookml);
-      final TranspileResult tr = new LookmlTranspiler().transpile(doc);
+      final LookmlNode parsed = LookmlParser.parse(ingest.lookml);
+      // Multi-file resolution (issue #116, part A): resolve include/extends/
+      // refinements/@{} so a construct that only becomes additive/Liquid/
+      // secured after refinement is classified on the RESOLVED model. Flatten
+      // diagnostics are printed to stderr (unresolved refs are never dropped).
+      final FlattenResult flat = new LookmlFlattener().flatten(parsed);
+      flat.diagnostics().forEach(d -> err.println("flatten: " + d));
+      final TranspileResult tr =
+          new LookmlTranspiler().transpile(flat.document());
       coverage = CoverageReport.from(tr);
     } catch (LookmlParseException e) {
       // Single-file mode (or a merged doc that still won't parse): graceful.
@@ -168,6 +195,50 @@ public final class LookmlReportCli {
       return emitRc;
     }
 
+    if (opts.failOnRefuse && coverage.metrics().explore().refuse()
+        + coverage.metrics().field().refuse() > 0) {
+      err.println("error: refusals present and --fail-on-refuse was set");
+      return RC_FAILURE;
+    }
+    return RC_OK;
+  }
+
+  /**
+   * Report from a pre-resolved Looker {@code LookmlModelExplore} JSON file
+   * (issue #116, part B). The JSON is already flattened by Looker, so the
+   * flatten pass is not applied; the mapped AST goes straight to the
+   * transpiler.
+   */
+  private static int reportExploreJson(Options opts, PrintStream out,
+      PrintStream err) {
+    final String json;
+    try {
+      json = Files.readString(opts.exploreJson, StandardCharsets.UTF_8);
+    } catch (java.nio.file.NoSuchFileException e) {
+      err.println("error: cannot read " + opts.exploreJson
+          + ": no such file");
+      return RC_FAILURE;
+    } catch (IOException | UncheckedIOException e) {
+      err.println("error: cannot read " + opts.exploreJson + ": "
+          + rootMessage(e));
+      return RC_FAILURE;
+    }
+
+    final CoverageReport coverage;
+    try {
+      final LookmlNode doc = new ExploreJsonReader().read(json);
+      final TranspileResult tr = new LookmlTranspiler().transpile(doc);
+      coverage = CoverageReport.from(tr);
+    } catch (RuntimeException e) {
+      err.println("error: failed to read LookmlModelExplore JSON at "
+          + opts.exploreJson + ": " + rootMessage(e));
+      return RC_FAILURE;
+    }
+
+    final int emitRc = emit(coverage, IngestDiagnostics.none(), opts, out, err);
+    if (emitRc != RC_OK) {
+      return emitRc;
+    }
     if (opts.failOnRefuse && coverage.metrics().explore().refuse()
         + coverage.metrics().field().refuse() > 0) {
       err.println("error: refusals present and --fail-on-refuse was set");
@@ -286,13 +357,15 @@ public final class LookmlReportCli {
   /** Parsed CLI options for the {@code report} subcommand. */
   private static final class Options {
     private final Path path;
+    private final Path exploreJson;
     private final Path markdownOut;
     private final Path jsonOut;
     private final boolean failOnRefuse;
 
-    private Options(Path path, Path markdownOut, Path jsonOut,
+    private Options(Path path, Path exploreJson, Path markdownOut, Path jsonOut,
         boolean failOnRefuse) {
       this.path = path;
+      this.exploreJson = exploreJson;
       this.markdownOut = markdownOut;
       this.jsonOut = jsonOut;
       this.failOnRefuse = failOnRefuse;
@@ -300,6 +373,7 @@ public final class LookmlReportCli {
 
     private static Options parse(String[] args) {
       Path path = null;
+      Path exploreJson = null;
       Path markdownOut = null;
       Path jsonOut = null;
       boolean failOnRefuse = false;
@@ -317,6 +391,11 @@ public final class LookmlReportCli {
             jsonOut = Paths.get(args[++i]);
           }
           break;
+        case "--explore-json":
+          if (i + 1 < args.length) {
+            exploreJson = Paths.get(args[++i]);
+          }
+          break;
         case "--fail-on-refuse":
           failOnRefuse = true;
           break;
@@ -328,7 +407,7 @@ public final class LookmlReportCli {
       if (!positional.isEmpty()) {
         path = Paths.get(positional.get(0));
       }
-      return new Options(path, markdownOut, jsonOut, failOnRefuse);
+      return new Options(path, exploreJson, markdownOut, jsonOut, failOnRefuse);
     }
   }
 }

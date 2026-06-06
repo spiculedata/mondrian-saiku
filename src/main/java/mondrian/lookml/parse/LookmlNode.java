@@ -52,6 +52,42 @@ public final class LookmlNode {
     this.properties = ImmutablePairList.copyOf(properties);
   }
 
+  /** Package-private factory used by {@link LookmlFlattener} to build resolved
+   * nodes. The name may be null (document root / anonymous object). */
+  static LookmlNode of(String name, PairList<String, Value> properties) {
+    return new LookmlNode(name, properties);
+  }
+
+  /** Returns a copy of this node with the given name (used during {@code @{}}
+   * substitution to preserve a named sub-object's name). */
+  LookmlNode renameTo(String newName) {
+    final PairList<String, Value> copy = PairList.of();
+    properties.forEach((k, v) -> copy.add(k, v));
+    return new LookmlNode(newName, copy);
+  }
+
+  /** Wraps this node back into a {@link Value} so it can be re-inserted into a
+   * parent's property list during flattening. Named nodes become a
+   * {@link Values.NamedObjectValue}; anonymous nodes a
+   * {@link Values.ObjectValue}. */
+  Value toValue() {
+    final PairList<String, ValueImpl> impl = narrow(properties);
+    return name == null
+        ? Values.object(impl)
+        : Values.namedObject(name, impl);
+  }
+
+  /** Narrows a {@code PairList<String, Value>} back to the {@code ValueImpl}
+   * shape the {@link Values} factories require. Every {@link Value} produced by
+   * the parser or by flattening is a {@link ValueImpl}. */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static PairList<String, ValueImpl> narrow(
+      PairList<String, Value> in) {
+    final PairList<String, ValueImpl> out = PairList.of();
+    in.forEach((k, v) -> out.add(k, (ValueImpl) v));
+    return out;
+  }
+
   /** Returns the name of this named object, or empty for the root / anonymous
    * objects. */
   public Optional<String> name() {
