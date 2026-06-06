@@ -43,7 +43,10 @@ import static org.junit.jupiter.api.Assertions.fail;
  * accounts (Dave) so we can cover:
  * <ul>
  *   <li>full-count and weighted allocation, by leaf and at the All level;</li>
- *   <li>a bridge dimension crossed with a normal FK dimension;</li>
+ *   <li>a bridge dimension crossed with a normal FK dimension (on
+ *       different axes, and as a crossjoin on the same axis — a
+ *       (bridge, non-bridge) tuple load);</li>
+ *   <li>the bridge dimension on the COLUMNS axis;</li>
  *   <li>a bridge member in the slicer (WHERE);</li>
  *   <li>a normal dimension on the rows while a bridge member slices;</li>
  *   <li>multiple measures over one bridge in a single query;</li>
@@ -265,6 +268,33 @@ public class BridgeDimensionScenariosTest {
         return out;
     }
 
+    /** Pipe-joined caption of every member in each ROW tuple → value.
+     *  Used when a single axis carries a crossjoin (e.g. Customer × Branch),
+     *  so each row position holds more than one member. */
+    private Map<String, Double> rowTupleMap(String mdx) {
+        Query q = conn.parseQuery(mdx);
+        Result r = conn.execute(q);
+        Map<String, Double> out = new LinkedHashMap<>();
+        Axis rows = r.getAxes()[1];
+        int i = 0;
+        for (Position pos : rows.getPositions()) {
+            StringBuilder key = new StringBuilder();
+            for (int p = 0; p < pos.size(); p++) {
+                if (p > 0) {
+                    key.append("|");
+                }
+                key.append(pos.get(p).getName());
+            }
+            Object v = r.getCell(new int[]{0, i}).getValue();
+            out.put(
+                key.toString(),
+                v == null ? null : ((Number) v).doubleValue());
+            i++;
+        }
+        r.close();
+        return out;
+    }
+
     // ---- full-count: leaf + All ---------------------------------------
 
     @Test
@@ -360,6 +390,58 @@ public class BridgeDimensionScenariosTest {
         assertEquals(500.0, g.get("Bob|North"), 0.001);
         assertEquals(500.0, g.get("Bob|South"), 0.001);
         assertEquals(225.0, g.get("Carol|North"), 0.001);
+    }
+
+    /** The bridge dimension on the COLUMNS axis (the transpose of the cross
+     *  above): bridge members on columns, a normal FK dim on rows. */
+    @Test
+    public void bridgeOnColumnsRegionOnRows() {
+        Map<String, Double> g = grid(
+            "SELECT NON EMPTY [Customer].[Customer].Members ON COLUMNS,\n"
+            + " NON EMPTY [Region].[Region].Members ON ROWS\n"
+            + "FROM [AccountsFull]\n"
+            + "WHERE [Measures].[Balance]");
+        // grid() keys are rowCaption|colCaption → "Region|Customer".
+        assertEquals(1300.0, g.get("North|Alice"), 0.001);
+        assertEquals(1000.0, g.get("North|Bob"), 0.001);
+        assertEquals(300.0, g.get("North|Carol"), 0.001);
+        assertEquals(500.0, g.get("South|Bob"), 0.001);
+        assertNull(g.get("South|Alice"));
+    }
+
+    // ---- bridge × non-bridge crossjoin on the SAME axis ---------------
+
+    /** A crossjoin of the bridge dimension with a normal FK dimension on a
+     *  single axis (Customer × Branch on ROWS), so one segment load groups
+     *  by a (bridge, non-bridge) tuple. Full-count allocation. */
+    @Test
+    public void fullCountBridgeCrossNonBridgeSameAxis() {
+        Map<String, Double> m = rowTupleMap(
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[Customer].Members"
+            + " * [Region].[Region].Members ON ROWS\n"
+            + "FROM [AccountsFull]");
+        assertEquals(1300.0, m.get("Alice|North"), 0.001);
+        assertEquals(1000.0, m.get("Bob|North"), 0.001);
+        assertEquals(500.0, m.get("Bob|South"), 0.001);
+        assertEquals(300.0, m.get("Carol|North"), 0.001);
+        // Empty tuples are suppressed by NON EMPTY.
+        assertNull(m.get("Alice|South"));
+        assertNull(m.get("Carol|South"));
+    }
+
+    /** The same same-axis crossjoin under weighted allocation. */
+    @Test
+    public void weightedBridgeCrossNonBridgeSameAxis() {
+        Map<String, Double> m = rowTupleMap(
+            "SELECT {[Measures].[Balance]} ON COLUMNS,\n"
+            + " NON EMPTY [Customer].[Customer].Members"
+            + " * [Region].[Region].Members ON ROWS\n"
+            + "FROM [AccountsWeighted]");
+        assertEquals(575.0, m.get("Alice|North"), 0.001);
+        assertEquals(500.0, m.get("Bob|North"), 0.001);
+        assertEquals(500.0, m.get("Bob|South"), 0.001);
+        assertEquals(225.0, m.get("Carol|North"), 0.001);
     }
 
     // ---- bridge member in the slicer ----------------------------------
