@@ -250,7 +250,6 @@ public class BridgeDimensionTest {
     }
 
     /** fullCount All Customers dedupes the fan-out to 1800 (not naive 3100). */
-    @Disabled("enabled when the Calcite bridge read/aggregate lands (#107 P3-4)")
     @Test
     public void fullCountAllCustomersDedupes() {
         Query q = conn.parseQuery(
