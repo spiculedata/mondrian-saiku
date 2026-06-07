@@ -3551,6 +3551,45 @@ public final class CalcitePlannerAdapters {
             weightCol = new PlannerRequest.Column(
                 wc.relation.getAlias(), wc.name);
         }
+        // #112 currency conversion: if this load includes a converted measure,
+        // join the rate table with the effective-date band and record each
+        // converted measure's rate column so its operand is multiplied by the
+        // rate below — SUM(measure × rate). The band join is 1:1 (one rate row
+        // per fact row, non-overlapping intervals), so a plain measure in the
+        // same load is unaffected; only the converted measure is weighted.
+        java.util.Map<String, PlannerRequest.Column> currencyRateByMeasure =
+            new java.util.LinkedHashMap<String, PlannerRequest.Column>();
+        java.util.Set<String> loadMeasureNames =
+            new java.util.HashSet<String>();
+        for (Segment s : segments) {
+            loadMeasureNames.add(s.aggMeasure.getName());
+        }
+        java.util.Set<String> joinedRateAliases =
+            new java.util.HashSet<String>();
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            for (RolapMeasureGroup.CurrencyConversionInfo info
+                : mg.getCurrencyConversions())
+            {
+                if (!loadMeasureNames.contains(info.convertedName)) {
+                    continue;
+                }
+                String rateAlias = info.rateTable.getAlias();
+                if (joinedRateAliases.add(rateAlias)) {
+                    b.addJoin(PlannerRequest.Join.band(
+                        factTable.getAlias(), rateAlias, rateAlias,
+                        currencyRealColName(info.factCurrencyColumn),
+                        currencyRealColName(info.rateCurrencyColumn),
+                        currencyRealColName(info.factDateColumn),
+                        currencyRealColName(info.validFromColumn),
+                        currencyRealColName(info.validToColumn),
+                        currencyRealColName(info.rateTypeColumn),
+                        info.rateType));
+                }
+                currencyRateByMeasure.put(info.convertedName,
+                    new PlannerRequest.Column(
+                        rateAlias, currencyRealColName(info.rateColumn)));
+            }
+        }
         // Map from RolapStar.Measure → its alias in the request, used
         // when resolving a pushable calc's base-measure references below.
         java.util.Map<RolapStar.Measure, String> starMeasureAliases =
@@ -3641,9 +3680,17 @@ public final class CalcitePlannerAdapters {
                     + mexpr + shape);
             }
 
+            // #112: a converted measure is multiplied by its rate column;
+            // otherwise a bridge-weighted measure by the bridge weight; else
+            // the base measure unchanged. (A converted measure is never also
+            // bridge-weighted.)
+            PlannerRequest.Column rateForThis =
+                currencyRateByMeasure.get(m.getName());
+            PlannerRequest.Column weight =
+                rateForThis != null ? rateForThis : weightCol;
             b.addMeasure(
-                weightCol != null
-                    ? PlannerRequest.Measure.weighted(base, weightCol)
+                weight != null
+                    ? PlannerRequest.Measure.weighted(base, weight)
                     : base);
             starMeasureAliases.put(m, alias);
         }
@@ -4024,6 +4071,41 @@ public final class CalcitePlannerAdapters {
      * @return {@code true} if any touched bridge measure group is secured for
      *     the active role and must not fall back to the legacy generator
      */
+    /** #112: the real column name of a physical column, or fail-closed. */
+    private static String currencyRealColName(RolapSchema.PhysColumn c) {
+        if (c instanceof RolapSchema.PhysRealColumn) {
+            return ((RolapSchema.PhysRealColumn) c).name;
+        }
+        throw new UnsupportedTranslation(
+            "CurrencyConversion: column is not a real column: " + c);
+    }
+
+    /**
+     * #112: whether this load includes a measure produced by a
+     * {@code <CurrencyConversion>}. Such a load can only be served by the
+     * Calcite path (the rate band join + multiply); the legacy generator would
+     * emit {@code SUM(measure)} without the conversion. Read by the
+     * {@link mondrian.rolap.agg.SegmentLoader} fail-closed gate.
+     */
+    public static boolean touchesCurrencyConversion(
+        List<Segment> segments, RolapStar star)
+    {
+        java.util.Set<String> names = new java.util.HashSet<String>();
+        for (Segment s : segments) {
+            names.add(s.aggMeasure.getName());
+        }
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            for (RolapMeasureGroup.CurrencyConversionInfo info
+                : mg.getCurrencyConversions())
+            {
+                if (names.contains(info.convertedName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public static boolean isBridgeMemberSecuredLoad(
         List<Segment> segments, RolapStar star)
     {

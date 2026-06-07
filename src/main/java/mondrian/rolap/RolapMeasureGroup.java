@@ -125,6 +125,72 @@ public class RolapMeasureGroup {
         return false;
     }
 
+    /** #112 phase 3: a currency/unit conversion registered on this measure
+     *  group — produces SUM(measure × rate) via a rate-table band join
+     *  (effective-date interval). Read by the Calcite backend to emit the
+     *  rate join + multiply; Calcite-only (the legacy generator refuses). */
+    public static final class CurrencyConversionInfo {
+        public final String convertedName;
+        public final RolapStar.Measure baseMeasure;
+        public final RolapSchema.PhysRelation rateTable;
+        public final RolapSchema.PhysColumn rateColumn;
+        public final RolapSchema.PhysColumn rateCurrencyColumn;
+        public final RolapSchema.PhysColumn rateTypeColumn;
+        public final RolapSchema.PhysColumn validFromColumn;
+        public final RolapSchema.PhysColumn validToColumn;
+        public final RolapSchema.PhysColumn factCurrencyColumn;
+        public final RolapSchema.PhysColumn factDateColumn;
+        public final String rateType;
+        public CurrencyConversionInfo(
+            String convertedName, RolapStar.Measure baseMeasure,
+            RolapSchema.PhysRelation rateTable, RolapSchema.PhysColumn rateColumn,
+            RolapSchema.PhysColumn rateCurrencyColumn,
+            RolapSchema.PhysColumn rateTypeColumn,
+            RolapSchema.PhysColumn validFromColumn,
+            RolapSchema.PhysColumn validToColumn,
+            RolapSchema.PhysColumn factCurrencyColumn,
+            RolapSchema.PhysColumn factDateColumn, String rateType)
+        {
+            this.convertedName = convertedName;
+            this.baseMeasure = baseMeasure;
+            this.rateTable = rateTable;
+            this.rateColumn = rateColumn;
+            this.rateCurrencyColumn = rateCurrencyColumn;
+            this.rateTypeColumn = rateTypeColumn;
+            this.validFromColumn = validFromColumn;
+            this.validToColumn = validToColumn;
+            this.factCurrencyColumn = factCurrencyColumn;
+            this.factDateColumn = factDateColumn;
+            this.rateType = rateType;
+        }
+    }
+
+    private final java.util.List<CurrencyConversionInfo> currencyConversions =
+        new java.util.ArrayList<CurrencyConversionInfo>();
+
+    public void addCurrencyConversion(CurrencyConversionInfo info) {
+        currencyConversions.add(info);
+    }
+
+    public java.util.List<CurrencyConversionInfo> getCurrencyConversions() {
+        return currencyConversions;
+    }
+
+    /** Whether this measure group has any currency conversion (Calcite-only). */
+    public boolean hasCurrencyConversion() {
+        return !currencyConversions.isEmpty();
+    }
+
+    /** The conversion whose converted measure has this name, or null. */
+    public CurrencyConversionInfo currencyConversionByName(String name) {
+        for (CurrencyConversionInfo i : currencyConversions) {
+            if (i.convertedName.equals(name)) {
+                return i;
+            }
+        }
+        return null;
+    }
+
     /**
      * #107: whether {@code measure}'s owning measure group is secured by a
      * full-count {@code <BridgeLink>}. Resolves the owning cube from the

@@ -332,21 +332,61 @@ final class M4CubeIngester {
         if (mg.childArray != null) {
             List<Object> measureList = null;
             List<Object> linkList = null;
+            List<Object> ccList = null;
             for (MondrianDef.MeasureGroupElement mge : mg.childArray) {
                 if (mge instanceof MondrianDef.Measures) {
                     measureList = measures((MondrianDef.Measures) mge);
                 } else if (mge instanceof MondrianDef.DimensionLinks) {
                     linkList = dimensionLinks((MondrianDef.DimensionLinks) mge);
+                } else if (mge instanceof MondrianDef.CurrencyConversions) {
+                    ccList = currencyConversions(
+                        (MondrianDef.CurrencyConversions) mge);
                 }
             }
             if (measureList != null && !measureList.isEmpty()) {
                 out.put("measures", measureList);
+            }
+            if (ccList != null && !ccList.isEmpty()) {
+                out.put("currency_conversions", ccList);
             }
             if (linkList != null && !linkList.isEmpty()) {
                 out.put("dimension_links", linkList);
             }
         }
         return out;
+    }
+
+    private static List<Object> currencyConversions(
+        MondrianDef.CurrencyConversions w)
+    {
+        List<Object> out = new ArrayList<>();
+        if (w.array != null) {
+            for (MondrianDef.CurrencyConversion cc : w.array) {
+                out.add(currencyConversion(cc));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> currencyConversion(
+        MondrianDef.CurrencyConversion cc)
+    {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("name", cc.name);
+        o.put("measure", cc.measure);
+        o.put("rate_table", cc.rateTable);
+        o.put("rate_column", cc.rateColumn);
+        o.put("rate_type", cc.rateType);
+        o.put("rate_type_column", cc.rateTypeColumn);
+        o.put("fact_currency_column", cc.factCurrencyColumn);
+        o.put("rate_currency_column", cc.rateCurrencyColumn);
+        o.put("fact_date_column", cc.factDateColumn);
+        o.put("rate_valid_from_column", cc.rateValidFromColumn);
+        o.put("rate_valid_to_column", cc.rateValidToColumn);
+        if (cc.formatString != null) {
+            o.put("format_string", cc.formatString);
+        }
+        return o;
     }
 
     private static List<Object> measures(MondrianDef.Measures wrapper) {

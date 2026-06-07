@@ -4023,7 +4023,8 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 new Children<MeasureGroupElement>(
                     MeasureGroupElement.class,
                     Measures.class,
-                    DimensionLinks.class)
+                    DimensionLinks.class,
+                    CurrencyConversions.class)
                 {
                     MeasureGroupElement[] getArray() {
                         return childArray == null ? EMPTY : childArray;
@@ -4034,6 +4035,9 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 };
             public List<DimensionLink> getDimensionLinks() {
                 return children.only(DimensionLinks.EMPTY).list();
+            }
+            public NamedList<CurrencyConversion> getCurrencyConversions() {
+                return children.only(CurrencyConversions.EMPTY).list();
             }
             public NamedList<MeasureOrRef> getMeasures() {
                 return children.only(Measures.EMPTY).list();
@@ -4112,6 +4116,61 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
             }
             ]]>
         </Code>
+    </Element>
+
+    <Element type="CurrencyConversions" class="Holder,MeasureGroupElement">
+        <Doc>Collection of CurrencyConversion elements (#112 phase 3).</Doc>
+        <Array name="array" type="CurrencyConversion"/>
+        <Code>
+            <![CDATA[
+            private static final CurrencyConversions EMPTY;
+            static {
+                EMPTY = new CurrencyConversions();
+                EMPTY.array = new CurrencyConversion[0];
+            }
+            public CurrencyConversions copy() {
+                CurrencyConversions c = new CurrencyConversions();
+                c.array = array.clone();
+                return c;
+            }
+            public NamedList<CurrencyConversion> list() {
+                return new NamedListImpl<CurrencyConversion>(
+                    new MutableArrayList<CurrencyConversion>() {
+                        protected CurrencyConversion[] getArray() {
+                            return array == null ? EMPTY.array : array;
+                        }
+                        protected void setArray(CurrencyConversion[] ts) {
+                            array = ts;
+                        }
+                    }
+                );
+            }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="CurrencyConversion" class="NamedElement">
+        <Doc>
+            #112 phase 3: converts a measure to a reporting currency/unit via a
+            rate table, picking the rate whose [valid_from,valid_to) interval
+            contains the fact's effective date. Produces SUM(measure &#215; rate).
+            Requires the Calcite backend.
+        </Doc>
+        <Attribute name="name" required="true"><Doc>Converted measure name.</Doc></Attribute>
+        <Attribute name="measure" required="true"><Doc>Base measure to convert.</Doc></Attribute>
+        <Attribute name="rateTable" required="true"><Doc>Rate table.</Doc></Attribute>
+        <Attribute name="rateColumn" required="true"><Doc>Rate (multiplier) column.</Doc></Attribute>
+        <Attribute name="rateType" required="true"><Doc>Rate-type value to select.</Doc></Attribute>
+        <Attribute name="rateTypeColumn" required="true"><Doc>Rate-type column on the rate table.</Doc></Attribute>
+        <Attribute name="factCurrencyColumn" required="true"><Doc>Currency key on the fact.</Doc></Attribute>
+        <Attribute name="rateCurrencyColumn" required="true"><Doc>Currency key on the rate table.</Doc></Attribute>
+        <Attribute name="factDateColumn" required="true"><Doc>Effective-date column on the fact.</Doc></Attribute>
+        <Attribute name="rateValidFromColumn" required="true"><Doc>Interval start (inclusive).</Doc></Attribute>
+        <Attribute name="rateValidToColumn" required="true"><Doc>Interval end (exclusive).</Doc></Attribute>
+        <Attribute name="formatString"><Doc>FORMAT_STRING for the converted measure.</Doc></Attribute>
+        <Code><![CDATA[
+        public String getNameAttribute() { return name; }
+        ]]></Code>
     </Element>
 
     <Element type="DimensionLink" abstract="true">

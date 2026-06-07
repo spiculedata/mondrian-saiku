@@ -1941,6 +1941,14 @@ public class RolapSchemaLoader {
                 }
             }
 
+            // #112 phase 3: currency/unit conversions on this measure group.
+            for (MondrianDef.CurrencyConversion xmlCc
+                : xmlMeasureGroup.getCurrencyConversions())
+            {
+                addCurrencyConversion(
+                    fact, xmlMeasureGroup, measureGroup, measureList, xmlCc);
+            }
+
             for (RolapCubeDimension dimension : unlinkedDimensions) {
                 // Hanger dimensions are not linked.
                 if (dimension.hanger) {
@@ -2395,6 +2403,103 @@ public class RolapSchemaLoader {
      * @param measureGroupTable Table for measure group (may be null)
      * @return measure
      */
+    /**
+     * #112 phase 3: register a {@code <CurrencyConversion>} — resolve the rate
+     * table + columns, record a {@link RolapMeasureGroup.CurrencyConversionInfo},
+     * and create a converted measure backed by the base measure's column (the
+     * {@code × rate} arithmetic is emitted in the Calcite path). Fail-closed:
+     * an unknown base measure or column errors at load.
+     */
+    private void addCurrencyConversion(
+        RolapSchema.PhysRelation fact,
+        MondrianDef.MeasureGroup xmlMeasureGroup,
+        RolapMeasureGroup measureGroup,
+        List<RolapMember> measureList,
+        MondrianDef.CurrencyConversion xml)
+    {
+        // Base measure (the M4 xml + the realized RolapBaseCubeMeasure).
+        MondrianDef.Measure baseXml = null;
+        for (MondrianDef.MeasureOrRef mr : xmlMeasureGroup.getMeasures()) {
+            if (mr instanceof MondrianDef.Measure
+                && xml.measure.equals(((MondrianDef.Measure) mr).name))
+            {
+                baseXml = (MondrianDef.Measure) mr;
+                break;
+            }
+        }
+        RolapBaseCubeMeasure base = null;
+        for (RolapMeasure m : measureGroup.measureList) {
+            if (m instanceof RolapBaseCubeMeasure
+                && m.getName().equals(xml.measure))
+            {
+                base = (RolapBaseCubeMeasure) m;
+                break;
+            }
+        }
+        if (baseXml == null || base == null) {
+            getHandler().error(
+                "CurrencyConversion '" + xml.name + "': measure '"
+                + xml.measure + "' not found in measure group '"
+                + measureGroup.getName() + "'", xml, null);
+            return;
+        }
+        // Resolve the rate table + columns (fail-closed via getPhysColumn).
+        RolapSchema.PhysRelation rate =
+            getPhysRelation(xml.rateTable, xml, "rateTable");
+        if (rate == null) {
+            return;
+        }
+        RolapSchema.PhysColumn rateCol =
+            getPhysColumn(rate, xml.rateColumn, xml, "rateColumn");
+        RolapSchema.PhysColumn rateCcy =
+            getPhysColumn(rate, xml.rateCurrencyColumn, xml, "rateCurrencyColumn");
+        RolapSchema.PhysColumn rateTyp =
+            getPhysColumn(rate, xml.rateTypeColumn, xml, "rateTypeColumn");
+        RolapSchema.PhysColumn vFrom =
+            getPhysColumn(rate, xml.rateValidFromColumn, xml, "rateValidFromColumn");
+        RolapSchema.PhysColumn vTo =
+            getPhysColumn(rate, xml.rateValidToColumn, xml, "rateValidToColumn");
+        RolapSchema.PhysColumn factCcy =
+            getPhysColumn(fact, xml.factCurrencyColumn, xml, "factCurrencyColumn");
+        RolapSchema.PhysColumn factDate =
+            getPhysColumn(fact, xml.factDateColumn, xml, "factDateColumn");
+        if (rateCol == null || rateCcy == null || rateTyp == null
+            || vFrom == null || vTo == null || factCcy == null
+            || factDate == null)
+        {
+            return;
+        }
+        measureGroup.addCurrencyConversion(
+            new RolapMeasureGroup.CurrencyConversionInfo(
+                xml.name, base.getStarMeasure(), rate, rateCol, rateCcy,
+                rateTyp, vFrom, vTo, factCcy, factDate, xml.rateType));
+
+        // Converted measure: same column/aggregator as the base; the × rate is
+        // applied in the Calcite translate path.
+        MondrianDef.Measure conv = new MondrianDef.Measure();
+        conv.name = xml.name;
+        conv.table = baseXml.table;
+        conv.column = baseXml.column;
+        conv.aggregator = baseXml.aggregator;
+        conv.datatype = baseXml.datatype;
+        conv.formatString =
+            xml.formatString != null ? xml.formatString : baseXml.formatString;
+        RolapSchema.PhysRelation relation =
+            xmlMeasureGroup.table == null
+                ? null
+                : getPhysRelation(xmlMeasureGroup.table, xmlMeasureGroup, "table");
+        RolapBaseCubeMeasure converted =
+            createMeasure(measureGroup, conv, relation);
+        if (converted == null) {
+            return;
+        }
+        if (converted.getOrdinal() == -1) {
+            converted.setOrdinal(nonSystemMeasures().size());
+            converted.setOrderKey(nonSystemMeasures().size());
+        }
+        measureList.add(converted);
+    }
+
     private RolapBaseCubeMeasure createMeasure(
         RolapMeasureGroup measureGroup,
         MondrianDef.Measure xmlMeasure,

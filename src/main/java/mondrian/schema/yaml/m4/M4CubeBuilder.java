@@ -260,6 +260,10 @@ final class M4CubeBuilder {
         if (measures instanceof List && !((List<?>) measures).isEmpty()) {
             kids.add(buildMeasures((List<?>) measures));
         }
+        Object ccs = m.get("currency_conversions");
+        if (ccs instanceof List && !((List<?>) ccs).isEmpty()) {
+            kids.add(buildCurrencyConversions((List<?>) ccs));
+        }
         Object dimLinks = m.get("dimension_links");
         if (dimLinks instanceof List && !((List<?>) dimLinks).isEmpty()) {
             kids.add(buildDimensionLinks((List<?>) dimLinks));
@@ -268,6 +272,41 @@ final class M4CubeBuilder {
             mg.childArray = kids.toArray(new MondrianDef.MeasureGroupElement[0]);
         }
         return mg;
+    }
+
+    private static MondrianDef.CurrencyConversions buildCurrencyConversions(
+        List<?> list)
+    {
+        MondrianDef.CurrencyConversions w =
+            new MondrianDef.CurrencyConversions();
+        List<MondrianDef.CurrencyConversion> out = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                out.add(buildCurrencyConversion((Map<?, ?>) item));
+            }
+        }
+        w.array = out.toArray(new MondrianDef.CurrencyConversion[0]);
+        return w;
+    }
+
+    private static MondrianDef.CurrencyConversion buildCurrencyConversion(
+        Map<?, ?> m)
+    {
+        MondrianDef.CurrencyConversion cc = new MondrianDef.CurrencyConversion();
+        cc.name = M4YamlToXml.str(m.get("name"));
+        cc.measure = M4YamlToXml.str(m.get("measure"));
+        cc.rateTable = M4YamlToXml.str(m.get("rate_table"));
+        cc.rateColumn = M4YamlToXml.str(m.get("rate_column"));
+        cc.rateType = M4YamlToXml.str(m.get("rate_type"));
+        cc.rateTypeColumn = M4YamlToXml.str(m.get("rate_type_column"));
+        cc.factCurrencyColumn = M4YamlToXml.str(m.get("fact_currency_column"));
+        cc.rateCurrencyColumn = M4YamlToXml.str(m.get("rate_currency_column"));
+        cc.factDateColumn = M4YamlToXml.str(m.get("fact_date_column"));
+        cc.rateValidFromColumn =
+            M4YamlToXml.str(m.get("rate_valid_from_column"));
+        cc.rateValidToColumn = M4YamlToXml.str(m.get("rate_valid_to_column"));
+        cc.formatString = M4YamlToXml.str(m.get("format_string"));
+        return cc;
     }
 
     private static MondrianDef.Measures buildMeasures(List<?> list) {
