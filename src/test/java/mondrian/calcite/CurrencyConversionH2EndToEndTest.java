@@ -131,6 +131,38 @@ public class CurrencyConversionH2EndToEndTest {
         }
     }
 
+    /**
+     * QUERY SHAPE: the base (unweighted) and converted (rate-weighted) measures
+     * requested together in one query must BOTH be correct — the band join is
+     * 1:1 so the base is untouched while only the converted column is weighted.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void baseAndConvertedMeasureInOneQuery(String form) {
+        Connection c = connect(form, true);
+        try {
+            Query q = c.parseQuery(
+                "SELECT {[Measures].[Revenue], [Measures].[Revenue (USD)]}"
+                + " ON COLUMNS,\n"
+                + " {[Calendar].[Calendar].[2024]} ON ROWS\n"
+                + "FROM [Monthly Revenue]");
+            Result r = c.execute(q);
+            try {
+                Object base = r.getCell(new int[]{0, 0}).getValue();
+                Object usd = r.getCell(new int[]{1, 0}).getValue();
+                assertEquals(600.0, ((Number) base).doubleValue(), 0.001,
+                    "2024 base EUR Revenue unweighted by the band join");
+                assertEquals(660.0, ((Number) usd).doubleValue(), 0.001,
+                    "2024 Revenue (USD) = 600 @ 1.10, weighted in the same load");
+            } finally {
+                r.close();
+            }
+        } finally {
+            c.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
+
     @Test
     public void unknownBaseMeasureFailsClosed() {
         String bad = xmlSchema.replace(
