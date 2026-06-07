@@ -43,18 +43,18 @@ final class JoinEdge {
       Pattern.compile("\\$\\{\\s*([A-Za-z_]\\w*)\\.([A-Za-z_]\\w*)\\s*}");
 
   private final String joinName;
-  private final String joinedView;
+  private final String underlyingView;
   private final String type;
   private final String relationship;
   private final ImmutableSet<String> referencedViews;
   private final String sqlOn;
   private final boolean hasForeignKey;
 
-  private JoinEdge(String joinName, String joinedView, String type,
+  private JoinEdge(String joinName, String underlyingView, String type,
       String relationship, Set<String> referencedViews, String sqlOn,
       boolean hasForeignKey) {
     this.joinName = joinName;
-    this.joinedView = joinedView;
+    this.underlyingView = underlyingView;
     this.type = type;
     this.relationship = relationship;
     this.referencedViews = ImmutableSet.copyOf(referencedViews);
@@ -62,11 +62,21 @@ final class JoinEdge {
     this.hasForeignKey = hasForeignKey;
   }
 
-  /** Builds an edge from a {@code join:} node. The joined view defaults to the
-   * join name, overridable by {@code from:} / {@code view_name:}. */
+  /**
+   * Builds an edge from a {@code join:} node (#125).
+   *
+   * <p>Two distinct concepts are kept separate: the <em>join name</em>
+   * ({@code joinNode.name()}) is the field namespace — every {@code sql_on}
+   * {@code ${X.column}} reference to this join uses the join name, never the
+   * {@code from:}/{@code view_name:} target. The <em>underlying view</em> is the
+   * {@code from:} / {@code view_name:} target (else the join name) and is where
+   * the joined dimensions' column definitions and physical {@code
+   * sql_table_name} live. All {@code sql_on} ref-matching keys on the join name;
+   * table/column resolution keys on the underlying view.
+   */
   static JoinEdge from(LookmlNode joinNode) {
     final String name = joinNode.name().orElse("");
-    final String view = joinNode.stringValue(LookmlKeywords.FROM)
+    final String underlying = joinNode.stringValue(LookmlKeywords.FROM)
         .or(() -> joinNode.stringValue(LookmlKeywords.VIEW_NAME))
         .orElse(name);
     final String type = joinNode.stringValue(LookmlKeywords.TYPE)
@@ -74,25 +84,29 @@ final class JoinEdge {
     final String relationship =
         joinNode.stringValue(LookmlKeywords.RELATIONSHIP).orElse(null);
     final String sqlOn = joinNode.stringValue(LookmlKeywords.SQL_ON).orElse("");
-    final Set<String> referenced = parseReferencedViews(sqlOn, view);
+    // #125: refs to this join use the join NAME, so exclude the join name (not
+    // the from:-target) when collecting the upstream side(s).
+    final Set<String> referenced = parseReferencedViews(sqlOn, name);
     final boolean hasFk =
         joinNode.stringValue(LookmlKeywords.FOREIGN_KEY)
             .map(String::trim).filter(s -> !s.isEmpty()).isPresent();
-    return new JoinEdge(name, view, type, relationship, referenced, sqlOn,
+    return new JoinEdge(name, underlying, type, relationship, referenced, sqlOn,
         hasFk);
   }
 
-  /** The views (other than the join's own {@code joinedView}) referenced by a
+  /** The views (other than the join's own {@code joinName}) referenced by a
    * {@code sql_on} block's {@code ${view.column}} expressions: the upstream
    * side(s) the join attaches to. Empty when {@code sql_on} is absent (e.g. a
-   * {@code cross} join) or only self-referential. */
+   * {@code cross} join) or only self-referential. In LookML a joined field is
+   * referenced by the join name, so the join's own namespace excluded here is
+   * the join name, not the {@code from:} target (#125). */
   private static Set<String> parseReferencedViews(String sqlOn,
-      String joinedView) {
+      String joinName) {
     final Set<String> views = new LinkedHashSet<>();
     final Matcher m = VIEW_REF.matcher(sqlOn);
     while (m.find()) {
       final String v = m.group(1);
-      if (!v.equals(joinedView)) {
+      if (!v.equals(joinName)) {
         views.add(v);
       }
     }
@@ -103,8 +117,12 @@ final class JoinEdge {
     return joinName;
   }
 
-  String joinedView() {
-    return joinedView;
+  /** The underlying physical view ({@code from:}/{@code view_name:} target, else
+   * the join name) — where the joined dimensions' columns and {@code
+   * sql_table_name} are defined (#125). NOT the namespace for {@code sql_on}
+   * refs; use {@link #joinName()} for those. */
+  String underlyingView() {
+    return underlyingView;
   }
 
   String type() {
@@ -152,11 +170,16 @@ final class JoinEdge {
     return LookmlKeywords.REL_MANY_TO_MANY.equals(relationship);
   }
 
-  /** Whether the transpiler can recover a single fact/dimension key pair for
-   * this join (#115): a {@code foreign_key}, or a {@code sql_on} with a column
-   * on the joined view <em>and</em> a column on some other (fact/upstream) view.
-   * When false the conformed dimension is omitted by the emitter, so the
-   * classifier records a DEGRADE note rather than letting it vanish silently. */
+  /** Whether the transpiler can recover a <em>single-column</em> fact/dimension
+   * key pair for this join (#115/#125): a {@code foreign_key}, or a {@code
+   * sql_on} that reduces to exactly one column on the join-name (dimension) side
+   * <em>and</em> exactly one column on the other (fact/upstream) side.
+   *
+   * <p>This mirrors the transpiler's {@link JoinKeys} single-column gate: a
+   * compound (AND-chained multi-column) or expression {@code sql_on} is NOT
+   * resolvable, so it must DEGRADE rather than be silently reduced to one wrong
+   * key (#125). When false the conformed dimension is omitted by the emitter, so
+   * the classifier records a DEGRADE note rather than letting it vanish. */
   boolean hasResolvableKey() {
     if (hasForeignKey) {
       return true;
@@ -166,23 +189,108 @@ final class JoinEdge {
       // cannot key. (Topology checks handle the structural cases.)
       return false;
     }
-    boolean dimSide = false;
-    boolean factSide = false;
+    String dimColumn = null;
+    String factColumn = null;
     final Matcher m = REF.matcher(sqlOn);
     while (m.find()) {
-      if (m.group(1).equals(joinedView)) {
-        dimSide = true;
+      final String view = m.group(1);
+      final String column = m.group(2);
+      // #125: the dimension side is referenced by the join NAME, not the
+      // from:-target underlying view.
+      if (view.equals(joinName)) {
+        if (dimColumn != null && !dimColumn.equals(column)) {
+          return false; // compound key on the dimension side: not resolvable.
+        }
+        dimColumn = column;
       } else {
-        factSide = true;
+        if (factColumn != null && !factColumn.equals(column)) {
+          return false; // compound key on the fact side: not resolvable.
+        }
+        factColumn = column;
       }
     }
-    return dimSide && factSide;
+    return dimColumn != null && factColumn != null;
   }
 
   /** The fact fans out across this edge (one_to_many or many_to_many). */
   boolean fansOut() {
     return LookmlKeywords.REL_ONE_TO_MANY.equals(relationship)
         || LookmlKeywords.REL_MANY_TO_MANY.equals(relationship);
+  }
+
+  // --- bridge two-hop key recovery (#124) --------------------------------
+
+  /** Whether this edge's relationship is a fact→bridge hop (the fact fans out
+   * across it: {@code one_to_many} or {@code many_to_many}). */
+  boolean isBridgeFactHop() {
+    return LookmlKeywords.BRIDGE_FACT_HOP_RELATIONSHIPS.contains(relationship);
+  }
+
+  /** Whether this edge's relationship is a bridge→dim hop (the bridge maps to
+   * one dimension member: {@code many_to_one} or {@code one_to_one}). */
+  boolean isBridgeDimHop() {
+    return LookmlKeywords.BRIDGE_DIM_HOP_RELATIONSHIPS.contains(relationship);
+  }
+
+  /**
+   * Recovers the single-column key pair this edge's {@code sql_on} equates
+   * between {@code nearView} and this edge's own join namespace, if and only if
+   * exactly one column is referenced on each side (the engine supports
+   * single-column keys only, #107). The {@code nearColumn} is the column on
+   * {@code nearView}; the {@code joinedColumn} is the column referenced via this
+   * join's name (#125). Empty when the {@code sql_on} is absent, multi-column on
+   * either side, or does not name both — so an ambiguous / compound join is
+   * never mis-recovered.
+   */
+  Optional<KeyPair> singleColumnKeyPair(String nearView) {
+    if (sqlOn.isEmpty()) {
+      return Optional.empty();
+    }
+    String near = null;
+    String joined = null;
+    final Matcher m = REF.matcher(sqlOn);
+    while (m.find()) {
+      final String view = m.group(1);
+      final String column = m.group(2);
+      if (view.equals(nearView)) {
+        if (near != null && !near.equals(column)) {
+          return Optional.empty(); // compound key on the near side: refuse.
+        }
+        near = column;
+      } else if (view.equals(joinName)) {
+        if (joined != null && !joined.equals(column)) {
+          return Optional.empty(); // compound key on the joined side: refuse.
+        }
+        joined = column;
+      } else {
+        // A third view in the predicate: not a clean two-view equality.
+        return Optional.empty();
+      }
+    }
+    if (near == null || joined == null) {
+      return Optional.empty();
+    }
+    return Optional.of(new KeyPair(near, joined));
+  }
+
+  /** A single-column key pair recovered from a {@code sql_on}: the column on the
+   * near (upstream) view and the column on the edge's joined view. Immutable. */
+  static final class KeyPair {
+    private final String nearColumn;
+    private final String joinedColumn;
+
+    KeyPair(String nearColumn, String joinedColumn) {
+      this.nearColumn = nearColumn;
+      this.joinedColumn = joinedColumn;
+    }
+
+    String nearColumn() {
+      return nearColumn;
+    }
+
+    String joinedColumn() {
+      return joinedColumn;
+    }
   }
 }
 

@@ -52,15 +52,18 @@ final class JoinKeys {
   }
 
   /**
-   * Recovers the join keys for {@code join} whose joined view is
-   * {@code joinedView}, attached to {@code baseView}. Prefers {@code sql_on};
-   * falls back to {@code foreign_key} (a bare fact column, dim key assumed the
-   * same name). Empty if neither yields a usable single-column key.
+   * Recovers the join keys for {@code join}, attached to {@code baseView}.
+   * The dimension side of the {@code sql_on} is referenced by the join's
+   * <em>name</em> ({@code dimNamespace}), never its {@code from:}/{@code
+   * view_name:} target (#125) — those only swap the underlying physical view.
+   * Prefers {@code sql_on}; falls back to {@code foreign_key} (a bare fact
+   * column, dim key assumed the same name). Empty if neither yields a usable
+   * single-column key.
    */
   static Optional<JoinKeys> from(LookmlNode join, String baseView,
-      String joinedView) {
+      String dimNamespace) {
     final Optional<JoinKeys> fromSqlOn =
-        fromSqlOn(join, baseView, joinedView);
+        fromSqlOn(join, baseView, dimNamespace);
     if (fromSqlOn.isPresent()) {
       return fromSqlOn;
     }
@@ -71,7 +74,7 @@ final class JoinKeys {
   }
 
   private static Optional<JoinKeys> fromSqlOn(LookmlNode join, String baseView,
-      String joinedView) {
+      String dimNamespace) {
     final Optional<String> sqlOn = join.stringValue(TranspileKeywords.SQL_ON);
     if (sqlOn.isEmpty()) {
       return Optional.empty();
@@ -82,10 +85,20 @@ final class JoinKeys {
     while (m.find()) {
       final String view = m.group(1);
       final String column = m.group(2);
-      if (view.equals(baseView)) {
-        fact = column;
-      } else if (view.equals(joinedView)) {
+      // #125: the dimension side is referenced by the join name, not the
+      // from:-target. Check it first so a join whose name equals the base view
+      // is impossible here (names are unique within an explore's namespace).
+      if (view.equals(dimNamespace)) {
+        if (dim != null && !dim.equals(column)) {
+          return Optional.empty(); // compound dim key: refuse (never reduce to
+                                   // a single wrong key, #125).
+        }
         dim = column;
+      } else if (view.equals(baseView)) {
+        if (fact != null && !fact.equals(column)) {
+          return Optional.empty(); // compound fact key: refuse (#125).
+        }
+        fact = column;
       }
     }
     if (fact == null || dim == null) {

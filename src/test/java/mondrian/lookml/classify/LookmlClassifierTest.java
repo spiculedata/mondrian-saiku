@@ -321,6 +321,112 @@ class LookmlClassifierTest {
         record(r, "explore:orders").reasonCode());
   }
 
+  // --- bridge two-hop (#124) ---------------------------------------------
+
+  /** The canonical many-to-many bridge two-hop (fact →one_to_many→ bridge
+   * →many_to_one→ dim) with single-column keys and a fact primary key
+   * reclassifies REFUSE→CLEAN: the pair maps to a <BridgeLink> (#124/#107). */
+  @Test void bridgeTwoHopReclassifiesClean() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: bal { type: sum sql: ${TABLE}.balance ;; } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:accounts");
+    assertEquals(Classification.CLEAN, ex.classification());
+    assertEquals(ReasonCode.CLEAN, ex.reasonCode());
+  }
+
+  /** An explicit-direct {@code many_to_many} hop into the bridge, paired with a
+   * recoverable {@code many_to_one} dim hop, also reclassifies CLEAN (#124). */
+  @Test void bridgeExplicitManyToManyHopReclassifiesClean() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "explore:accounts").classification());
+  }
+
+  /** A bridge whose fact→bridge hop has a COMPOUND key cannot recover a single
+   * bridge column pair, so it stays REFUSE (never a silently-wrong bridge). */
+  @Test void compoundKeyBridgeStaysRefuse() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id}\n"
+        + "      AND ${accounts.tenant} = ${owners.tenant} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:accounts");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** A bridge two-hop whose FACT view declares no primary key cannot supply the
+   * grain key the full-count de-dup needs, so it stays REFUSE (#124). */
+  @Test void bridgeWithoutFactPrimaryKeyStaysRefuse() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id {}\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY,
+        record(classify(lookml), "explore:accounts").reasonCode());
+  }
+
   // --- Liquid ------------------------------------------------------------
 
   /** Liquid {{ }} in a measure sql is refused; a plain ${TABLE}.col is not. */
@@ -978,6 +1084,114 @@ class LookmlClassifierTest {
     assertTrue(r.records().stream().noneMatch(rec ->
             rec.reasonCode() == ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE),
         () -> r.records().toString());
+  }
+
+  // --- #125: from:-aliased join sql_on keyed by join name --------------
+
+  /** A {@code from:}-aliased join whose {@code sql_on} references the join by
+   * its JOIN NAME (not the {@code from:} target) is resolvable and records NO
+   * unparseable-join DEGRADE — the #125 core fix. Before #125 it degraded
+   * because the classifier looked for {@code ${logical_subs.col}} instead of
+   * {@code ${current_state.col}}. */
+  @Test void fromAliasedJoinKeyedByJoinNameIsClean() {
+    String lookml =
+        "view: daily { sql_table_name: daily ;;\n"
+        + "  dimension: subscription_id { type: number"
+        + "    sql: ${TABLE}.subscription_id ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: logical_subs { sql_table_name: logical_subs ;;\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.id ;; }\n"
+        + "}\n"
+        + "explore: daily {\n"
+        + "  join: current_state {\n"
+        + "    from: logical_subs\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${daily.subscription_id} = ${current_state.id} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    assertEquals(Classification.CLEAN,
+        record(r, "explore:daily").classification());
+    assertTrue(r.records().stream().noneMatch(rec ->
+            rec.reasonCode() == ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE),
+        () -> r.records().toString());
+  }
+
+  /** A from:-aliased join keyed by the {@code from:} TARGET (the old, wrong way)
+   * is NOT resolvable — the join name is the only valid namespace — so it
+   * correctly DEGRADEs (proves we did not loosen the gate to accept either). */
+  @Test void fromAliasedJoinKeyedByTargetStillDegrades() {
+    String lookml =
+        "view: daily { sql_table_name: daily ;;\n"
+        + "  dimension: subscription_id { type: number"
+        + "    sql: ${TABLE}.subscription_id ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: logical_subs { sql_table_name: logical_subs ;;\n"
+        + "  dimension: id { type: number sql: ${TABLE}.id ;; }\n"
+        + "}\n"
+        + "explore: daily {\n"
+        + "  join: current_state {\n"
+        + "    from: logical_subs\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${daily.subscription_id} = ${logical_subs.id} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join =
+        record(r, "explore:daily.join:current_state");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+  }
+
+  /** A constant/metadata join (one view ref + a string literal, no fact-side
+   * key) must REMAIN DEGRADE — do not over-convert (#125). */
+  @Test void constantMetadataJoinStillDegrades() {
+    String lookml =
+        "view: f { sql_table_name: f ;; measure: c { type: count } }\n"
+        + "view: table_metadata { sql_table_name: table_metadata ;;\n"
+        + "  dimension: table_name { type: string"
+        + "    sql: ${TABLE}.table_name ;; }\n"
+        + "}\n"
+        + "explore: f {\n"
+        + "  join: meta {\n"
+        + "    from: table_metadata\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${meta.table_name} = 'foo_v1' ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:f.join:meta");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+  }
+
+  /** A compound (AND-chained multi-column) from:-aliased join must NOT be
+   * mis-recovered to a single wrong key — it stays DEGRADE (#125). */
+  @Test void compoundKeyFromAliasedJoinStillDegrades() {
+    String lookml =
+        "view: f { sql_table_name: f ;;\n"
+        + "  dimension: a { type: number sql: ${TABLE}.a ;; }\n"
+        + "  dimension: b { type: number sql: ${TABLE}.b ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: dim { sql_table_name: dim ;;\n"
+        + "  dimension: x { type: number sql: ${TABLE}.x ;; }\n"
+        + "  dimension: y { type: number sql: ${TABLE}.y ;; }\n"
+        + "}\n"
+        + "explore: f {\n"
+        + "  join: d {\n"
+        + "    from: dim\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${f.a} = ${d.x} AND ${f.b} = ${d.y} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:f.join:d");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
   }
 
   // --- #115 gap 2: unknown value_format_name → DEGRADE note ------------
