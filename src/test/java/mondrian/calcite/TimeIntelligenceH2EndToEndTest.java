@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.sql.Statement;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -105,6 +106,27 @@ public class TimeIntelligenceH2EndToEndTest {
                 "YTD Mar2024 = 100+200+300");
             assertEquals(250.0, cell(c, "Revenue R3", MAR25), 0.001,
                 "rolling-3 avg Mar2025 = (150+250+350)/3");
+        } finally {
+            c.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void yoyAndPopOnEarliestPeriodAreBlankNotInfinity(String form) {
+        // 2024 is the earliest year — no prior (2023) to compare against. The
+        // empty-prior guard must render YoY/PoP as NULL (blank), not Infinity%.
+        Connection c = connect(form);
+        try {
+            assertNull(cell(c, "Revenue YoY", "[Calendar].[Calendar].[2024]"),
+                "YoY of the first year (no prior) must be blank, not Infinity");
+            assertNull(cell(c, "Revenue PoP", "[Calendar].[Calendar].[2024]"),
+                "PoP of the first year (no prior) must be blank, not Infinity");
+            // And a period WITH a prior still computes (sanity).
+            assertEquals(0.25,
+                cell(c, "Revenue YoY", "[Calendar].[Calendar].[2025]"), 0.001,
+                "2025 YoY = (750-600)/600 = 0.25");
         } finally {
             c.close();
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
