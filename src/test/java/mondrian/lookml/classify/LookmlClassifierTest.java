@@ -321,6 +321,112 @@ class LookmlClassifierTest {
         record(r, "explore:orders").reasonCode());
   }
 
+  // --- bridge two-hop (#124) ---------------------------------------------
+
+  /** The canonical many-to-many bridge two-hop (fact →one_to_many→ bridge
+   * →many_to_one→ dim) with single-column keys and a fact primary key
+   * reclassifies REFUSE→CLEAN: the pair maps to a <BridgeLink> (#124/#107). */
+  @Test void bridgeTwoHopReclassifiesClean() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: one_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: bal { type: sum sql: ${TABLE}.balance ;; } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:accounts");
+    assertEquals(Classification.CLEAN, ex.classification());
+    assertEquals(ReasonCode.CLEAN, ex.reasonCode());
+  }
+
+  /** An explicit-direct {@code many_to_many} hop into the bridge, paired with a
+   * recoverable {@code many_to_one} dim hop, also reclassifies CLEAN (#124). */
+  @Test void bridgeExplicitManyToManyHopReclassifiesClean() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    assertEquals(Classification.CLEAN,
+        record(classify(lookml), "explore:accounts").classification());
+  }
+
+  /** A bridge whose fact→bridge hop has a COMPOUND key cannot recover a single
+   * bridge column pair, so it stays REFUSE (never a silently-wrong bridge). */
+  @Test void compoundKeyBridgeStaysRefuse() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id}\n"
+        + "      AND ${accounts.tenant} = ${owners.tenant} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id { primary_key: yes }\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    final CoverageRecord ex = record(classify(lookml), "explore:accounts");
+    assertEquals(Classification.REFUSE, ex.classification());
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY, ex.reasonCode());
+  }
+
+  /** A bridge two-hop whose FACT view declares no primary key cannot supply the
+   * grain key the full-count de-dup needs, so it stays REFUSE (#124). */
+  @Test void bridgeWithoutFactPrimaryKeyStaysRefuse() {
+    final String lookml = ""
+        + "explore: accounts {\n"
+        + "  join: owners {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;;\n"
+        + "    relationship: many_to_many\n"
+        + "  }\n"
+        + "  join: customers {\n"
+        + "    type: left_outer\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;;\n"
+        + "    relationship: many_to_one\n"
+        + "  }\n"
+        + "}\n"
+        + "view: accounts { dimension: account_id {}\n"
+        + "  measure: c { type: count } }\n"
+        + "view: owners { dimension: account_id {} dimension: customer_id {} }\n"
+        + "view: customers { dimension: customer_id { primary_key: yes } }\n";
+
+    assertEquals(ReasonCode.REFUSE_NON_STAR_TOPOLOGY,
+        record(classify(lookml), "explore:accounts").reasonCode());
+  }
+
   // --- Liquid ------------------------------------------------------------
 
   /** Liquid {{ }} in a measure sql is refused; a plain ${TABLE}.col is not. */

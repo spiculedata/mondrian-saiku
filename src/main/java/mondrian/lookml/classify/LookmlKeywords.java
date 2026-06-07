@@ -83,6 +83,21 @@ final class LookmlKeywords {
   static final String REL_ONE_TO_MANY = "one_to_many";
   static final String REL_MANY_TO_MANY = "many_to_many";
 
+  // --- bridge (many-to-many) two-hop recognition (#124) -------------------
+  // The canonical LookML bridge is a two-hop fact→bridge→dim: the fact fans out
+  // across the bridge (one_to_many / many_to_many) and the bridge maps fact rows
+  // to dimension members (many_to_one / one_to_one). When both hops are
+  // single-column and recoverable, the pair maps to a Mondrian <BridgeLink>
+  // (#107) instead of refusing the explore.
+
+  /** Relationships on the fact→bridge hop (the fact fans out across it). */
+  static final ImmutableSet<String> BRIDGE_FACT_HOP_RELATIONSHIPS =
+      ImmutableSet.of(REL_ONE_TO_MANY, REL_MANY_TO_MANY);
+
+  /** Relationships on the bridge→dim hop (the bridge maps to one dim member). */
+  static final ImmutableSet<String> BRIDGE_DIM_HOP_RELATIONSHIPS =
+      ImmutableSet.of(REL_MANY_TO_ONE, REL_ONE_TO_ONE);
+
   // --- additive aggregate measure types (symmetric-aggregate sensitive) ---
   static final ImmutableSet<String> ADDITIVE_AGGREGATE_TYPES =
       ImmutableSet.of("sum", "average", "avg", "count");

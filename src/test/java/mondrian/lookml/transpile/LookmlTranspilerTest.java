@@ -292,6 +292,89 @@ public class LookmlTranspilerTest {
     assertFalse(yaml.contains("bad_d"), yaml);
   }
 
+  /** #124: a LookML many-to-many bridge two-hop emits a {@code bridge}
+   * dimension_link carrying the bridge table and the three bridge columns, with
+   * the dim view (not the bridge view) as the conformed dimension. No allocation
+   * weight is modelled, so no aggregation/weight attribute is emitted (the
+   * engine defaults to fullCount). */
+  @Test
+  public void bridgeTwoHopEmitsBridgeLink() {
+    String lookml =
+        "view: accounts {\n"
+        + "  sql_table_name: br_accounts ;;\n"
+        + "  dimension: account_id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.account_id ;; }\n"
+        + "  measure: balance { type: sum sql: ${TABLE}.balance ;; }\n"
+        + "}\n"
+        + "view: owners {\n"
+        + "  sql_table_name: br_owners ;;\n"
+        + "  dimension: account_id { sql: ${TABLE}.account_id ;; }\n"
+        + "  dimension: customer_id { sql: ${TABLE}.customer_id ;; }\n"
+        + "}\n"
+        + "view: customers {\n"
+        + "  sql_table_name: br_customers ;;\n"
+        + "  dimension: customer_id { primary_key: yes"
+        + "    sql: ${TABLE}.customer_id ;; }\n"
+        + "  dimension: customer_name { sql: ${TABLE}.customer_name ;; }\n"
+        + "}\n"
+        + "explore: accounts {\n"
+        + "  join: owners { type: left_outer relationship: one_to_many\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id} ;; }\n"
+        + "  join: customers { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;; }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    String yaml = result.yaml();
+    assertTrue(yaml.contains("type: \"bridge\""), yaml);
+    assertTrue(yaml.contains("dimension: \"customers\""), yaml);
+    assertTrue(yaml.contains("bridge_table: \"br_owners\""), yaml);
+    assertTrue(
+        yaml.contains("fact_foreign_key_column: \"account_id\""), yaml);
+    assertTrue(yaml.contains("bridge_fact_key_column: \"account_id\""), yaml);
+    assertTrue(
+        yaml.contains("bridge_dimension_key_column: \"customer_id\""), yaml);
+    // fullCount default: no aggregation/weight attributes emitted.
+    assertFalse(yaml.contains("aggregation:"), yaml);
+    assertFalse(yaml.contains("weight_column:"), yaml);
+    // The bridge view itself is NOT emitted as a conformed dimension.
+    assertFalse(yaml.contains("dimension: \"owners\""), yaml);
+  }
+
+  /** #124: a bridge two-hop with a COMPOUND fact→bridge key cannot recover a
+   * single bridge column pair, so the explore stays REFUSE — no cube, no bridge
+   * link is emitted (never a silently-wrong bridge). */
+  @Test
+  public void compoundKeyBridgeNotEmitted() {
+    String lookml =
+        "view: accounts {\n"
+        + "  sql_table_name: br_accounts ;;\n"
+        + "  dimension: account_id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.account_id ;; }\n"
+        + "  measure: balance { type: sum sql: ${TABLE}.balance ;; }\n"
+        + "}\n"
+        + "view: owners {\n"
+        + "  sql_table_name: br_owners ;;\n"
+        + "  dimension: account_id { sql: ${TABLE}.account_id ;; }\n"
+        + "  dimension: customer_id { sql: ${TABLE}.customer_id ;; }\n"
+        + "}\n"
+        + "view: customers {\n"
+        + "  sql_table_name: br_customers ;;\n"
+        + "  dimension: customer_id { primary_key: yes"
+        + "    sql: ${TABLE}.customer_id ;; }\n"
+        + "}\n"
+        + "explore: accounts {\n"
+        + "  join: owners { type: left_outer relationship: many_to_many\n"
+        + "    sql_on: ${accounts.account_id} = ${owners.account_id}\n"
+        + "      AND ${accounts.tenant} = ${owners.tenant} ;; }\n"
+        + "  join: customers { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${owners.customer_id} = ${customers.customer_id} ;; }\n"
+        + "}\n";
+    String yaml = transpile(lookml).yaml();
+    assertFalse(yaml.contains("type: \"bridge\""), yaml);
+    // The explore is REFUSED: no cube emitted for it.
+    assertFalse(yaml.contains("accounts:"), yaml);
+  }
+
   /** #119 end-to-end: a LookML sum_distinct on a same-view NON-PK key
    * (basket_id) over an already-fanned-out fact transpiles to an M4
    * measure-level distinct grain, loads, and returns the DE-DUPLICATED total

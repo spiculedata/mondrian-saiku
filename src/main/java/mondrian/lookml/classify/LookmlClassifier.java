@@ -76,10 +76,14 @@ public final class LookmlClassifier {
     //    one_to_many (not just the base) -> fan-out edge, so an additive
     //    measure on any fanned-out view can be tested for symmetric-aggregate
     //    dependence (#98).
+    // 0c. Index whether each view declares a primary_key: yes dimension — the
+    //     fact grain key a bridge two-hop needs to de-duplicate (#124).
+    final Set<String> viewsWithPrimaryKey = indexViewsWithPrimaryKey(document);
+
     final Map<String, JoinEdge> fanOutByOneSideView = new HashMap<>();
     for (LookmlNode explore : document.children(LookmlKeywords.EXPLORE)) {
       final ExploreGraph graph = ExploreGraph.from(explore);
-      classifyExplore(explore, graph, dimensionKeys, out);
+      classifyExplore(explore, graph, dimensionKeys, viewsWithPrimaryKey, out);
       graph.fanOutByOneSideView().forEach(fanOutByOneSideView::putIfAbsent);
     }
 
@@ -130,11 +134,17 @@ public final class LookmlClassifier {
   // --- explores ----------------------------------------------------------
 
   private void classifyExplore(LookmlNode explore, ExploreGraph graph,
-      Set<String> dimensionKeys, ClassificationResult.Builder out) {
+      Set<String> dimensionKeys, Set<String> viewsWithPrimaryKey,
+      ClassificationResult.Builder out) {
     final String qn = "explore:" + graph.exploreName();
 
+    // The fact (base) view's grain key gates the bridge two-hop (#124).
+    final boolean factHasPrimaryKey =
+        viewsWithPrimaryKey.contains(graph.baseView());
+
     // Topology check (the first killer): refuse the whole explore.
-    final Optional<JoinEdge> nonStar = graph.firstNonStarEdge();
+    final Optional<JoinEdge> nonStar =
+        graph.firstNonStarEdge(factHasPrimaryKey);
     if (nonStar.isPresent()) {
       out.add(CoverageRecord.builder(Scope.EXPLORE, qn,
               ReasonCode.REFUSE_NON_STAR_TOPOLOGY,
@@ -151,9 +161,14 @@ public final class LookmlClassifier {
               .producedM4("cube")
               .build()));
       // A star-eligible join whose key the transpiler cannot recover: its
-      // conformed dimension is omitted, so record a DEGRADE note (#115).
+      // conformed dimension is omitted, so record a DEGRADE note (#115). A join
+      // that participates in a recognised bridge two-hop is resolved by the
+      // bridge path (its key is recovered against the bridge view, not the
+      // fact), so it is excluded from this fact-keyed check (#124).
+      final Set<JoinEdge> bridged = factHasPrimaryKey
+          ? bridgeEdges(graph) : java.util.Collections.emptySet();
       for (JoinEdge edge : graph.edges()) {
-        if (!edge.hasResolvableKey()) {
+        if (!bridged.contains(edge) && !edge.hasResolvableKey()) {
           out.add(unparseableJoinRecord(graph.exploreName(), edge));
         }
       }
@@ -210,6 +225,39 @@ public final class LookmlClassifier {
     }
     // Must resolve to a modelled dimension (not a measure / unknown field).
     return dimensionKeys.contains(f);
+  }
+
+  /** The join edges (fact hop + dim hop) of every recognised bridge two-hop in
+   * {@code graph} (#124), so the unparseable-join check can skip them. */
+  private Set<JoinEdge> bridgeEdges(ExploreGraph graph) {
+    final Set<JoinEdge> set = new HashSet<>();
+    for (BridgePattern b : graph.bridges()) {
+      set.add(b.factHop());
+      set.add(b.dimHop());
+    }
+    return set;
+  }
+
+  /** The names of views that declare a {@code primary_key: yes} dimension — the
+   * fact grain key a bridge two-hop de-duplicates on (#124). */
+  private Set<String> indexViewsWithPrimaryKey(LookmlNode document) {
+    final Set<String> names = new HashSet<>();
+    for (LookmlNode view : document.children(LookmlKeywords.VIEW)) {
+      final String viewName = view.name().orElse("");
+      if (viewName.isEmpty()) {
+        continue;
+      }
+      for (LookmlNode dim : view.children(LookmlKeywords.DIMENSION)) {
+        final boolean isPk = dim.stringValue(LookmlKeywords.PRIMARY_KEY)
+            .map(v -> v.equalsIgnoreCase("yes") || v.equalsIgnoreCase("true"))
+            .orElse(false);
+        if (isPk) {
+          names.add(viewName);
+          break;
+        }
+      }
+    }
+    return names;
   }
 
   private String nonStarReason(ExploreGraph graph, JoinEdge edge) {

@@ -75,12 +75,35 @@ final class CubeEmitter {
     final Map<String, DimensionGrants.GrantTarget> grantTargets =
         new LinkedHashMap<>();
 
+    // #124: recover the many-to-many bridge two-hops first. Each maps to a
+    // <BridgeLink> on the fact measure group; its bridge view and dim view are
+    // then excluded from the normal foreign-key / fact-base join partition (the
+    // dim view is emitted as a bridged conformed dimension below). Gated on the
+    // fact declaring a grain key — the engine de-dups the fullCount bridge on
+    // the fact <Key>; without it the bridge would be silently wrong (matches the
+    // classifier gate, so a no-PK explore is never reached here anyway).
+    final List<BridgeJoins> bridges =
+        primaryKeyColumn(baseView).isPresent()
+            ? BridgeJoins.recover(explore, baseViewName, this::tableFor)
+            : java.util.Collections.emptyList();
+    final Set<String> bridgeViews = new HashSet<>();
+    final Set<String> bridgeDimViews = new HashSet<>();
+    for (BridgeJoins b : bridges) {
+      bridgeViews.add(b.bridgeView());
+      bridgeDimViews.add(b.dimView());
+    }
+
     // Partition the joins: a joined view that itself has eligible measures is a
     // conformed FACT base (its own measure group, #115); one without is a
-    // conformed DIMENSION.
+    // conformed DIMENSION. Bridge views and bridged dim views are handled by the
+    // bridge path, so they are excluded from both partitions here (#124).
     final List<LookmlNode> factBaseJoins = new ArrayList<>();
     final List<LookmlNode> dimensionJoins = new ArrayList<>();
     for (LookmlNode join : LookmlTranspiler.joins(explore)) {
+      final String joined = LookmlTranspiler.joinedView(join);
+      if (bridgeViews.contains(joined) || bridgeDimViews.contains(joined)) {
+        continue;
+      }
       if (isFactBaseJoin(join)) {
         factBaseJoins.add(join);
       } else {
@@ -98,6 +121,13 @@ final class CubeEmitter {
     for (LookmlNode join : dimensionJoins) {
       emitJoinedDimension(explore, baseViewName, factTable, join, cubePath,
           dimensions, dimensionLinks, factColumns, grantTargets);
+    }
+    // 2b. Bridge dimensions (#124): each recovered two-hop emits the dim view as
+    //     a conformed dimension keyed on its bridge-side key, plus a
+    //     <BridgeLink> on the fact measure group.
+    for (BridgeJoins bridge : bridges) {
+      emitBridgeDimension(bridge, cubePath, dimensions, dimensionLinks,
+          factColumns, grantTargets);
     }
     addDegenerateColumns(baseView, baseViewName, factColumns);
     final Optional<String> factCountColumn = factColumns.isEmpty()
@@ -405,6 +435,92 @@ final class CubeEmitter {
     model.registerTable(dimTable, dimKeyColumn);
     // A derived_table joined view becomes a SQL-backed <Query> (#115).
     maybeRegisterQuery(joinedView, dimTable, Optional.of(dimKeyColumn));
+  }
+
+  // --- bridge (many-to-many) dimensions (#124) ---------------------------
+
+  /** The physical table backing {@code viewName} (its {@code sql_table_name}
+   * else the view name), or the view name when the view is unknown. Used to
+   * resolve a bridge view's table for the {@code bridge_table} attribute. */
+  private String tableFor(String viewName) {
+    final LookmlNode view = viewsByName.get(viewName);
+    return view == null
+        ? viewName : LookmlTranspiler.tableOf(view, viewName);
+  }
+
+  /**
+   * Emits the bridged conformed dimension for {@code bridge} (the dim view
+   * reached through the bridge, keyed on its bridge-side key column) plus a
+   * {@code <BridgeLink>} on the fact measure group (#124/#107).
+   *
+   * <p>The dimension is a normal conformed dimension on the dim view's table;
+   * the link carries the bridge table and the three bridge columns. No
+   * allocation weight is modelled (LookML has none), so the engine defaults to
+   * fullCount — de-duplicating on the fact grain key (already registered on the
+   * fact table) so the measure returns the de-duplicated total, not the
+   * fanned-out one.
+   */
+  private void emitBridgeDimension(BridgeJoins bridge, String cubePath,
+      List<Object> dimensions, List<Object> dimensionLinks,
+      List<String> factColumns,
+      Map<String, DimensionGrants.GrantTarget> grantTargets) {
+    final String dimViewName = bridge.dimView();
+    final LookmlNode dimView = viewsByName.get(dimViewName);
+    if (dimView == null) {
+      return;
+    }
+    final String dimTable = LookmlTranspiler.tableOf(dimView, dimViewName);
+    final String dimKeyColumn = bridge.dimKeyColumn();
+    final String keyAttrName = dimKeyColumn;
+
+    final List<Object> attributes = new ArrayList<>();
+    attributes.add(buildKeyAttribute(keyAttrName, dimTable, dimKeyColumn));
+    for (LookmlNode dim : dimView.children(TranspileKeywords.DIMENSION)) {
+      final String dimName = dim.name().orElse("");
+      if (dimName.isEmpty() || !eligible.field(dimViewName, dimName)
+          || dimName.equals(keyAttrName)) {
+        continue;
+      }
+      final String column = LookmlTranspiler.columnOf(dim, dimName);
+      attributes.add(buildAttribute(dimName, dimTable, column, dim));
+      provenance.put(dimViewName + "." + dimName,
+          cubePath + "/dimension:" + dimViewName + "/attribute:" + dimName);
+      // An access_filter on a bridged-dimension key grants members of
+      // [dimViewName].[dimName] — the bridge member-grant case (#124/#107).
+      grantTargets.put(dimName.toLowerCase(Locale.ROOT),
+          new DimensionGrants.GrantTarget(dimViewName, dimName, dimName));
+    }
+
+    final Map<String, Object> dimension = new LinkedHashMap<>();
+    dimension.put("name", dimViewName);
+    dimension.put("table", dimTable);
+    dimension.put("key", keyAttrName);
+    dimension.put("attributes", attributes);
+    dimensions.add(dimension);
+
+    final Map<String, Object> link = new LinkedHashMap<>();
+    link.put("type", TranspileKeywords.LINK_BRIDGE);
+    link.put("dimension", dimViewName);
+    link.put(TranspileKeywords.BRIDGE_TABLE, bridge.bridgeTable());
+    link.put(TranspileKeywords.FACT_FOREIGN_KEY_COLUMN,
+        bridge.factForeignKeyColumn());
+    link.put(TranspileKeywords.BRIDGE_FACT_KEY_COLUMN,
+        bridge.bridgeFactKeyColumn());
+    link.put(TranspileKeywords.BRIDGE_DIMENSION_KEY_COLUMN,
+        bridge.bridgeDimensionKeyColumn());
+    // No weight: LookML has no allocation weight, so the engine defaults to
+    // fullCount (omit aggregation/weight_column entirely, #124).
+    dimensionLinks.add(link);
+
+    // The fact FK column is a guaranteed-present fact column for a row count.
+    factColumns.add(bridge.factForeignKeyColumn());
+
+    // Register the dim table with its key and the bridge table (no key needed).
+    model.registerTable(dimTable, dimKeyColumn);
+    model.registerTable(bridge.bridgeTable(), null);
+
+    provenance.put("explore:" + cubePath + ".bridge:" + dimViewName,
+        cubePath + "/measureGroup/bridgeLink:" + dimViewName);
   }
 
   /** Registers {@code view}'s derived_table SQL as a SQL-backed {@code <Query>}

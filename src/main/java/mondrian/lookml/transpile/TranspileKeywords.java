@@ -69,6 +69,7 @@ final class TranspileKeywords {
 
   // --- relationship cardinality that fans the fact out -------------------
   static final String REL_ONE_TO_MANY = "one_to_many";
+  static final String REL_MANY_TO_MANY = "many_to_many";
 
   // --- dimension types mapped to native M4 binning / duration (#108) -----
   static final String TYPE_TIER = "tier";
@@ -89,6 +90,14 @@ final class TranspileKeywords {
   // --- M4 dimension_link types -------------------------------------------
   static final String LINK_FOREIGN_KEY = "foreign_key";
   static final String LINK_FACT = "fact";
+  // #124: the many-to-many bridge link (#107). The bridge map key names mirror
+  // mondrian.schema.yaml.m4.M4CubeBuilder.buildDimensionLink ("bridge" case).
+  static final String LINK_BRIDGE = "bridge";
+  static final String BRIDGE_TABLE = "bridge_table";
+  static final String FACT_FOREIGN_KEY_COLUMN = "fact_foreign_key_column";
+  static final String BRIDGE_FACT_KEY_COLUMN = "bridge_fact_key_column";
+  static final String BRIDGE_DIMENSION_KEY_COLUMN =
+      "bridge_dimension_key_column";
 
   /** The Measures dimension every cube has, host of calculated members. */
   static final String MEASURES_DIMENSION = "Measures";

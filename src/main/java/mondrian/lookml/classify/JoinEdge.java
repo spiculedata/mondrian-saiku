@@ -184,6 +184,80 @@ final class JoinEdge {
     return LookmlKeywords.REL_ONE_TO_MANY.equals(relationship)
         || LookmlKeywords.REL_MANY_TO_MANY.equals(relationship);
   }
+
+  // --- bridge two-hop key recovery (#124) --------------------------------
+
+  /** Whether this edge's relationship is a fact→bridge hop (the fact fans out
+   * across it: {@code one_to_many} or {@code many_to_many}). */
+  boolean isBridgeFactHop() {
+    return LookmlKeywords.BRIDGE_FACT_HOP_RELATIONSHIPS.contains(relationship);
+  }
+
+  /** Whether this edge's relationship is a bridge→dim hop (the bridge maps to
+   * one dimension member: {@code many_to_one} or {@code one_to_one}). */
+  boolean isBridgeDimHop() {
+    return LookmlKeywords.BRIDGE_DIM_HOP_RELATIONSHIPS.contains(relationship);
+  }
+
+  /**
+   * Recovers the single-column key pair this edge's {@code sql_on} equates
+   * between {@code nearView} and this edge's joined view, if and only if exactly
+   * one column is referenced on each side (the engine supports single-column
+   * keys only, #107). The {@code nearColumn} is the column on {@code nearView};
+   * the {@code joinedColumn} is the column on {@link #joinedView()}. Empty when
+   * the {@code sql_on} is absent, multi-column on either side, or does not name
+   * both views — so an ambiguous / compound join is never mis-recovered.
+   */
+  Optional<KeyPair> singleColumnKeyPair(String nearView) {
+    if (sqlOn.isEmpty()) {
+      return Optional.empty();
+    }
+    String near = null;
+    String joined = null;
+    final Matcher m = REF.matcher(sqlOn);
+    while (m.find()) {
+      final String view = m.group(1);
+      final String column = m.group(2);
+      if (view.equals(nearView)) {
+        if (near != null && !near.equals(column)) {
+          return Optional.empty(); // compound key on the near side: refuse.
+        }
+        near = column;
+      } else if (view.equals(joinedView)) {
+        if (joined != null && !joined.equals(column)) {
+          return Optional.empty(); // compound key on the joined side: refuse.
+        }
+        joined = column;
+      } else {
+        // A third view in the predicate: not a clean two-view equality.
+        return Optional.empty();
+      }
+    }
+    if (near == null || joined == null) {
+      return Optional.empty();
+    }
+    return Optional.of(new KeyPair(near, joined));
+  }
+
+  /** A single-column key pair recovered from a {@code sql_on}: the column on the
+   * near (upstream) view and the column on the edge's joined view. Immutable. */
+  static final class KeyPair {
+    private final String nearColumn;
+    private final String joinedColumn;
+
+    KeyPair(String nearColumn, String joinedColumn) {
+      this.nearColumn = nearColumn;
+      this.joinedColumn = joinedColumn;
+    }
+
+    String nearColumn() {
+      return nearColumn;
+    }
+
+    String joinedColumn() {
+      return joinedColumn;
+    }
+  }
 }
 
 // End JoinEdge.java

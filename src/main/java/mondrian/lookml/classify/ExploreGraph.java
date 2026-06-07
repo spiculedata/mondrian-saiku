@@ -17,8 +17,10 @@ import mondrian.lookml.parse.LookmlNode;
 
 import com.google.common.collect.ImmutableList;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,14 +75,53 @@ final class ExploreGraph {
   /** Returns the first edge that structurally breaks a star, if any: a
    * non-{@code left_outer} type, an unbridged {@code many_to_many}, or a
    * chained-many topology (a {@code one_to_many} reached through another
-   * {@code one_to_many}, which multiplies the fact grain twice). */
-  Optional<JoinEdge> firstNonStarEdge() {
+   * {@code one_to_many}, which multiplies the fact grain twice).
+   *
+   * <p>An edge that participates in a recognised bridge two-hop (#124) — either
+   * the fact→bridge hop or the bridge→dim hop — is NOT non-star: the pair maps
+   * to a {@code <BridgeLink>} (#107). A {@code many_to_many} or chained-many edge
+   * that is part of such a recoverable bridge is therefore skipped here; one
+   * that is not (no recoverable single-column bridge) still refuses. */
+  Optional<JoinEdge> firstNonStarEdge(boolean factHasPrimaryKey) {
+    // A bridge two-hop only maps to a <BridgeLink> when the fact declares a
+    // grain key (the engine de-dups the fullCount bridge on the fact <Key>);
+    // without it the bridge would be silently wrong, so it stays non-star (#124).
+    final Set<JoinEdge> bridged =
+        factHasPrimaryKey ? bridgedEdges() : emptyEdgeSet();
     for (JoinEdge e : edges) {
+      if (bridged.contains(e)) {
+        continue;
+      }
       if (e.isNonStarType() || e.isUnbridgedManyToMany() || isChainedMany(e)) {
         return Optional.of(e);
       }
     }
     return Optional.empty();
+  }
+
+  /** Every recognised bridge two-hop in this explore (#124): each fact→bridge
+   * hop that, with a matching bridge→dim hop, recovers single-column keys. */
+  List<BridgePattern> bridges() {
+    final List<BridgePattern> out = new ArrayList<>();
+    for (JoinEdge e : edges) {
+      BridgePattern.recognise(this, e).ifPresent(out::add);
+    }
+    return out;
+  }
+
+  /** The set of edges (fact hop + dim hop) that participate in a recognised
+   * bridge two-hop, by identity. */
+  private Set<JoinEdge> bridgedEdges() {
+    final Set<JoinEdge> set = emptyEdgeSet();
+    for (BridgePattern b : bridges()) {
+      set.add(b.factHop());
+      set.add(b.dimHop());
+    }
+    return set;
+  }
+
+  private static Set<JoinEdge> emptyEdgeSet() {
+    return java.util.Collections.newSetFromMap(new IdentityHashMap<>());
   }
 
   /** A human-readable cause for why {@code edge} broke the star, for the
