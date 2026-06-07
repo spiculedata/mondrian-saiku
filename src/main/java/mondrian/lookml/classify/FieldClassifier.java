@@ -450,7 +450,7 @@ final class FieldClassifier {
     switch (code) {
     case REFUSE_FANOUT_SYMMETRIC_AGGREGATE:
       final String edge = fanOutEdge
-          .map(e -> viewName + "→" + e.joinedView())
+          .map(e -> viewName + "→" + e.joinName())
           .orElse(viewName);
       return "measure `" + name + "` (" + type
           + ") fans out across one_to_many join `" + edge

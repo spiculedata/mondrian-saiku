@@ -176,11 +176,23 @@ public final class LookmlTranspiler {
         .orElseGet(() -> explore.name().orElse(""));
   }
 
-  /** The joined view of a join block. */
+  /** The underlying view of a join block: its {@code from:}/{@code view_name:}
+   * target, else the join name. This is where the joined dimensions' columns
+   * and {@code sql_table_name} are defined — the table/column-resolution side
+   * (#125). For the {@code sql_on} field namespace use {@link #joinName}. */
   static String joinedView(LookmlNode join) {
     return join.stringValue(TranspileKeywords.FROM)
         .or(() -> join.stringValue(TranspileKeywords.VIEW_NAME))
         .orElseGet(() -> join.name().orElse(""));
+  }
+
+  /** The join name of a join block — the field namespace every {@code sql_on}
+   * {@code ${X.column}} reference to this join uses, and the conformed
+   * dimension's name (so two {@code from:} aliases of one base view stay
+   * distinct, #125). {@code from:}/{@code view_name:} only swap the underlying
+   * physical view; refs always key on the join name. */
+  static String joinName(LookmlNode join) {
+    return join.name().orElseGet(() -> joinedView(join));
   }
 
   /** The physical table backing a view: {@code sql_table_name} (unqualified

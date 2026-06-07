@@ -113,27 +113,31 @@ final class BridgePattern {
       return Optional.empty();
     }
     final String baseView = graph.baseView();
-    final String bridgeView = factHop.joinedView();
+    // #125: hop 2's sql_on references the fact hop by its join NAME (the field
+    // namespace), while the physical bridge TABLE comes from the underlying
+    // view (from:-target). Keep the two separate.
+    final String bridgeName = factHop.joinName();
+    final String bridgeView = factHop.underlyingView();
     // Hop 1 must equate the fact (base) to the bridge with single columns.
     final Optional<JoinEdge.KeyPair> hop1 =
         factHop.singleColumnKeyPair(baseView);
     if (hop1.isEmpty()) {
       return Optional.empty();
     }
-    // Hop 2: the dim hop is an edge that references the bridge view on its
-    // upstream side and maps to one dimension member (many_to_one/one_to_one).
+    // Hop 2: the dim hop is an edge that references the bridge by its join name
+    // on its upstream side and maps to one dimension member.
     for (JoinEdge dimHop : graph.edges()) {
       if (dimHop == factHop || !dimHop.isBridgeDimHop()
-          || !dimHop.referencedViews().contains(bridgeView)) {
+          || !dimHop.referencedViews().contains(bridgeName)) {
         continue;
       }
       final Optional<JoinEdge.KeyPair> hop2 =
-          dimHop.singleColumnKeyPair(bridgeView);
+          dimHop.singleColumnKeyPair(bridgeName);
       if (hop2.isEmpty()) {
         continue;
       }
       return Optional.of(new BridgePattern(factHop, dimHop, bridgeView,
-          dimHop.joinedView(),
+          dimHop.underlyingView(),
           hop1.get().nearColumn(),     // fact column            → fc
           hop1.get().joinedColumn(),   // bridge column (fact side)  → bfc
           hop2.get().nearColumn(),     // bridge column (dim side)   → bdc

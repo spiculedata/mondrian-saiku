@@ -86,22 +86,23 @@ final class CubeEmitter {
         primaryKeyColumn(baseView).isPresent()
             ? BridgeJoins.recover(explore, baseViewName, this::tableFor)
             : java.util.Collections.emptyList();
-    final Set<String> bridgeViews = new HashSet<>();
-    final Set<String> bridgeDimViews = new HashSet<>();
+    // #125: exclude bridge participants by their join NAME, not underlying view,
+    // so a from:-aliased bridge/dim and a same-base-view conformed dimension are
+    // not conflated.
+    final Set<String> bridgeJoinNames = new HashSet<>();
     for (BridgeJoins b : bridges) {
-      bridgeViews.add(b.bridgeView());
-      bridgeDimViews.add(b.dimView());
+      bridgeJoinNames.add(b.bridgeName());
+      bridgeJoinNames.add(b.dimName());
     }
 
     // Partition the joins: a joined view that itself has eligible measures is a
     // conformed FACT base (its own measure group, #115); one without is a
-    // conformed DIMENSION. Bridge views and bridged dim views are handled by the
-    // bridge path, so they are excluded from both partitions here (#124).
+    // conformed DIMENSION. Bridge hops and bridged dim hops are handled by the
+    // bridge path, so they are excluded from both partitions here (#124/#125).
     final List<LookmlNode> factBaseJoins = new ArrayList<>();
     final List<LookmlNode> dimensionJoins = new ArrayList<>();
     for (LookmlNode join : LookmlTranspiler.joins(explore)) {
-      final String joined = LookmlTranspiler.joinedView(join);
-      if (bridgeViews.contains(joined) || bridgeDimViews.contains(joined)) {
+      if (bridgeJoinNames.contains(LookmlTranspiler.joinName(join))) {
         continue;
       }
       if (isFactBaseJoin(join)) {
@@ -252,6 +253,10 @@ final class CubeEmitter {
       String baseViewName, LookmlNode factJoin, String cubePath,
       List<LookmlNode> dimensionJoins, List<Object> measureGroups,
       List<Object> calculatedMembers) {
+    // #125: this fact base is itself a join; its own sql_on references its
+    // dimensions and the explore's other joins by their JOIN NAMES (the field
+    // namespace), while its physical table comes from the underlying view.
+    final String factName = LookmlTranspiler.joinName(factJoin);
     final String factViewName = LookmlTranspiler.joinedView(factJoin);
     final LookmlNode factView = viewsByName.get(factViewName);
     if (factView == null) {
@@ -262,16 +267,17 @@ final class CubeEmitter {
     final List<Object> dimensionLinks = new ArrayList<>();
     final List<String> factColumns = new ArrayList<>();
     for (LookmlNode dimJoin : dimensionJoins) {
-      final String dimViewName = LookmlTranspiler.joinedView(dimJoin);
-      // Recover this fact's FK to the conformed dimension from its own sql_on.
+      final String dimName = LookmlTranspiler.joinName(dimJoin);
+      // Recover this fact's FK to the conformed dimension from its own sql_on,
+      // matching the dimension side by the dim join's NAME (#125).
       final Optional<JoinKeys> keys =
-          JoinKeys.from(factJoin, factViewName, dimViewName);
+          JoinKeys.from(factJoin, factName, dimName);
       if (keys.isEmpty()) {
         continue;
       }
       final Map<String, Object> link = new LinkedHashMap<>();
       link.put("type", TranspileKeywords.LINK_FOREIGN_KEY);
-      link.put("dimension", dimViewName);
+      link.put("dimension", dimName);
       link.put("foreign_key_column", keys.get().factForeignKeyColumn());
       dimensionLinks.add(link);
       factColumns.add(keys.get().factForeignKeyColumn());
@@ -280,7 +286,10 @@ final class CubeEmitter {
     final Optional<String> factCountColumn = factColumns.isEmpty()
         ? Optional.empty() : Optional.of(factColumns.get(0));
 
-    final String mgPath = cubePath + "/measureGroup:" + factViewName;
+    // #125: the measure group is named by the join name so two fact-base joins
+    // of the same underlying view stay distinct; measures/eligibility still
+    // resolve against the underlying view name.
+    final String mgPath = cubePath + "/measureGroup:" + factName;
     final List<Object> measures = new ArrayList<>();
     emitMeasures(factView, factViewName, mgPath, cubePath, factCountColumn,
         measures, calculatedMembers);
@@ -292,13 +301,13 @@ final class CubeEmitter {
     maybeRegisterQuery(factView, factTable, primaryKeyColumn(factView));
 
     final Map<String, Object> measureGroup = new LinkedHashMap<>();
-    measureGroup.put("name", factViewName);
+    measureGroup.put("name", factName);
     measureGroup.put("table", factTable);
     measureGroup.put("measures", measures);
     measureGroup.put("dimension_links", dimensionLinks);
     measureGroups.add(measureGroup);
     provenance.put("explore:" + explore.name().orElse("") + ".measureGroup:"
-        + factViewName, mgPath);
+        + factName, mgPath);
   }
 
   // --- degenerate dimensions ---------------------------------------------
@@ -377,20 +386,33 @@ final class CubeEmitter {
       List<Object> dimensions, List<Object> dimensionLinks,
       List<String> factColumns,
       Map<String, DimensionGrants.GrantTarget> grantTargets) {
-    final String joinedViewName = LookmlTranspiler.joinedView(join);
-    final LookmlNode joinedView = viewsByName.get(joinedViewName);
-    if (joinedView == null) {
+    // #125: the join NAME is the field namespace + the conformed dimension's
+    // name (so two from: aliases of one base view stay distinct, each with its
+    // own physical-table alias); the UNDERLYING view supplies the dimension's
+    // column definitions and physical sql_table_name.
+    final String dimName = LookmlTranspiler.joinName(join);
+    final String underlyingViewName = LookmlTranspiler.joinedView(join);
+    final LookmlNode underlyingView = viewsByName.get(underlyingViewName);
+    if (underlyingView == null) {
       return;
     }
+    // sql_on dim-side refs use the join name, never the from:-target (#125).
     final Optional<JoinKeys> keys =
-        JoinKeys.from(join, baseViewName, joinedViewName);
+        JoinKeys.from(join, baseViewName, dimName);
     if (keys.isEmpty()) {
       // Can't resolve the join columns: skip this dimension rather than emit a
       // schema that fails to load. The classifier records the DEGRADE note
       // (DEGRADE_JOIN_SQL_ON_UNPARSEABLE) so the report surfaces it (#115).
       return;
     }
-    final String dimTable = LookmlTranspiler.tableOf(joinedView, joinedViewName);
+    // #125: the dimension's physical table is the UNDERLYING view's table
+    // (its sql_table_name, else the view name) — NOT the join name. Two from:
+    // aliases of one base view therefore share one physical table; they stay
+    // distinct because each conformed dimension has a distinct NAME (the join
+    // name) and the engine aliases the shared physical table per dimension
+    // (MultiSharedDimAttributeScopedAliasTest).
+    final String dimTable =
+        LookmlTranspiler.tableOf(underlyingView, underlyingViewName);
     final String dimKeyColumn = keys.get().dimensionKeyColumn();
     final String keyAttrName = dimKeyColumn;
 
@@ -398,25 +420,25 @@ final class CubeEmitter {
     // The key attribute (the join target) — keyed, hidden from hierarchies.
     attributes.add(buildKeyAttribute(keyAttrName, dimTable, dimKeyColumn));
 
-    for (LookmlNode dim : joinedView.children(TranspileKeywords.DIMENSION)) {
-      final String dimName = dim.name().orElse("");
-      if (dimName.isEmpty() || !eligible.field(joinedViewName, dimName)
-          || dimName.equals(keyAttrName)) {
+    for (LookmlNode dim : underlyingView.children(TranspileKeywords.DIMENSION)) {
+      final String attrName = dim.name().orElse("");
+      if (attrName.isEmpty() || !eligible.field(underlyingViewName, attrName)
+          || attrName.equals(keyAttrName)) {
         continue;
       }
-      final String column = LookmlTranspiler.columnOf(dim, dimName);
-      attributes.add(buildAttribute(dimName, dimTable, column, dim));
-      provenance.put(joinedViewName + "." + dimName,
-          cubePath + "/dimension:" + joinedViewName + "/attribute:" + dimName);
+      final String column = LookmlTranspiler.columnOf(dim, attrName);
+      attributes.add(buildAttribute(attrName, dimTable, column, dim));
+      provenance.put(dimName + "." + attrName,
+          cubePath + "/dimension:" + dimName + "/attribute:" + attrName);
 
       // An access_filter on this conformed-dimension key grants members of
-      // [joinedViewName].[dimName] (the attribute hierarchy, #115).
-      grantTargets.put(dimName.toLowerCase(Locale.ROOT),
-          new DimensionGrants.GrantTarget(joinedViewName, dimName, dimName));
+      // [dimName].[attrName] (the attribute hierarchy, #115/#125).
+      grantTargets.put(attrName.toLowerCase(Locale.ROOT),
+          new DimensionGrants.GrantTarget(dimName, attrName, attrName));
     }
 
     final Map<String, Object> dimension = new LinkedHashMap<>();
-    dimension.put("name", joinedViewName);
+    dimension.put("name", dimName);
     dimension.put("table", dimTable);
     dimension.put("key", keyAttrName);
     dimension.put("attributes", attributes);
@@ -424,7 +446,7 @@ final class CubeEmitter {
 
     final Map<String, Object> link = new LinkedHashMap<>();
     link.put("type", TranspileKeywords.LINK_FOREIGN_KEY);
-    link.put("dimension", joinedViewName);
+    link.put("dimension", dimName);
     link.put("foreign_key_column", keys.get().factForeignKeyColumn());
     dimensionLinks.add(link);
 
@@ -433,8 +455,8 @@ final class CubeEmitter {
 
     // Register the dim table with its key so the physical schema declares it.
     model.registerTable(dimTable, dimKeyColumn);
-    // A derived_table joined view becomes a SQL-backed <Query> (#115).
-    maybeRegisterQuery(joinedView, dimTable, Optional.of(dimKeyColumn));
+    // A derived_table underlying view becomes a SQL-backed <Query> (#115).
+    maybeRegisterQuery(underlyingView, dimTable, Optional.of(dimKeyColumn));
   }
 
   // --- bridge (many-to-many) dimensions (#124) ---------------------------
@@ -464,6 +486,9 @@ final class CubeEmitter {
       List<Object> dimensions, List<Object> dimensionLinks,
       List<String> factColumns,
       Map<String, DimensionGrants.GrantTarget> grantTargets) {
+    // #125: the bridged dimension's NAME is the dim hop's join name (distinct
+    // per alias); its columns/table come from the UNDERLYING dim view.
+    final String dimName = bridge.dimName();
     final String dimViewName = bridge.dimView();
     final LookmlNode dimView = viewsByName.get(dimViewName);
     if (dimView == null) {
@@ -476,23 +501,23 @@ final class CubeEmitter {
     final List<Object> attributes = new ArrayList<>();
     attributes.add(buildKeyAttribute(keyAttrName, dimTable, dimKeyColumn));
     for (LookmlNode dim : dimView.children(TranspileKeywords.DIMENSION)) {
-      final String dimName = dim.name().orElse("");
-      if (dimName.isEmpty() || !eligible.field(dimViewName, dimName)
-          || dimName.equals(keyAttrName)) {
+      final String attrName = dim.name().orElse("");
+      if (attrName.isEmpty() || !eligible.field(dimViewName, attrName)
+          || attrName.equals(keyAttrName)) {
         continue;
       }
-      final String column = LookmlTranspiler.columnOf(dim, dimName);
-      attributes.add(buildAttribute(dimName, dimTable, column, dim));
-      provenance.put(dimViewName + "." + dimName,
-          cubePath + "/dimension:" + dimViewName + "/attribute:" + dimName);
+      final String column = LookmlTranspiler.columnOf(dim, attrName);
+      attributes.add(buildAttribute(attrName, dimTable, column, dim));
+      provenance.put(dimName + "." + attrName,
+          cubePath + "/dimension:" + dimName + "/attribute:" + attrName);
       // An access_filter on a bridged-dimension key grants members of
-      // [dimViewName].[dimName] — the bridge member-grant case (#124/#107).
-      grantTargets.put(dimName.toLowerCase(Locale.ROOT),
-          new DimensionGrants.GrantTarget(dimViewName, dimName, dimName));
+      // [dimName].[attrName] — the bridge member-grant case (#124/#107/#125).
+      grantTargets.put(attrName.toLowerCase(Locale.ROOT),
+          new DimensionGrants.GrantTarget(dimName, attrName, attrName));
     }
 
     final Map<String, Object> dimension = new LinkedHashMap<>();
-    dimension.put("name", dimViewName);
+    dimension.put("name", dimName);
     dimension.put("table", dimTable);
     dimension.put("key", keyAttrName);
     dimension.put("attributes", attributes);
@@ -500,7 +525,7 @@ final class CubeEmitter {
 
     final Map<String, Object> link = new LinkedHashMap<>();
     link.put("type", TranspileKeywords.LINK_BRIDGE);
-    link.put("dimension", dimViewName);
+    link.put("dimension", dimName);
     link.put(TranspileKeywords.BRIDGE_TABLE, bridge.bridgeTable());
     link.put(TranspileKeywords.FACT_FOREIGN_KEY_COLUMN,
         bridge.factForeignKeyColumn());
@@ -519,8 +544,8 @@ final class CubeEmitter {
     model.registerTable(dimTable, dimKeyColumn);
     model.registerTable(bridge.bridgeTable(), null);
 
-    provenance.put("explore:" + cubePath + ".bridge:" + dimViewName,
-        cubePath + "/measureGroup/bridgeLink:" + dimViewName);
+    provenance.put("explore:" + cubePath + ".bridge:" + dimName,
+        cubePath + "/measureGroup/bridgeLink:" + dimName);
   }
 
   /** Registers {@code view}'s derived_table SQL as a SQL-backed {@code <Query>}

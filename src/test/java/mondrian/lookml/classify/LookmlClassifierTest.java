@@ -1086,6 +1086,114 @@ class LookmlClassifierTest {
         () -> r.records().toString());
   }
 
+  // --- #125: from:-aliased join sql_on keyed by join name --------------
+
+  /** A {@code from:}-aliased join whose {@code sql_on} references the join by
+   * its JOIN NAME (not the {@code from:} target) is resolvable and records NO
+   * unparseable-join DEGRADE — the #125 core fix. Before #125 it degraded
+   * because the classifier looked for {@code ${logical_subs.col}} instead of
+   * {@code ${current_state.col}}. */
+  @Test void fromAliasedJoinKeyedByJoinNameIsClean() {
+    String lookml =
+        "view: daily { sql_table_name: daily ;;\n"
+        + "  dimension: subscription_id { type: number"
+        + "    sql: ${TABLE}.subscription_id ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: logical_subs { sql_table_name: logical_subs ;;\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.id ;; }\n"
+        + "}\n"
+        + "explore: daily {\n"
+        + "  join: current_state {\n"
+        + "    from: logical_subs\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${daily.subscription_id} = ${current_state.id} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    assertEquals(Classification.CLEAN,
+        record(r, "explore:daily").classification());
+    assertTrue(r.records().stream().noneMatch(rec ->
+            rec.reasonCode() == ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE),
+        () -> r.records().toString());
+  }
+
+  /** A from:-aliased join keyed by the {@code from:} TARGET (the old, wrong way)
+   * is NOT resolvable — the join name is the only valid namespace — so it
+   * correctly DEGRADEs (proves we did not loosen the gate to accept either). */
+  @Test void fromAliasedJoinKeyedByTargetStillDegrades() {
+    String lookml =
+        "view: daily { sql_table_name: daily ;;\n"
+        + "  dimension: subscription_id { type: number"
+        + "    sql: ${TABLE}.subscription_id ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: logical_subs { sql_table_name: logical_subs ;;\n"
+        + "  dimension: id { type: number sql: ${TABLE}.id ;; }\n"
+        + "}\n"
+        + "explore: daily {\n"
+        + "  join: current_state {\n"
+        + "    from: logical_subs\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${daily.subscription_id} = ${logical_subs.id} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join =
+        record(r, "explore:daily.join:current_state");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+  }
+
+  /** A constant/metadata join (one view ref + a string literal, no fact-side
+   * key) must REMAIN DEGRADE — do not over-convert (#125). */
+  @Test void constantMetadataJoinStillDegrades() {
+    String lookml =
+        "view: f { sql_table_name: f ;; measure: c { type: count } }\n"
+        + "view: table_metadata { sql_table_name: table_metadata ;;\n"
+        + "  dimension: table_name { type: string"
+        + "    sql: ${TABLE}.table_name ;; }\n"
+        + "}\n"
+        + "explore: f {\n"
+        + "  join: meta {\n"
+        + "    from: table_metadata\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${meta.table_name} = 'foo_v1' ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:f.join:meta");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+  }
+
+  /** A compound (AND-chained multi-column) from:-aliased join must NOT be
+   * mis-recovered to a single wrong key — it stays DEGRADE (#125). */
+  @Test void compoundKeyFromAliasedJoinStillDegrades() {
+    String lookml =
+        "view: f { sql_table_name: f ;;\n"
+        + "  dimension: a { type: number sql: ${TABLE}.a ;; }\n"
+        + "  dimension: b { type: number sql: ${TABLE}.b ;; }\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: dim { sql_table_name: dim ;;\n"
+        + "  dimension: x { type: number sql: ${TABLE}.x ;; }\n"
+        + "  dimension: y { type: number sql: ${TABLE}.y ;; }\n"
+        + "}\n"
+        + "explore: f {\n"
+        + "  join: d {\n"
+        + "    from: dim\n"
+        + "    relationship: many_to_one\n"
+        + "    sql_on: ${f.a} = ${d.x} AND ${f.b} = ${d.y} ;;\n"
+        + "  }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:f.join:d");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+  }
+
   // --- #115 gap 2: unknown value_format_name → DEGRADE note ------------
 
   /** A measure with an unknown value_format_name DEGRADEs; a known preset

@@ -41,7 +41,8 @@ final class BridgeJoins {
       Pattern.compile("\\$\\{\\s*([A-Za-z_][\\w]*)\\.([A-Za-z_][\\w]*)\\s*}");
 
   private final LookmlNode dimJoin;
-  private final String bridgeView;
+  private final String bridgeName;
+  private final String dimName;
   private final String dimView;
   private final String bridgeTable;
   private final String factForeignKeyColumn;
@@ -49,12 +50,13 @@ final class BridgeJoins {
   private final String bridgeDimensionKeyColumn;
   private final String dimKeyColumn;
 
-  private BridgeJoins(LookmlNode dimJoin, String bridgeView, String dimView,
-      String bridgeTable, String factForeignKeyColumn,
+  private BridgeJoins(LookmlNode dimJoin, String bridgeName, String dimName,
+      String dimView, String bridgeTable, String factForeignKeyColumn,
       String bridgeFactKeyColumn, String bridgeDimensionKeyColumn,
       String dimKeyColumn) {
     this.dimJoin = dimJoin;
-    this.bridgeView = bridgeView;
+    this.bridgeName = bridgeName;
+    this.dimName = dimName;
     this.dimView = dimView;
     this.bridgeTable = bridgeTable;
     this.factForeignKeyColumn = factForeignKeyColumn;
@@ -63,15 +65,27 @@ final class BridgeJoins {
     this.dimKeyColumn = dimKeyColumn;
   }
 
-  /** The bridge→dim join (hop 2); its joined view is the conformed dimension. */
+  /** The bridge→dim join (hop 2); its underlying view is the conformed
+   * dimension's column source. */
   LookmlNode dimJoin() {
     return dimJoin;
   }
 
-  String bridgeView() {
-    return bridgeView;
+  /** The fact→bridge hop's join NAME — the field namespace hop 2 references and
+   * the partition key that excludes the bridge from the normal join split
+   * (#125). */
+  String bridgeName() {
+    return bridgeName;
   }
 
+  /** The conformed dimension's NAME (the dim hop's join name) — distinct per
+   * alias, the partition exclusion key, and the emitted dimension name (#125). */
+  String dimName() {
+    return dimName;
+  }
+
+  /** The dim hop's underlying view — where the bridged dimension's columns and
+   * {@code sql_table_name} are defined (#125). */
   String dimView() {
     return dimView;
   }
@@ -106,8 +120,11 @@ final class BridgeJoins {
       if (!isBridgeFactHop(factJoin)) {
         continue;
       }
+      // #125: hops reference one another by join NAME (the field namespace);
+      // the bridge TABLE is resolved from the fact hop's underlying view.
+      final String bridgeName = LookmlTranspiler.joinName(factJoin);
       final String bridgeView = LookmlTranspiler.joinedView(factJoin);
-      final Optional<KeyPair> hop1 = keyPair(factJoin, baseView, bridgeView);
+      final Optional<KeyPair> hop1 = keyPair(factJoin, baseView, bridgeName);
       if (hop1.isEmpty()) {
         continue;
       }
@@ -115,12 +132,13 @@ final class BridgeJoins {
         if (dimJoin == factJoin || !isBridgeDimHop(dimJoin)) {
           continue;
         }
+        final String dimName = LookmlTranspiler.joinName(dimJoin);
         final String dimView = LookmlTranspiler.joinedView(dimJoin);
-        final Optional<KeyPair> hop2 = keyPair(dimJoin, bridgeView, dimView);
+        final Optional<KeyPair> hop2 = keyPair(dimJoin, bridgeName, dimName);
         if (hop2.isEmpty()) {
           continue;
         }
-        out.add(new BridgeJoins(dimJoin, bridgeView, dimView,
+        out.add(new BridgeJoins(dimJoin, bridgeName, dimName, dimView,
             tableResolver.apply(bridgeView),
             hop1.get().near,    // fact column                → fc
             hop1.get().far,     // bridge column (fact side)  → bfc

@@ -149,10 +149,12 @@ final class ExploreGraph {
     if (!edge.isOneToMany()) {
       return false;
     }
+    // #125: edges reference one another by join NAME (the namespace a sql_on
+    // ${X.col} uses), so the topology nodes are join names, not from:-targets.
     final Set<String> manySideViews = new HashSet<>();
     for (JoinEdge other : edges) {
       if (other != edge && other.isOneToMany()) {
-        manySideViews.add(other.joinedView());
+        manySideViews.add(other.joinName());
       }
     }
     for (String upstream : edge.referencedViews()) {

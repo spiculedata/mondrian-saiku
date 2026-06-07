@@ -278,7 +278,7 @@ public final class LookmlClassifier {
                 + "` has a sql_on that does not reduce to a single "
                 + "fact/dimension key pair (multi-column or expression join); "
                 + "its conformed dimension is omitted (#115)")
-        .lostCapability("joined dimension `" + edge.joinedView()
+        .lostCapability("joined dimension `" + edge.joinName()
             + "` not queryable")
         .build();
   }
