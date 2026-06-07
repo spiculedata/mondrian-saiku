@@ -11,6 +11,8 @@ physical_schema:
   - name: "mm_branch"
   - name: "mm_date"
   - name: "mm_txn"
+  - name: "mm_calendar"
+  - name: "mm_monthly"
 shared_dimensions:
   Customer:
     table: "mm_customer"
@@ -78,6 +80,34 @@ shared_dimensions:
         start_column: "open_date"
         end_column: "as_of_date"
         unit: "YEAR"
+  Calendar:
+    table: "mm_calendar"
+    key: "Month"
+    type: "TIME"
+    attributes:
+    - name: "Year"
+      key:
+      - "yr"
+      level_type: "TimeYears"
+      has_hierarchy: false
+    - name: "Quarter"
+      key:
+      - "quarter"
+      level_type: "TimeQuarters"
+      has_hierarchy: false
+    - name: "Month"
+      key:
+      - "month_key"
+      name_column: "month_name"
+      level_type: "TimeMonths"
+      has_hierarchy: false
+    hierarchies:
+    - name: "Calendar"
+      all_member_name: "All Periods"
+      levels:
+      - "Year"
+      - "Quarter"
+      - "Month"
 cubes:
   Joint Accounts (Full Count):
     dimensions:
@@ -201,6 +231,44 @@ cubes:
         column: "amount"
         aggregator: "sum"
         format_string: "#,###"
+  Monthly Revenue:
+    dimensions:
+    - source: "Calendar"
+    measure_groups:
+    - name: "Revenue"
+      table: "mm_monthly"
+      measures:
+      - name: "Revenue"
+        column: "revenue"
+        aggregator: "sum"
+        format_string: "#,###"
+      dimension_links:
+      - type: "foreign_key"
+        dimension: "Calendar"
+        foreign_key_column: "month_key"
+    time_calcs:
+    - name: "Revenue YoY"
+      type: "yoy"
+      measure: "Revenue"
+      time_dimension: "Calendar"
+      format_string: "0.0%"
+    - name: "Revenue PoP"
+      type: "pop"
+      measure: "Revenue"
+      time_dimension: "Calendar"
+      format_string: "0.0%"
+    - name: "Revenue YTD"
+      type: "ytd"
+      measure: "Revenue"
+      time_dimension: "Calendar"
+      format_string: "#,###"
+    - name: "Revenue R3"
+      type: "rolling"
+      measure: "Revenue"
+      time_dimension: "Calendar"
+      window: 3
+      function: "avg"
+      format_string: "#,###"
 roles:
 - name: "Tenant"
   schema_grant:
