@@ -81,6 +81,30 @@ public class TimeIntelligenceH2EndToEndTest {
         return v == null ? null : ((Number) v).doubleValue();
     }
 
+    /** Read a whole row of measures (one column each) for a single member. */
+    private static Double[] row(Connection c, String[] measures, String month) {
+        StringBuilder cols = new StringBuilder();
+        for (int i = 0; i < measures.length; i++) {
+            cols.append(i == 0 ? "" : ", ")
+                .append("[Measures].[").append(measures[i]).append("]");
+        }
+        Query q = c.parseQuery(
+            "SELECT {" + cols + "} ON COLUMNS,\n"
+            + " {" + month + "} ON ROWS\n"
+            + "FROM [Monthly Revenue]");
+        Result r = c.execute(q);
+        try {
+            Double[] out = new Double[measures.length];
+            for (int i = 0; i < measures.length; i++) {
+                Object v = r.getCell(new int[]{i, 0}).getValue();
+                out[i] = v == null ? null : ((Number) v).doubleValue();
+            }
+            return out;
+        } finally {
+            r.close();
+        }
+    }
+
     // Member paths pinned from probe: yr=2024/2025 (key), quarter=2024-Q1/2025-Q1 (key),
     // month level uses month_name ("Jan"/"Feb"/"Mar") because the Attribute has a separate
     // <Name> column — Mondrian derives the unique name from the name caption in this case.
@@ -131,6 +155,59 @@ public class TimeIntelligenceH2EndToEndTest {
             c.close();
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         }
+    }
+
+    /**
+     * QUERY SHAPE: all four TimeCalc kinds (YoY/PoP/YTD/rolling) requested
+     * together in one query at the same member must each evaluate
+     * independently and correctly — no cross-talk between the desugared calcs.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void multipleTimeCalcsInOneQuery(String form) {
+        Connection c = connect(form);
+        try {
+            // Mar 2025: prior month Feb2025=250, prior year Mar2024=300,
+            // YTD = 150+250+350 = 750, rolling-3 avg = (150+250+350)/3 = 250.
+            Double[] vals = row(c,
+                new String[]{
+                    "Revenue YoY", "Revenue PoP", "Revenue YTD", "Revenue R3"},
+                MAR25);
+            assertEquals(0.1667, vals[0], 0.001, "YoY Mar2025 = (350-300)/300");
+            assertEquals(0.4, vals[1], 0.001, "PoP Mar2025 = (350-250)/250");
+            assertEquals(750.0, vals[2], 0.001, "YTD Mar2025 = 150+250+350");
+            assertEquals(250.0, vals[3], 0.001, "R3 Mar2025 = avg(150,250,350)");
+        } finally {
+            c.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
+
+    /**
+     * QUERY VALIDITY / FAIL-CLOSED: a TimeCalc whose {@code timeDimension}
+     * names a dimension that does not exist must be refused at schema load
+     * ({@code resolveYearLevel} fails closed), never silently dropped.
+     */
+    @Test
+    public void timeCalcWithUnknownTimeDimensionFailsClosed() {
+        String bad = xmlSchema.replace(
+            "timeDimension=\"Calendar\"", "timeDimension=\"NoSuchDim\"");
+        org.junit.jupiter.api.Assertions.assertNotEquals(xmlSchema, bad,
+            "the timeDimension replace must match the schema text exactly");
+        mondrian.olap.Util.PropertyList props =
+            new mondrian.olap.Util.PropertyList();
+        props.put("Provider", "mondrian");
+        props.put(RolapConnectionProperties.Jdbc.name(), H2_URL);
+        props.put(RolapConnectionProperties.JdbcDrivers.name(), "org.h2.Driver");
+        props.put(RolapConnectionProperties.JdbcUser.name(), "sa");
+        props.put(RolapConnectionProperties.JdbcPassword.name(), "");
+        props.put("UseSchemaPool", "false");
+        props.put(RolapConnectionProperties.CatalogContent.name(), bad);
+        assertThrows(RuntimeException.class, () -> {
+            Connection c = DriverManager.getConnection(props, null, null);
+            c.execute(c.parseQuery(
+                "SELECT {[Measures].[Revenue]} ON COLUMNS FROM [Monthly Revenue]"));
+        }, "a TimeCalc naming a missing time dimension must fail closed at load");
     }
 
     @Test
