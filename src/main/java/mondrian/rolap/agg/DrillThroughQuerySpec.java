@@ -200,6 +200,21 @@ class DrillThroughQuerySpec extends AbstractQuerySpec {
     }
 
     public Pair<String, List<SqlStatement.Type>> generateSqlQuery(String desc) {
+        // #107 fail-closed: a bridge (many-to-many) measure group secured by a
+        // <MemberGrant>/<HierarchyGrant> cannot be drilled through safely — the
+        // legacy generator has no bridge fan-out join and cannot inject the
+        // member filter, so it would return raw fact rows for hidden owners.
+        // Refuse rather than leak (mirrors the segment-load fail-closed gate).
+        if (mondrian.rolap.PredicateGrantSqlFilter.isBridgeMemberSecured(
+                getStar(), request.getMeasure(), role))
+        {
+            throw new mondrian.olap.MondrianException(
+                "Row-security: DRILLTHROUGH on a bridge (many-to-many) measure "
+                + "group secured by a <MemberGrant>/<HierarchyGrant> is not "
+                + "supported — the drill-through SQL generator cannot enforce "
+                + "the bridge member filter and would leak fact rows for hidden "
+                + "owners. Refused (fail-closed).");
+        }
         SqlQueryBuilder queryBuilder = createQueryBuilder(desc);
         nonDistinctGenerateSql(queryBuilder);
         injectPredicateGrants(queryBuilder);

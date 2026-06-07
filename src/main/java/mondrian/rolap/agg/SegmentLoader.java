@@ -233,23 +233,27 @@ public class SegmentLoader {
             List<Segment> segs = groupingSets.get(0).getSegments();
             if (!segs.isEmpty()) {
                 RolapStar star = segs.get(0).aggMeasure.getStar();
-                // #106 fail-closed: a load touching a predicate-secured
+                // #106/#107 fail-closed: a load touching a row-security-secured
                 // measure group MUST be served by the Calcite path (the only
-                // generator that injects the row-security filter). The legacy
-                // SQL generator ignores predicate grants, so a fallback would
-                // silently drop the filter and leak rows. Decide up-front so
-                // both the "no planner" and "translation failed" branches
-                // refuse to fall back.
-                final boolean predicateSecured =
-                    CalcitePlannerAdapters.isPredicateSecuredLoad(segs, star);
+                // generator that injects the row-security filter). This covers
+                // both <PredicateGrant> (#106) and bridge <MemberGrant>/
+                // <HierarchyGrant> (#107) loads: the legacy SQL generator
+                // injects neither filter, so a fallback would silently drop it
+                // and leak rows. Decide up-front so both the "no planner" and
+                // "translation failed" branches refuse to fall back.
+                final boolean securedLoad =
+                    CalcitePlannerAdapters.isPredicateSecuredLoad(segs, star)
+                    || CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
+                        segs, star);
                 CalciteSqlPlanner planner = plannerFor(star);
-                if (predicateSecured && planner == null) {
+                if (securedLoad && planner == null) {
                     throw new MondrianException(
-                        "Predicate row-security: measure group is secured by "
-                        + "a <PredicateGrant> but no Calcite planner is "
-                        + "available for this dialect; refusing to fall back "
-                        + "to the legacy SQL generator (which would drop the "
-                        + "security filter). Configure the Calcite backend.");
+                        "Row-security: measure group is secured by a "
+                        + "<PredicateGrant> or bridge <MemberGrant> but no "
+                        + "Calcite planner is available for this dialect; "
+                        + "refusing to fall back to the legacy SQL generator "
+                        + "(which would drop the security filter). Configure "
+                        + "the Calcite backend.");
                 }
                 if (planner != null) {
                     // Wrap BOTH fromSegmentLoad (PlannerRequest builder)
@@ -265,17 +269,18 @@ public class SegmentLoader {
                                 compoundPredicateList);
                         precomputedCalciteSql = planner.plan(req);
                     } catch (RuntimeException | AssertionError ex) {
-                        // #106 fail-closed: never fall back for a predicate-
-                        // secured load. The legacy generator would emit SQL
-                        // without the row-security filter, leaking rows. Fail
-                        // the load loudly instead.
-                        if (predicateSecured) {
+                        // #106/#107 fail-closed: never fall back for a secured
+                        // load. The legacy generator would emit SQL without the
+                        // row-security filter, leaking rows. Fail the load
+                        // loudly instead.
+                        if (securedLoad) {
                             throw new MondrianException(
-                                "Predicate row-security: Calcite translation "
-                                + "failed for a <PredicateGrant>-secured "
-                                + "measure group; refusing to fall back to the "
-                                + "legacy SQL generator (which would drop the "
-                                + "security filter). Cause: " + ex.getMessage(),
+                                "Row-security: Calcite translation failed for a "
+                                + "<PredicateGrant>- or bridge <MemberGrant>-"
+                                + "secured measure group; refusing to fall back "
+                                + "to the legacy SQL generator (which would drop "
+                                + "the security filter). Cause: "
+                                + ex.getMessage(),
                                 ex);
                         }
                         // Calcite translator gap (e.g. snowflake mid-chain
@@ -804,23 +809,27 @@ public class SegmentLoader {
         String precomputedCalciteSql)
     {
         RolapStar star = groupingSetsList.getStar();
-        // #106 fail-closed (backend-agnostic gate). EVERY segment load passes
-        // through here. A predicate-secured measure group can ONLY be served
-        // by the Calcite path (the sole generator that injects the row-security
-        // filter). If the active backend is not Calcite — or no Calcite SQL was
-        // produced — for a secured load, refuse rather than execute the legacy
-        // SQL, which omits the filter and would leak rows. The inner Calcite
-        // blocks below cover the translation-failed-then-fallback case; this
-        // top-level gate covers the legacy-backend and no-planner cases that
-        // never enter those blocks.
+        // #106/#107 fail-closed (backend-agnostic gate). EVERY segment load
+        // passes through here. A row-security-secured measure group can ONLY be
+        // served by the Calcite path (the sole generator that injects the
+        // row-security filter) — this covers both <PredicateGrant> (#106) and
+        // bridge <MemberGrant>/<HierarchyGrant> (#107) loads. If the active
+        // backend is not Calcite — or no Calcite SQL was produced — for a
+        // secured load, refuse rather than execute the legacy SQL, which omits
+        // the filter and would leak rows. The inner Calcite blocks below cover
+        // the translation-failed-then-fallback case; this top-level gate covers
+        // the legacy-backend and no-planner cases that never enter those blocks.
         if (precomputedCalciteSql == null
             && !mondrian.calcite.MondrianBackend.current().isCalcite()
-            && mondrian.calcite.CalcitePlannerAdapters.isPredicateSecuredLoad(
-                groupingSetsList.getDefaultSegments(), star))
+            && (mondrian.calcite.CalcitePlannerAdapters.isPredicateSecuredLoad(
+                    groupingSetsList.getDefaultSegments(), star)
+                || mondrian.calcite.CalcitePlannerAdapters
+                    .isBridgeMemberSecuredLoad(
+                        groupingSetsList.getDefaultSegments(), star)))
         {
             throw new MondrianException(
-                "Predicate row-security: measure group is secured by a "
-                + "<PredicateGrant>, which only the Calcite backend can "
+                "Row-security: measure group is secured by a <PredicateGrant> "
+                + "or bridge <MemberGrant>, which only the Calcite backend can "
                 + "enforce; refusing to serve it via the legacy SQL generator "
                 + "(which would drop the security filter and leak rows). "
                 + "Enable the Calcite backend.");
@@ -904,20 +913,23 @@ public class SegmentLoader {
                 // thread in load() — see the acquisition-site comment.
                 calciteSql = precomputedCalciteSql;
             } else {
-                // #106 fail-closed (worker-thread path). Reached only when no
-                // precomputed Calcite SQL exists. Refuse to fall back for a
-                // predicate-secured load.
-                final boolean predicateSecured =
+                // #106/#107 fail-closed (worker-thread path). Reached only when
+                // no precomputed Calcite SQL exists. Refuse to fall back for a
+                // row-security-secured load (predicate grant or bridge member
+                // grant).
+                final boolean securedLoad =
                     CalcitePlannerAdapters.isPredicateSecuredLoad(
+                        groupingSetsList.getDefaultSegments(), star)
+                    || CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
                         groupingSetsList.getDefaultSegments(), star);
                 CalciteSqlPlanner planner = plannerFor(star);
-                if (predicateSecured && planner == null) {
+                if (securedLoad && planner == null) {
                     throw new MondrianException(
-                        "Predicate row-security: measure group is secured by "
-                        + "a <PredicateGrant> but no Calcite planner is "
-                        + "available for this dialect; refusing to fall back "
-                        + "to the legacy SQL generator (which would drop the "
-                        + "security filter).");
+                        "Row-security: measure group is secured by a "
+                        + "<PredicateGrant> or bridge <MemberGrant> but no "
+                        + "Calcite planner is available for this dialect; "
+                        + "refusing to fall back to the legacy SQL generator "
+                        + "(which would drop the security filter).");
                 }
                 if (planner != null) {
                     // Wrap BOTH fromSegmentLoad (PlannerRequest builder) and
@@ -930,13 +942,14 @@ public class SegmentLoader {
                                 groupingSetsList, compoundPredicateList);
                         calciteSql = planner.plan(req);
                     } catch (RuntimeException | AssertionError ex) {
-                        // #106 fail-closed: never fall back for a secured load.
-                        if (predicateSecured) {
+                        // #106/#107 fail-closed: never fall back for a secured
+                        // load (predicate grant or bridge member grant).
+                        if (securedLoad) {
                             throw new MondrianException(
-                                "Predicate row-security: Calcite translation "
-                                + "failed for a <PredicateGrant>-secured "
-                                + "measure group; refusing to fall back to the "
-                                + "legacy SQL generator. Cause: "
+                                "Row-security: Calcite translation failed for a "
+                                + "<PredicateGrant>- or bridge <MemberGrant>-"
+                                + "secured measure group; refusing to fall back "
+                                + "to the legacy SQL generator. Cause: "
                                 + ex.getMessage(),
                                 ex);
                         }
@@ -981,13 +994,16 @@ public class SegmentLoader {
             // that ignores the Calcite-only semantics and RUNS, returning a
             // different-by-design number (e.g. legacy 950 vs Calcite's correct
             // de-duped 450). Comparing would record a FALSE divergence (and
-            // strict mode would THROW on a correct result). The bridge /
-            // symmetric-grain case (#103/#107) is covered by the guard's
-            // "legacy threw → skip" path (bridge legacy refuses).
+            // strict mode would THROW on a correct result). A bridge
+            // <MemberGrant>-secured load (#107) is also skipped explicitly: the
+            // legacy generator emits the fan-out join with NO member filter and
+            // does NOT throw, so running it for comparison would leak rows.
             if (CalciteParityGuard.isEnabled()
                 && calciteSql != null
                 && !calciteSql.equals(pair.left)
                 && !CalcitePlannerAdapters.isPredicateSecuredLoad(
+                    groupingSetsList.getDefaultSegments(), star)
+                && !CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
                     groupingSetsList.getDefaultSegments(), star)
                 && !CalcitePlannerAdapters.isCalciteOnlyAggregation(
                     groupingSetsList.getDefaultSegments()))
