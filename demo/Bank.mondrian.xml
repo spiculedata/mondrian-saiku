@@ -34,6 +34,7 @@
     <Table name="mm_customer"/>
     <Table name="mm_branch"/>
     <Table name="mm_date"/>
+    <Table name="mm_txn"/>
   </PhysicalSchema>
 
   <!-- The many-to-many dimension. Customers roll up into segments; full-count
@@ -202,6 +203,24 @@
           <FactLink dimension="Account"/>
           <ForeignKeyLink dimension="Branch" foreignKeyColumn="branch_id"/>
         </DimensionLinks>
+      </MeasureGroup>
+    </MeasureGroups>
+  </Cube>
+
+  <!-- Measure-level distinct grain (#119): mm_txn fans out (one txn repeated
+       per line). Distinct Amount de-dups on txn_id before summing; Naive
+       Amount shows the double-count the distinct grain avoids. -->
+  <Cube name="Transactions">
+    <Dimensions/>
+    <MeasureGroups>
+      <MeasureGroup name="Txns" table="mm_txn">
+        <Measures>
+          <Measure name="Distinct Amount" column="amount" aggregator="sum"
+                   distinctKeyColumn="txn_id" formatString="#,###"/>
+          <Measure name="Naive Amount" column="amount" aggregator="sum"
+                   formatString="#,###"/>
+        </Measures>
+        <DimensionLinks/>
       </MeasureGroup>
     </MeasureGroups>
   </Cube>

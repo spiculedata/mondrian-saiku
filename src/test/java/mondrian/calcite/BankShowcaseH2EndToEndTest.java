@@ -176,4 +176,23 @@ public class BankShowcaseH2EndToEndTest {
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void distinctGrainTransactions(String form) {
+        Connection c = connect(form, null, null);
+        try {
+            assertEquals(450.0, scalar(c,
+                "SELECT {[Measures].[Distinct Amount]} ON COLUMNS"
+                + " FROM [Transactions]"), 0.001,
+                "distinct sum de-dups the fan-out on txn_id: 100+50+300");
+            assertEquals(950.0, scalar(c,
+                "SELECT {[Measures].[Naive Amount]} ON COLUMNS"
+                + " FROM [Transactions]"), 0.001,
+                "naive SUM double-counts the fanned lines: 300+50+600");
+        } finally {
+            c.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
 }
