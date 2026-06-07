@@ -14,6 +14,7 @@
 package mondrian.lookml.transpile;
 
 import mondrian.lookml.model.Classification;
+import mondrian.lookml.model.ReasonCode;
 import mondrian.lookml.parse.LookmlNode;
 import mondrian.lookml.parse.LookmlParser;
 import mondrian.olap.Axis;
@@ -1065,6 +1066,37 @@ public class LookmlTranspilerTest {
     // value_format → format_string; label → caption.
     assertTrue(yaml.contains("format_string:"), yaml);
     assertTrue(yaml.contains("caption: \"User Country\""), yaml);
+  }
+
+  // --- #106 fail-closed: unmappable access_filter must not ship open -------
+
+  /** An access_filter whose {@code field:} is a Liquid-templated reference maps
+   * to neither a dimension-key grant nor a usable predicate column. Emitting
+   * the cube would leave it with NO row security for a declared filter, so the
+   * importer must REFUSE the explore: no cube and no predicate grant are
+   * emitted. Fail-closed — the data is never exposed via an unsecured cube. */
+  @Test
+  public void unmappableLiquidAccessFilterRefusesCubeNotEmittedOpen() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  access_filter: { field: \"{{ _parameters.scope_field }}\"\n"
+        + "    user_attribute: scope }\n"
+        + "}\n";
+    TranspileResult result = transpile(lookml);
+    // The explore is REFUSED by the classifier (#106 fail-closed).
+    assertTrue(result.classification()
+            .withClassification(Classification.REFUSE).stream()
+            .anyMatch(r -> r.reasonCode()
+                == ReasonCode.REFUSE_ACCESS_FILTER_UNMAPPABLE),
+        "unmappable access_filter must be recorded REFUSE");
+    String yaml = result.yaml();
+    // No queryable cube and no grant-free predicate role: never shipped open.
+    assertFalse(yaml.contains("cubes:"), yaml);
+    assertFalse(yaml.contains("predicate_grants:"), yaml);
   }
 }
 
