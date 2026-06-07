@@ -99,6 +99,7 @@ shared_dimensions:
       key:
       - "month_key"
       name_column: "month_name"
+      order_by_column: "month_key"
       level_type: "TimeMonths"
       has_hierarchy: false
     hierarchies:
