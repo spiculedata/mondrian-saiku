@@ -100,6 +100,43 @@ public final class PredicateGrantSqlFilter {
     }
 
     /**
+     * #107 (SECURITY): whether this drill-through touches a BRIDGE (many-to-many)
+     * measure group whose bridge dimension the active role restricts by a
+     * {@code <MemberGrant>}/{@code <HierarchyGrant>}. The bridge member filter
+     * ({@code CalcitePlannerAdapters.applyBridgeMemberGrant}) lives only in the
+     * Calcite segment path; the legacy drill-through generator has no bridge
+     * fan-out join and cannot enforce it, so a secured bridge drill-through would
+     * leak raw fact rows for hidden owners. Callers MUST fail closed (refuse the
+     * drill-through) when this returns {@code true}. Mirrors the securing-
+     * hierarchy detection in {@code CalcitePlannerAdapters.isBridgeMemberSecuredLoad}.
+     *
+     * @param star the drill-through's star
+     * @param measure the drill-through's primary star measure
+     * @param role the connection's active role (may be null)
+     * @return {@code true} if a touched bridge measure group is member-secured
+     */
+    public static boolean isBridgeMemberSecured(
+        RolapStar star, RolapStar.Measure measure, Role role)
+    {
+        if (role == null || measure == null) {
+            return false;
+        }
+        for (RolapMeasureGroup mg : touchedMeasureGroups(star, measure)) {
+            for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+                if (mg.getBridgeInfo(bridgeDim) == null) {
+                    continue;
+                }
+                for (mondrian.olap.Hierarchy h : bridgeDim.getHierarchies()) {
+                    if (role.getAccess(h) != mondrian.olap.Access.ALL) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * MUST mirror {@code CalcitePlannerAdapters.predicateGrantKey} and
      * {@code RolapSchemaLoader.predicateGrantKey} so a grant declared at load
      * time keys to the live measure group at render time.

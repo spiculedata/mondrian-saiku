@@ -28,8 +28,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Test;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Issue #107 — Vector 2b (row-security disclosure via the bridge fan-out).
@@ -448,5 +451,40 @@ public class BridgeMemberGrantRlsTest extends AbstractDualFormSchemaTest {
             + " FROM [AccountsWeighted]");
         assertEquals(1650.0, restricted, 0.001,
             "joint acct3 contributes only Alice's 0.5 share to weighted [All]");
+    }
+
+    // ---- 6) member-grant-secured bridge load refuses the legacy fallback --
+
+    @Test
+    public void securedBridgeMemberGrantLoadRefusesLegacyFallback() {
+        // The bridge member-grant filter (applyBridgeMemberGrant) is injected
+        // ONLY in the Calcite SQL path. The SegmentLoader fail-closed gate
+        // covers <PredicateGrant> loads but NOT <MemberGrant>/<HierarchyGrant>
+        // bridge loads. On the legacy backend the load must fail CLOSED, never
+        // execute legacy SQL that omits the member filter and leaks the
+        // unsecured fan-out total (2500) for hidden owner Carol.
+        String prior = System.getProperty("mondrian.backend");
+        System.setProperty("mondrian.backend", "legacy");
+        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        Connection rc = null;
+        try {
+            rc = roleConn(SCHEMA);
+            final Connection fc = rc;
+            final Query q = fc.parseQuery(
+                "SELECT {[Measures].[Balance]} ON COLUMNS FROM [AccountsFull]");
+            assertThrows(RuntimeException.class, () -> fc.execute(q),
+                "a member-grant-secured bridge load must fail closed on the"
+                + " legacy backend (no path injects the bridge member filter)");
+        } finally {
+            if (rc != null) {
+                rc.close();
+            }
+            if (prior == null) {
+                System.clearProperty("mondrian.backend");
+            } else {
+                System.setProperty("mondrian.backend", prior);
+            }
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
     }
 }

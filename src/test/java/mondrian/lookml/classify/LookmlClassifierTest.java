@@ -876,6 +876,30 @@ class LookmlClassifierTest {
     assertEquals("#106", rec.relatedIssue().orElseThrow());
   }
 
+  /** An access_filter whose {@code field:} is a Liquid-templated reference
+   * cannot be mapped to either a dimension-key grant (#115) or a usable
+   * predicate column (#106): the emitter's {@code RowSecurity.column()} drops a
+   * Liquid field, so a DEGRADE here would emit the cube with NO row security at
+   * all (fail-open). The classifier MUST REFUSE the explore so the unsecured
+   * cube is never emitted (fail-closed). */
+  @Test void accessFilterWithLiquidFieldRefusesExplore() {
+    final String lookml = ""
+        + "explore: orders {\n"
+        + "  access_filter: {\n"
+        + "    field: \"{{ _parameters.scope_field }}\"\n"
+        + "    user_attribute: scope\n"
+        + "  }\n"
+        + "}\n"
+        + "view: orders {\n"
+        + "  measure: amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n";
+    final CoverageRecord rec = record(classify(lookml), "explore:orders");
+    assertEquals(Classification.REFUSE, rec.classification(),
+        "an unmappable (Liquid field:) access_filter must refuse the explore,"
+        + " never emit an unsecured cube");
+    assertEquals(ReasonCode.REFUSE_ACCESS_FILTER_UNMAPPABLE, rec.reasonCode());
+  }
+
   /** required_access_grants on a field is refused. */
   @Test void requiredAccessGrantsRefused() {
     final String lookml = ""

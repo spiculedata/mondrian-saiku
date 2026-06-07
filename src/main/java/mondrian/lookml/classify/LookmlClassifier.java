@@ -185,10 +185,32 @@ public final class LookmlClassifier {
    * dimension-key access_filter is CLEAN; the DimensionGrant case is #115). */
   private Optional<CoverageRecord> classifyAccessFilters(LookmlNode explore,
       String qn, Set<String> dimensionKeys) {
+    CoverageRecord degrade = null;
     for (LookmlNode af : explore.children(LookmlKeywords.ACCESS_FILTER)) {
       final Optional<String> field = af.stringValue(LookmlKeywords.FIELD);
-      if (!isSimpleDimensionRef(field, dimensionKeys)) {
+      if (isSimpleDimensionRef(field, dimensionKeys)) {
+        // A modelled dimension key → CLEAN <HierarchyGrant> (#115).
+        continue;
+      }
+      if (!isUsablePredicateColumn(field)) {
+        // Maps to neither a dimension key nor a static fact column (e.g. a
+        // Liquid-templated field): the emitter (RowSecurity.column) would drop
+        // it, leaving the cube UNSECURED for a declared filter. REFUSE takes
+        // priority over any DEGRADE on a sibling filter — fail closed.
         return Optional.of(CoverageRecord.builder(Scope.EXPLORE, qn,
+                ReasonCode.REFUSE_ACCESS_FILTER_UNMAPPABLE,
+                "explore `" + explore.name().orElse("?")
+                    + "` has an access_filter on `" + field.orElse("?")
+                    + "` that maps to neither a modelled dimension key nor a "
+                    + "static fact column (a Liquid-templated field reference); "
+                    + "refusing the explore rather than emitting it WITHOUT the "
+                    + "declared row-security filter (#106)")
+            .build());
+      }
+      if (degrade == null) {
+        // An arbitrary fact column → DEGRADE <PredicateGrant> (#106). Record it
+        // but keep scanning: a later unmappable filter must still REFUSE.
+        degrade = CoverageRecord.builder(Scope.EXPLORE, qn,
                 ReasonCode.DEGRADE_PREDICATE_ROW_SECURITY,
                 "explore `" + explore.name().orElse("?")
                     + "` has an access_filter on `" + field.orElse("?")
@@ -197,10 +219,23 @@ public final class LookmlClassifier {
                     + "query-context parameter (#106)")
             .producedM4("PredicateGrant")
             .lostCapability("user-attribute value supplied at query time")
-            .build());
+            .build();
       }
     }
-    return Optional.empty();
+    return Optional.ofNullable(degrade);
+  }
+
+  /** Whether an access_filter {@code field:} is a usable target for a
+   * {@code <PredicateGrant>}: a present, non-empty, non-Liquid reference whose
+   * leaf is a real fact column. A Liquid-templated field cannot bind to a
+   * static column, so the emitter drops it — the classifier must REFUSE rather
+   * than DEGRADE such a filter (else the cube ships with no row security). */
+  private boolean isUsablePredicateColumn(Optional<String> field) {
+    if (field.isEmpty()) {
+      return false;
+    }
+    final String f = field.get().trim();
+    return !f.isEmpty() && !Liquid.isPresent(f);
   }
 
   /** A clean access_filter targets a modelled dimension key: a single, syntax-

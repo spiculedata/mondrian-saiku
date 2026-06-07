@@ -3918,16 +3918,34 @@ public final class CalcitePlannerAdapters {
                 sb.append("<deny>");
                 continue;
             }
-            // Sort a stable string view of the keys for a deterministic
-            // identity independent of member enumeration order.
-            java.util.List<String> sorted =
-                new java.util.ArrayList<String>(visibleKeys.size());
-            for (Object k : visibleKeys) {
-                sorted.add(String.valueOf(k));
-            }
-            java.util.Collections.sort(sorted);
-            sb.append(sorted);
+            sb.append(encodeVisibleKeySet(visibleKeys));
         }
+    }
+
+    /**
+     * Encodes a role's visible bridge member-key set into a deterministic,
+     * collision-resistant string for the segment cache key. Two DISTINCT
+     * visible sets must never encode to the same string, or a segment computed
+     * for one role could be served to another (cross-role bleed, #107).
+     *
+     * <p>Each key is rendered type-discriminated and length-framed
+     * ({@code <class>#<len>:<value>}) before sorting, so neither a type
+     * difference ({@code Long 1} vs {@code String "1"}) nor a value containing
+     * the join delimiter ({@code ["a","b"]} vs the single key {@code "a, b"})
+     * can collapse two distinct sets onto one cache identity — the failure modes
+     * of the previous {@code String.valueOf} + {@code List.toString} encoding.
+     * Sorted for an identity independent of member enumeration order.
+     */
+    static String encodeVisibleKeySet(java.util.List<Object> visibleKeys) {
+        java.util.List<String> tokens =
+            new java.util.ArrayList<String>(visibleKeys.size());
+        for (Object k : visibleKeys) {
+            String cls = k == null ? "null" : k.getClass().getName();
+            String val = String.valueOf(k);
+            tokens.add(cls + "#" + val.length() + ":" + val);
+        }
+        java.util.Collections.sort(tokens);
+        return tokens.toString();
     }
 
     /** #106: append the resolved value(s) of a predicate grant to the cache
@@ -3984,6 +4002,45 @@ public final class CalcitePlannerAdapters {
             String key = predicateGrantKey(mg.getCube().getName(), mg.getName());
             if (!role.getPredicateGrants(key).isEmpty()) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * #107 fail-closed: whether a segment load touches a BRIDGE (many-to-many)
+     * measure group whose bridge dimension the active role restricts by a
+     * {@code <MemberGrant>}/{@code <HierarchyGrant>}. The bridge member-grant
+     * row-security filter ({@link #applyBridgeMemberGrant}) is injected ONLY in
+     * the Calcite SQL path; the legacy generator emits the fan-out join with no
+     * member filter and silently leaks fact rows owned only by hidden members.
+     * Mirrors the "securing hierarchy" detection in {@code applyBridgeMemberGrant}:
+     * a hierarchy whose access is anything other than ALL (CUSTOM or NONE) means
+     * the bridge is secured for this user and the load can only be served
+     * correctly by Calcite.
+     *
+     * @param segments the load's segments
+     * @param star the star
+     * @return {@code true} if any touched bridge measure group is secured for
+     *     the active role and must not fall back to the legacy generator
+     */
+    public static boolean isBridgeMemberSecuredLoad(
+        List<Segment> segments, RolapStar star)
+    {
+        mondrian.olap.Role role = activeRole();
+        if (role == null) {
+            return false;
+        }
+        for (RolapMeasureGroup mg : touchedMeasureGroups(segments, star)) {
+            for (RolapCubeDimension bridgeDim : mg.getBridgeDimensions()) {
+                if (mg.getBridgeInfo(bridgeDim) == null) {
+                    continue;
+                }
+                for (mondrian.olap.Hierarchy h : bridgeDim.getHierarchies()) {
+                    if (role.getAccess(h) != mondrian.olap.Access.ALL) {
+                        return true;
+                    }
+                }
             }
         }
         return false;

@@ -68,6 +68,14 @@ public enum ReasonCode {
    * on grants the importer cannot evaluate. */
   REFUSE_REQUIRED_ACCESS_GRANTS(Classification.REFUSE, null),
 
+  /** An {@code access_filter} whose {@code field:} maps to neither a modelled
+   * dimension key (a {@code <HierarchyGrant>}, #115) nor a static fact column
+   * (a {@code <PredicateGrant>}, #106) — e.g. a Liquid-templated field
+   * reference. The emitter cannot honour it, so emitting the explore would
+   * produce a cube with NO row-security for a filter the source model declared.
+   * Refuse the explore (fail-closed) rather than silently widen access. */
+  REFUSE_ACCESS_FILTER_UNMAPPABLE(Classification.REFUSE, "#106"),
+
   // --- DEGRADE: emit, but record a lost capability ------------------------
 
   /** A derived table's persistence policy (PDT / {@code datagroup_trigger} /

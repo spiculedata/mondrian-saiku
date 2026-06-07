@@ -1312,10 +1312,8 @@ public final class CalciteSqlPlanner {
         aliases.add("g_grain");
         // Project each measure's operand — a plain column, a CASE, a binary
         // arithmetic (e.g. a calc-column measure like balance - cost), or a
-        // literal — into the de-dup subquery, so the calc EXPRESSION is what
-        // gets de-duplicated on the grain and then summed. The value is
-        // functionally determined by the grain, so including it in the
-        // DISTINCT never changes which rows collapse.
+        // literal — so the calc EXPRESSION is what gets collapsed on the grain
+        // and then aggregated.
         List<String> msrcNames = new ArrayList<>(req.measures.size());
         for (int mi = 0; mi < req.measures.size(); mi++) {
             PlannerRequest.Measure m = req.measures.get(mi);
@@ -1324,11 +1322,33 @@ public final class CalciteSqlPlanner {
             aliases.add(mn);
             msrcNames.add(mn);
         }
-        // SELECT DISTINCT k_0..k_n, grain, msrc_0..msrc_m. force=true stops
-        // RelBuilder collapsing the projection into the scan/join so the
-        // grain genuinely participates in the DISTINCT.
+        // Project k_0..k_n, grain, msrc_0..msrc_m. force=true stops RelBuilder
+        // collapsing the projection into the scan/join so the grain genuinely
+        // participates in the collapse below.
         b.project(proj, aliases, true);
-        b.distinct();
+        // Collapse each (group keys, grain) to ONE representative value per
+        // measure BEFORE the outer aggregate. The distinct-grain contract is
+        // "one value per grain key"; the value is meant to be functionally
+        // determined by the grain. If the fact nonetheless repeats DIFFERENT
+        // values for the same grain (a denormalisation the model assumes away),
+        // a plain SELECT DISTINCT that kept the value in the key would retain
+        // every distinct (grain, value) pair and the outer SUM/AVG would count
+        // that grain more than once — silently over-counting (#119). Taking a
+        // deterministic representative (MIN) here guarantees each grain key
+        // contributes exactly once. For the #103 bridge grain (the fact PK,
+        // unique per row) MIN(value) == value, so this is identical to the old
+        // DISTINCT shape for every well-formed load — only the
+        // value-varies-within-grain case changes (from wrong to correct).
+        List<RexNode> grainKeys = new ArrayList<>(req.groupBy.size() + 1);
+        for (int gi = 0; gi < req.groupBy.size(); gi++) {
+            grainKeys.add(b.field(keyNames.get(gi)));
+        }
+        grainKeys.add(b.field("g_grain"));
+        List<RelBuilder.AggCall> repr = new ArrayList<>(req.measures.size());
+        for (int mi = 0; mi < req.measures.size(); mi++) {
+            repr.add(b.min(b.field(msrcNames.get(mi))).as(msrcNames.get(mi)));
+        }
+        b.aggregate(b.groupKey(grainKeys), repr);
         List<RexNode> symKeys = new ArrayList<>(req.groupBy.size());
         for (int gi = 0; gi < req.groupBy.size(); gi++) {
             symKeys.add(b.field(keyNames.get(gi)));
