@@ -31,8 +31,12 @@ assertion against `Bank.mondrian.xml` and its YAML round-trip).
 - `../bank.sql` — dataset (shipped base from
   `../saiku/saiku-launcher/src/main/resources/seed/bank.sql`, kept in sync,
   plus `tenant`/`open_date`/`as_of_date` columns and the `mm_txn` fan-out table).
-- `../Bank.mondrian.xml` — the comprehensive M4 schema (XML; YAML via the
-  `mondrian schema-cli` round-trip).
+- `../Bank.mondrian.xml` — the comprehensive M4 schema (XML).
+- `../Bank.yaml` — the same schema in YAML, so the showcase can be shown in both
+  formats. It is the `mondrian schema-cli to-yaml` conversion of the XML; a
+  parity test (`BankYamlParityTest`) keeps it in sync and proves every construct
+  survives the YAML form. Regenerate with
+  `mondrian schema-cli to-yaml demo/Bank.mondrian.xml -o demo/Bank.yaml`.
 - `bank.lkml` — the synthetic Looker model demonstrating Looker → M4 migration.
 
 ## What the LookML example shows
