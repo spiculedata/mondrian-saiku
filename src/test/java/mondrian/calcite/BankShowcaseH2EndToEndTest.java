@@ -111,4 +111,26 @@ public class BankShowcaseH2EndToEndTest {
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void tierAndDurationDimensions(String form) {
+        Connection c = connect(form, null, null);
+        try {
+            // Balance tier bins: <1000 Small, <3000 Medium, else Large.
+            // Large = accts with balance >= 3000: acct7 4000 + acct8 3000 = 7000.
+            assertEquals(7000.0, scalar(c,
+                "SELECT {[Measures].[Balance]} ON COLUMNS FROM [Accounts]\n"
+                + "WHERE [Account].[Balance Tier].[Large]"), 0.001,
+                "Large tier = balances >= 3000 (acct7+acct8)");
+            // Account age (years) to as_of 2025-01-01: acct7 opened 2015 = 10y.
+            assertEquals(4000.0, scalar(c,
+                "SELECT {[Measures].[Balance]} ON COLUMNS FROM [Accounts]\n"
+                + "WHERE [Account].[Age Years].[10]"), 0.001,
+                "10-year-old account is acct7 (balance 4000)");
+        } finally {
+            c.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
 }

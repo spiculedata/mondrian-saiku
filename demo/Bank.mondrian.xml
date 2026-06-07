@@ -159,4 +159,44 @@
     </MeasureGroups>
   </Cube>
 
+  <!-- Degenerate dimension on the fact: native Tier (binning) over balance
+       and native Duration (account age) over open_date..as_of_date (#108). -->
+  <Dimension name="Account" table="mm_fact" key="Account Id">
+    <Attributes>
+      <Attribute name="Account Id" hasHierarchy="false">
+        <Key><Column name="account_id"/></Key>
+      </Attribute>
+      <Attribute name="Balance Tier" hasHierarchy="true">
+        <Tier column="balance">
+          <Bin boundary="1000" label="Small"/>
+          <Bin boundary="3000" label="Medium"/>
+          <Bin label="Large"/>
+        </Tier>
+      </Attribute>
+      <Attribute name="Age Years" hasHierarchy="true">
+        <Duration startColumn="open_date" endColumn="as_of_date" unit="YEAR"/>
+      </Attribute>
+    </Attributes>
+  </Dimension>
+
+  <!-- Native tier + duration over the fact via the degenerate Account dim. -->
+  <Cube name="Accounts">
+    <Dimensions>
+      <Dimension source="Account"/>
+      <Dimension source="Branch"/>
+    </Dimensions>
+    <MeasureGroups>
+      <MeasureGroup name="Balances" table="mm_fact">
+        <Measures>
+          <Measure name="Balance" column="balance" aggregator="sum"
+                   formatString="#,###"/>
+        </Measures>
+        <DimensionLinks>
+          <FactLink dimension="Account"/>
+          <ForeignKeyLink dimension="Branch" foreignKeyColumn="branch_id"/>
+        </DimensionLinks>
+      </MeasureGroup>
+    </MeasureGroups>
+  </Cube>
+
 </Schema>
