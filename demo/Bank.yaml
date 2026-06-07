@@ -13,6 +13,7 @@ physical_schema:
   - name: "mm_txn"
   - name: "mm_calendar"
   - name: "mm_monthly"
+  - name: "fx_rate"
 shared_dimensions:
   Customer:
     table: "mm_customer"
@@ -243,6 +244,19 @@ cubes:
         column: "revenue"
         aggregator: "sum"
         format_string: "#,###"
+      currency_conversions:
+      - name: "Revenue (USD)"
+        measure: "Revenue"
+        rate_table: "fx_rate"
+        rate_column: "rate"
+        rate_type: "ECB"
+        rate_type_column: "rate_type"
+        fact_currency_column: "currency_id"
+        rate_currency_column: "currency_id"
+        fact_date_column: "month_key"
+        rate_valid_from_column: "valid_from"
+        rate_valid_to_column: "valid_to"
+        format_string: "#,##0.00"
       dimension_links:
       - type: "foreign_key"
         dimension: "Calendar"
