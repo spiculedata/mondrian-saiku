@@ -19,6 +19,13 @@
 -->
 <Schema name="Bank" metamodelVersion="4.0">
 
+  <!-- Bounded query-context parameter (#105): the tenant supplied per query
+       (e.g. session.tenant), enumerated + typed, bound by the Tenant role. -->
+  <QueryParameter name="tenant" type="Numeric" defaultValue="1">
+    <QueryParameterValue>1</QueryParameterValue>
+    <QueryParameterValue>2</QueryParameterValue>
+  </QueryParameter>
+
   <PhysicalSchema>
     <Table name="mm_fact">
       <Key><Column name="account_id"/></Key>
@@ -198,5 +205,16 @@
       </MeasureGroup>
     </MeasureGroups>
   </Cube>
+
+  <!-- Predicate row-security (#106): filter fact rows by the bound tenant
+       query parameter (#105). Enforced in the Calcite path. -->
+  <Role name="Tenant">
+    <SchemaGrant access="all">
+      <CubeGrant cube="Accounts" access="all">
+        <PredicateGrant measureGroup="Balances" column="tenant"
+                        operator="eq" parameter="tenant"/>
+      </CubeGrant>
+    </SchemaGrant>
+  </Role>
 
 </Schema>

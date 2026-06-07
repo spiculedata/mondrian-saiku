@@ -133,4 +133,24 @@ public class BankShowcaseH2EndToEndTest {
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void predicateRowSecurityByTenant(String form) {
+        // tenant 1 = LON accounts (1000+500+2000+4000=7500);
+        // tenant 2 = LDS (300+1500+700+3000=5500); ungranted = 13000.
+        Connection t1 = connect(form, "Tenant", "1");
+        Connection t2 = connect(form, "Tenant", "2");
+        Connection all = connect(form, null, null);
+        try {
+            String mdx = "SELECT {[Measures].[Balance]} ON COLUMNS"
+                + " FROM [Accounts]";
+            assertEquals(7500.0, scalar(t1, mdx), 0.001, "tenant 1 sees LON");
+            assertEquals(5500.0, scalar(t2, mdx), 0.001, "tenant 2 sees LDS");
+            assertEquals(13000.0, scalar(all, mdx), 0.001, "ungranted sees all");
+        } finally {
+            t1.close(); t2.close(); all.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
 }
