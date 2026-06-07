@@ -38,19 +38,28 @@ final class JoinEdge {
   private static final Pattern VIEW_REF =
       Pattern.compile("\\$\\{\\s*([A-Za-z_]\\w*)\\.");
 
+  /** A full {@code ${view.column}} reference: group 1 view, group 2 column. */
+  private static final Pattern REF =
+      Pattern.compile("\\$\\{\\s*([A-Za-z_]\\w*)\\.([A-Za-z_]\\w*)\\s*}");
+
   private final String joinName;
   private final String joinedView;
   private final String type;
   private final String relationship;
   private final ImmutableSet<String> referencedViews;
+  private final String sqlOn;
+  private final boolean hasForeignKey;
 
   private JoinEdge(String joinName, String joinedView, String type,
-      String relationship, Set<String> referencedViews) {
+      String relationship, Set<String> referencedViews, String sqlOn,
+      boolean hasForeignKey) {
     this.joinName = joinName;
     this.joinedView = joinedView;
     this.type = type;
     this.relationship = relationship;
     this.referencedViews = ImmutableSet.copyOf(referencedViews);
+    this.sqlOn = sqlOn;
+    this.hasForeignKey = hasForeignKey;
   }
 
   /** Builds an edge from a {@code join:} node. The joined view defaults to the
@@ -64,9 +73,13 @@ final class JoinEdge {
         .orElse(LookmlKeywords.JOIN_TYPE_LEFT_OUTER);
     final String relationship =
         joinNode.stringValue(LookmlKeywords.RELATIONSHIP).orElse(null);
-    final Set<String> referenced = parseReferencedViews(
-        joinNode.stringValue(LookmlKeywords.SQL_ON).orElse(""), view);
-    return new JoinEdge(name, view, type, relationship, referenced);
+    final String sqlOn = joinNode.stringValue(LookmlKeywords.SQL_ON).orElse("");
+    final Set<String> referenced = parseReferencedViews(sqlOn, view);
+    final boolean hasFk =
+        joinNode.stringValue(LookmlKeywords.FOREIGN_KEY)
+            .map(String::trim).filter(s -> !s.isEmpty()).isPresent();
+    return new JoinEdge(name, view, type, relationship, referenced, sqlOn,
+        hasFk);
   }
 
   /** The views (other than the join's own {@code joinedView}) referenced by a
@@ -137,6 +150,33 @@ final class JoinEdge {
   /** A many_to_many relationship without a declared bridge: non-star. */
   boolean isUnbridgedManyToMany() {
     return LookmlKeywords.REL_MANY_TO_MANY.equals(relationship);
+  }
+
+  /** Whether the transpiler can recover a single fact/dimension key pair for
+   * this join (#115): a {@code foreign_key}, or a {@code sql_on} with a column
+   * on the joined view <em>and</em> a column on some other (fact/upstream) view.
+   * When false the conformed dimension is omitted by the emitter, so the
+   * classifier records a DEGRADE note rather than letting it vanish silently. */
+  boolean hasResolvableKey() {
+    if (hasForeignKey) {
+      return true;
+    }
+    if (sqlOn.isEmpty()) {
+      // No sql_on and no foreign_key: a cross/unconditioned join the emitter
+      // cannot key. (Topology checks handle the structural cases.)
+      return false;
+    }
+    boolean dimSide = false;
+    boolean factSide = false;
+    final Matcher m = REF.matcher(sqlOn);
+    while (m.find()) {
+      if (m.group(1).equals(joinedView)) {
+        dimSide = true;
+      } else {
+        factSide = true;
+      }
+    }
+    return dimSide && factSide;
   }
 
   /** The fact fans out across this edge (one_to_many or many_to_many). */

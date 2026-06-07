@@ -44,6 +44,7 @@ final class LookmlKeywords {
   static final String VIEW_NAME = "view_name";
   static final String FIELD = "field";
   static final String SQL_ON = "sql_on";
+  static final String FOREIGN_KEY = "foreign_key";
   static final String PRIMARY_KEY = "primary_key";
   static final String FILTERS = "filters";
   static final String SQL_DISTINCT_KEY = "sql_distinct_key";
@@ -125,6 +126,21 @@ final class LookmlKeywords {
    * filter / sql contexts. */
   static final ImmutableSet<String> LIQUID_PRESENTATION_KEYS =
       ImmutableSet.of(LABEL, HTML, "value_format", "value_format_name");
+
+  static final String VALUE_FORMAT_NAME = "value_format_name";
+
+  /** Looker built-in {@code value_format_name} presets the transpiler can
+   * translate to a Mondrian {@code format_string} (#115). Must stay in step with
+   * {@code mondrian.lookml.transpile.LookerFormats}; a name outside this set is
+   * emitted verbatim and DEGRADEs. */
+  static final ImmutableSet<String> KNOWN_VALUE_FORMAT_NAMES =
+      ImmutableSet.of(
+          "decimal_0", "decimal_1", "decimal_2", "decimal_3", "decimal_4",
+          "usd", "usd_0", "usd_1", "usd_2",
+          "gbp", "gbp_0", "gbp_1", "gbp_2",
+          "eur", "eur_0", "eur_1", "eur_2",
+          "percent_0", "percent_1", "percent_2", "percent_3", "percent_4",
+          "id");
 }
 
 // End LookmlKeywords.java

@@ -43,6 +43,11 @@ final class M4SchemaModel {
   /** table name → its declared key columns (insertion-ordered, deduped). */
   private final Map<String, Set<String>> tableKeys = new LinkedHashMap<>();
 
+  /** SQL-backed physical tables (#115 derived tables): alias → built
+   * {@code <Query>} body, deduped by alias. A name registered here is emitted
+   * as a {@code <Query>} and suppressed from the plain {@code tables:} list. */
+  private final Map<String, Object> queries = new LinkedHashMap<>();
+
   M4SchemaModel(String schemaName, String metamodelVersion) {
     final Map<String, Object> schema = new LinkedHashMap<>();
     schema.put("name", schemaName);
@@ -67,6 +72,34 @@ final class M4SchemaModel {
   /** Adds a built cube body under the given cube name. */
   void addCube(String cubeName, Map<String, Object> cubeBody) {
     cubes.put(cubeName, cubeBody);
+  }
+
+  /** Registers a SQL-backed physical table (#115 derived table): a
+   * {@code <Query>} with the given alias, generic SQL and key column, deduped by
+   * alias. The alias is also recorded in the table registry so its key
+   * accumulates, but it is emitted as a {@code <Query>}, not a plain table. */
+  void registerQuery(String alias, String sql, String keyColumn) {
+    if (alias == null || alias.isEmpty() || sql == null || sql.isEmpty()) {
+      return;
+    }
+    if (queries.containsKey(alias)) {
+      return;
+    }
+    final Map<String, Object> expression = new LinkedHashMap<>();
+    expression.put("generic", sql);
+    final Map<String, Object> query = new LinkedHashMap<>();
+    query.put("alias", alias);
+    if (keyColumn != null && !keyColumn.isEmpty()) {
+      query.put("key_column", keyColumn);
+    }
+    query.put("expression", expression);
+    queries.put(alias, query);
+  }
+
+  /** Whether {@code name} is a SQL-backed query (so it must not also be emitted
+   * as a plain table). */
+  boolean isQuery(String name) {
+    return queries.containsKey(name);
   }
 
   /** Adds a top-level query-parameter block, deduped by name (#105). */
@@ -107,6 +140,10 @@ final class M4SchemaModel {
   private Map<String, Object> buildPhysicalSchema() {
     final List<Object> tables = new ArrayList<>();
     for (Map.Entry<String, Set<String>> e : tableKeys.entrySet()) {
+      // A SQL-backed query alias is emitted under queries:, not tables:.
+      if (queries.containsKey(e.getKey())) {
+        continue;
+      }
       final Map<String, Object> t = new LinkedHashMap<>();
       t.put("name", e.getKey());
       if (!e.getValue().isEmpty()) {
@@ -116,6 +153,9 @@ final class M4SchemaModel {
     }
     final Map<String, Object> phys = new LinkedHashMap<>();
     phys.put("tables", tables);
+    if (!queries.isEmpty()) {
+      phys.put("queries", new ArrayList<>(queries.values()));
+    }
     return phys;
   }
 }

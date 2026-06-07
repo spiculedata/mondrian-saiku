@@ -1220,15 +1220,29 @@ public class NativeSetEvaluationTest extends BatchTestCase {
         // [Denny D-Size Batteries]
         final TestContext ctx = getTestContext().legacy().create(
             null, null, null, null, null, roleDef).withRole("Test");
-        verifySameNativeAndNot(
-            "select non empty crossjoin([Store].[USA],[Product].[Product Name].members) on 0 from sales",
-            "Native crossjoin mismatch", ctx);
+
+        // #120: native TOPCOUNT and FILTER honour the member grant correctly
+        // (native == non-native, both return only the granted members). These
+        // are the load-bearing member-grant-enforcement assertions and they
+        // pass.
         verifySameNativeAndNot(
             "select topcount([Product].[Product Name].members, 6, Measures.[Unit Sales]) on 0 from sales",
             "Native topcount mismatch", ctx);
         verifySameNativeAndNot(
             "select filter([Product].[Product Name].members, Measures.[Unit Sales] > 0) on 0 from sales",
             "Native native filter mismatch", ctx);
+
+        // #122: native CROSSJOIN sub-case. Each crossjoin arg must bind its
+        // predicate to its OWN key column - the [Store].[USA] arg constrains
+        // the store key, the [Product].[Product Name].members arg enumerates
+        // product names - so the native crossjoin returns the same granted
+        // members as the (correct) non-native path. This also enforces the
+        // non-disclosure guarantee on the native path: the role only ever sees
+        // its granted members on the crossjoin axis, never the forbidden
+        // [Denny C-Size]/[Denny D-Size] batteries.
+        verifySameNativeAndNot(
+            "select non empty crossjoin([Store].[USA],[Product].[Product Name].members) on 0 from sales",
+            "Native crossjoin mismatch", ctx);
         propSaver.reset();
     }
 }

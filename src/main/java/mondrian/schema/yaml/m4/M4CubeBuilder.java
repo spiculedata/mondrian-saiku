@@ -264,6 +264,9 @@ final class M4CubeBuilder {
         measure.aggregator = M4YamlToXml.str(m.get("aggregator"));
         // #104 percentile parameter (for aggregator: percentile).
         measure.percentile = M4YamlToXml.str(m.get("percentile"));
+        // #119 measure-level distinct grain (sum_distinct / average_distinct).
+        measure.distinctKeyColumn =
+            M4YamlToXml.str(m.get("distinct_key_column"));
         measure.formatString = M4YamlToXml.str(m.get("format_string"));
         measure.datatype = M4YamlToXml.str(m.get("datatype"));
         // #110 display attributes.

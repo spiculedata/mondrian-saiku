@@ -113,6 +113,18 @@ public enum ReasonCode {
    * is emitted; the value is supplied at query time through the #105 sandbox. */
   DEGRADE_LIQUID_BOUNDED(Classification.DEGRADE, "#118"),
 
+  /** A field carries a {@code value_format_name} that is not one of Looker's
+   * built-in named presets the importer can translate to a Mondrian
+   * {@code format_string} mask (#115). The unknown name is emitted verbatim as
+   * the {@code format_string}; it may not render as Looker intended. */
+  DEGRADE_VALUE_FORMAT_NAME_UNKNOWN(Classification.DEGRADE, null),
+
+  /** A {@code join:} whose {@code sql_on} cannot be reduced to a single
+   * fact/dimension key pair (e.g. a multi-column or expression join condition).
+   * The explore still emits, but that join's conformed dimension is omitted, so
+   * its attributes are not queryable (#115). */
+  DEGRADE_JOIN_SQL_ON_UNPARSEABLE(Classification.DEGRADE, null),
+
   /** A fan-out additive aggregate the importer cannot fully bridge: the
    * fan-out-safe (#103) measure-group grain is emitted, but a genuine
    * many-to-many that needs a {@code <BridgeLink>} (#107) is only partially

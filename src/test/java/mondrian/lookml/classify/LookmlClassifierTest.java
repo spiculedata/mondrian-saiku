@@ -625,10 +625,11 @@ class LookmlClassifierTest {
         record(classify(lookml), "orders.avg_amt").reasonCode());
   }
 
-  /** A sum_distinct whose sql_distinct_key is NOT the base view primary key
-   * (here a joined-view key) cannot be de-duplicated at measure level by the
-   * engine — a plain SUM would be silently wrong — so it stays REFUSE. */
-  @Test void sumDistinctOnNonPrimaryKeyStaysRefused() {
+  /** A sum_distinct whose sql_distinct_key is a CROSS-VIEW reference
+   * ({@code ${customer.sfid}}) cannot be de-duplicated at measure level by the
+   * engine — the de-dup grain would be a foreign key — so it stays REFUSE
+   * (never silently wrong). */
+  @Test void sumDistinctOnCrossViewKeyStaysRefused() {
     final String lookml = ""
         + "explore: orders {}\n"
         + "view: orders {\n"
@@ -642,6 +643,63 @@ class LookmlClassifierTest {
         + "}\n";
 
     assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** #119: a sum_distinct whose sql_distinct_key resolves to a real SAME-VIEW
+   * column that is NOT the primary key now maps to an M4 measure-level distinct
+   * grain (distinctKeyColumn) — the engine de-duplicates on the declared key
+   * without a bridge — so it is CLEAN (the #117 residual recovered). */
+  @Test void sumDistinctOnSameViewNonPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  dimension: basket { type: number sql: ${TABLE}.basket_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** #119: an average_distinct on a same-view non-PK key is likewise CLEAN. */
+  @Test void averageDistinctOnSameViewNonPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: avg_amt {\n"
+        + "    type: average_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.avg_amt").reasonCode());
+  }
+
+  /** #119: a same-view non-PK distinct key is CLEAN even with NO primary_key
+   * declared — the de-dup grain is the declared key itself, not the fact PK. */
+  @Test void sumDistinctOnSameViewKeyWithoutPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
         record(classify(lookml), "orders.total").reasonCode());
   }
 
@@ -870,6 +928,76 @@ class LookmlClassifierTest {
         record(r, "orders.revenue").reasonCode());
     assertEquals(Classification.CLEAN,
         record(r, "customers.c").classification());
+  }
+
+  // --- #115 gap 6: un-parseable sql_on join → DEGRADE note --------------
+
+  /** A star-eligible join whose sql_on cannot be reduced to a single
+   * fact/dimension key pair (a multi-column / expression condition) DEGRADEs
+   * with DEGRADE_JOIN_SQL_ON_UNPARSEABLE instead of vanishing silently (#115). */
+  @Test void unparseableSqlOnJoinDegrades() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: LOWER(${orders.region}) = LOWER('x') ;; }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    final CoverageRecord join = record(r, "explore:orders.join:users");
+    assertEquals(ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+        join.reasonCode());
+    assertEquals(Classification.DEGRADE, join.classification());
+    // The explore itself still classifies (star-eligible, left_outer).
+    assertEquals(Classification.CLEAN,
+        record(r, "explore:orders").classification());
+  }
+
+  /** A resolvable single-key join records NO unparseable-join DEGRADE. */
+  @Test void resolvableSqlOnJoinHasNoDegradeNote() {
+    String lookml =
+        "view: orders {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: c { type: count }\n"
+        + "}\n"
+        + "view: users {\n"
+        + "  sql_table_name: users ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "}\n"
+        + "explore: orders {\n"
+        + "  join: users { type: left_outer relationship: many_to_one\n"
+        + "    sql_on: ${orders.user_id} = ${users.user_id} ;; }\n"
+        + "}\n";
+    final ClassificationResult r = classify(lookml);
+    assertTrue(r.records().stream().noneMatch(rec ->
+            rec.reasonCode() == ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE),
+        () -> r.records().toString());
+  }
+
+  // --- #115 gap 2: unknown value_format_name → DEGRADE note ------------
+
+  /** A measure with an unknown value_format_name DEGRADEs; a known preset
+   * stays CLEAN (#115). */
+  @Test void unknownValueFormatNameDegrades() {
+    String lookml =
+        "view: f {\n"
+        + "  sql_table_name: orders ;;\n"
+        + "  measure: known { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: usd }\n"
+        + "  measure: unknown { type: sum sql: ${TABLE}.amount ;;"
+        + "    value_format_name: weird_custom }\n"
+        + "}\n"
+        + "explore: f { }\n";
+    final ClassificationResult r = classify(lookml);
+    assertEquals(Classification.CLEAN, record(r, "f.known").classification());
+    assertEquals(ReasonCode.DEGRADE_VALUE_FORMAT_NAME_UNKNOWN,
+        record(r, "f.unknown").reasonCode());
   }
 }
 

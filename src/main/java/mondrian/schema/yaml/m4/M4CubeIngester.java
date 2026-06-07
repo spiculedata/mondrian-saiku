@@ -359,6 +359,10 @@ final class M4CubeIngester {
             if (m.percentile != null) {
                 out.put("percentile", m.percentile);
             }
+            // #119 measure-level distinct grain.
+            if (m.distinctKeyColumn != null) {
+                out.put("distinct_key_column", m.distinctKeyColumn);
+            }
             if (m.formatString != null) {
                 out.put("format_string", m.formatString);
             }

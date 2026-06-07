@@ -761,6 +761,43 @@ public class SqlTupleReader implements TupleReader {
                                 CalcitePlannerAdapters.fromTupleRead(
                                     readLevels, constraint);
                             String calciteSql = planner.plan(req);
+                            // #121/#123: the legacy `types` list and the per-target
+                            // ColumnLayout (key/name/order-by ordinals) were
+                            // built against the *legacy* SELECT above and are
+                            // reused to decode this result set. If the Calcite
+                            // SELECT has a different output-column cardinality,
+                            // adopting calciteSql would (a) trip the
+                            // "types cardinality != column count" assertion in
+                            // SqlStatement.guessTypes, and (b) — worse —
+                            // silently decode the wrong columns via stale
+                            // layout ordinals. The SQL string and the
+                            // type/layout metadata must agree, so a count
+                            // divergence means this request shape is not
+                            // safely swappable: fall back to the legacy SQL
+                            // (which is self-consistent) via the existing
+                            // UnsupportedTranslation path below.
+                            //
+                            // The Calcite SELECT output arity mirrors
+                            // CalciteSqlPlanner: an aggregating member read
+                            // (constrained-to-fact, measures present) emits
+                            // {groupBy, measures} — HAVING-only and computed
+                            // measures are re-projected out — while a plain
+                            // tuple/level read emits {projections}.
+                            final int calciteOutputColumns =
+                                req.measures.isEmpty()
+                                    ? req.projections.size()
+                                    : req.groupBy.size()
+                                        + req.measures.size();
+                            if (calciteOutputColumns != types.size()) {
+                                throw new mondrian.calcite
+                                    .UnsupportedTranslation(
+                                    "Calcite tuple-read output column count "
+                                    + calciteOutputColumns
+                                    + " does not match legacy column count "
+                                    + types.size()
+                                    + "; legacy ColumnLayout would misdecode "
+                                    + "the result set");
+                            }
                             if (Boolean.getBoolean("mondrian.calcite.trace")) {
                                 System.err.println(
                                     "[calcite-ok tuple] " + calciteSql);

@@ -293,6 +293,71 @@ public class LookmlReportCliTest {
     assertTrue("graceful error, no stack trace:\n" + stderr(),
         !stderr().isBlank() && !stderr().contains("\tat "));
   }
+
+  // --- #116 part A: directory is flattened before classification ----------
+
+  /** A two-file project where one file refines the measure to {@code type:
+   * sum} on a fanned-out view must be FLATTENED before classification, so the
+   * measure surfaces in the Refuse bucket (it would be CLEAN as-parsed). */
+  @Test
+  public void directoryIsFlattenedSoRefinementFlipsClassification()
+      throws Exception {
+    Path dir = tmp.newFolder("flatproj").toPath();
+    Files.writeString(dir.resolve("orders.view.lkml"),
+        "explore: orders {\n"
+        + "  join: items { type: left_outer relationship: one_to_many\n"
+        + "    sql_on: ${orders.id} = ${items.order_id} ;; }\n"
+        + "}\n"
+        + "view: orders { measure: revenue { sql: ${TABLE}.amount ;; } }\n"
+        + "view: items { dimension: order_id { type: number } }\n",
+        StandardCharsets.UTF_8);
+    Files.writeString(dir.resolve("orders_refine.view.lkml"),
+        "view: +orders { measure: revenue { type: sum } }\n",
+        StandardCharsets.UTF_8);
+
+    int rc = LookmlReportCli.run(
+        new String[] { "report", dir.toString(), "--fail-on-refuse" },
+        outP, errP);
+    assertNotEquals("refinement makes revenue a fanned-out sum -> refuse",
+        0, rc);
+    assertTrue("revenue refused after flatten:\n" + stdout(),
+        stdout().contains("revenue") && stdout().contains("## Refuse"));
+  }
+
+  // --- #116 part B: --explore-json front-end ------------------------------
+
+  /** {@code report --explore-json <file>} reports on a pre-resolved Looker
+   * LookmlModelExplore JSON. */
+  @Test
+  public void exploreJsonInputProducesReport() throws Exception {
+    String json =
+        "{\n"
+        + "  \"name\": \"orders\", \"view_name\": \"orders\",\n"
+        + "  \"fields\": { \"dimensions\": [], \"measures\": [\n"
+        + "    { \"name\": \"orders.revenue\", \"view\": \"orders\",\n"
+        + "      \"type\": \"sum\", \"sql\": \"${TABLE}.amount\" } ] }\n"
+        + "}\n";
+    Path f = write("explore.json", json);
+    int rc = LookmlReportCli.run(
+        new String[] { "report", "--explore-json", f.toString() },
+        outP, errP);
+    assertEquals("stderr=" + stderr(), 0, rc);
+    assertTrue("report title:\n" + stdout(),
+        stdout().contains("# LookML Import Coverage Report"));
+    assertTrue("revenue measure classified:\n" + stdout(),
+        stdout().contains("revenue"));
+  }
+
+  /** A missing explore-json file is a graceful rc 2, not a stack trace. */
+  @Test
+  public void missingExploreJsonReturnsRcTwo() {
+    int rc = LookmlReportCli.run(
+        new String[] { "report", "--explore-json", "/no/such/explore.json" },
+        outP, errP);
+    assertEquals(2, rc);
+    assertTrue("graceful error:\n" + stderr(),
+        !stderr().isBlank() && !stderr().contains("\tat "));
+  }
 }
 
 // End LookmlReportCliTest.java

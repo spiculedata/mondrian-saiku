@@ -918,20 +918,50 @@ public final class CalcitePlannerAdapters {
         }
 
         // Second pass: emit projections + group-by for each target in
-        // target order, and each target's CrossJoinArg filter contribution.
+        // target order, then apply every CrossJoinArg filter on ITS OWN
+        // key column.
+        //
+        // #122: a CrossJoinArg's predicate MUST bind to the column derived
+        // from the arg's own level, never the target's column at the same
+        // array index. The `args` array (collected by
+        // buildConstraintFromAllAxes / TopCount / Filter) does NOT positionally
+        // correspond to the read `levels`: a NON EMPTY crossjoin over
+        // crossjoin([Store].[USA],[Product].[Product Name].members) reads the
+        // Product target but, under a CUSTOM role where the Product axis arg
+        // could not be captured natively, the constraint carries only the
+        // Store arg. Pairing args[0] (Store) with levels[0] (Product) by index
+        // bound store_country='USA' onto the product_name column
+        // (... WHERE "product_name" = 'USA'), so native returned ZERO tuples.
+        //
+        // Match each arg to a target by level identity: an arg whose level is
+        // one of the read targets is that target's projection+filter; any arg
+        // with no matching target is filter-only (its dim is joined to the
+        // fact and the predicate bound to the arg's own column).
         Set<String> projectedKeys = new LinkedHashSet<>();
+        boolean[] argMatchedTarget = new boolean[args.length];
         for (int i = 0; i < levels.size(); i++) {
             TargetShape shape = shapes[i];
             if (shape == null) {
                 continue;
             }
             emitNecjTargetProjections(b, projectedKeys, shape);
-            addCrossJoinArgFilter(b, shape, args[i]);
+            // Find the arg (if any) whose level is this target's level, and
+            // apply it on THIS target's own shape (column).
+            int argIdx = findArgForLevel(args, levels.get(i), argMatchedTarget);
+            if (argIdx >= 0) {
+                argMatchedTarget[argIdx] = true;
+                addCrossJoinArgFilter(b, shape, args[argIdx]);
+            }
         }
 
-        // Filter-only extras: any args beyond the target level count
-        // contribute filters without projections.
-        for (int i = levels.size(); i < args.length; i++) {
+        // Filter-only args: any arg not matched to a read target contributes a
+        // filter (on its own key column) without a projection. This covers
+        // both the historical "extras beyond target count" case and the
+        // #122 case where an arg's dimension is not among the read targets.
+        for (int i = 0; i < args.length; i++) {
+            if (argMatchedTarget[i]) {
+                continue;
+            }
             CrossJoinArg extra = args[i];
             RolapCubeLevel extraLevel = extra.getLevel();
             if (extraLevel == null) {
@@ -1798,6 +1828,37 @@ public final class CalcitePlannerAdapters {
             b.addProjection(projection);
             b.addGroupBy(projection);
         }
+    }
+
+    /**
+     * Finds the index of the (first not-yet-matched) CrossJoinArg whose level
+     * is {@code targetLevel}, or -1 if none.
+     *
+     * <p>#122: the arg→target pairing must be by level identity, not by array
+     * index — {@code args} (collected across all axes / by TopCount / Filter)
+     * does not positionally correspond to the read {@code levels}. Binding an
+     * arg's member value to the wrong target's key column produces
+     * wrong/empty results (e.g. a Store-country value landing on the
+     * product_name column under a CUSTOM-access role).
+     */
+    private static int findArgForLevel(
+        CrossJoinArg[] args,
+        RolapCubeLevel targetLevel,
+        boolean[] alreadyMatched)
+    {
+        if (targetLevel == null) {
+            return -1;
+        }
+        for (int i = 0; i < args.length; i++) {
+            if (alreadyMatched[i]) {
+                continue;
+            }
+            RolapCubeLevel argLevel = args[i].getLevel();
+            if (argLevel != null && argLevel.equals(targetLevel)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -3458,6 +3519,26 @@ public final class CalcitePlannerAdapters {
                         ((RolapSchema.PhysRealColumn) grain).name));
             }
         }
+
+        // #119 measure-level distinct grain: a SECOND, bridge-independent way
+        // to pin PlannerRequest.symmetricGrainColumn. When a measure declares
+        // its own de-dup key (distinctKeyColumn — the native form of LookML
+        // sum_distinct / average_distinct on a sql_distinct_key), the
+        // aggregation must de-duplicate the operand on that key before
+        // summing/averaging, exactly as the #103 bridge path does, but driven
+        // by the measure declaration rather than join topology. We reuse the
+        // identical emitSymmetricAggregate machinery downstream — the only new
+        // surface is setting the grain here from the measure key. The
+        // symmetric grain is request-wide and applies the DISTINCT to every
+        // measure operand, so we fail closed (UnsupportedTranslation → the
+        // load is not pushed down) unless the load is homogeneous: every
+        // measure in it declares the SAME distinct key, and no plain measure
+        // is mixed in (de-duping a plain SUM on someone else's key would be
+        // silently wrong). A heterogeneous load is split into per-measure
+        // segments by the caller, each of which is homogeneous.
+        if (bridgeWeight == null) {
+            applyMeasureLevelDistinctGrain(b, segments);
+        }
         // #107 weighted bridge: scale every measure's operand by this
         // bridge weight column — SUM(operand × weight) — whatever the
         // measure's shape (real column, CASE, arithmetic, literal). Null for
@@ -4441,6 +4522,69 @@ public final class CalcitePlannerAdapters {
             }
         }
         return null;
+    }
+
+    /**
+     * #119 measure-level distinct grain: if every segment in this load is a
+     * measure that declares the SAME {@code distinctKeyColumn}, pin
+     * {@link PlannerRequest.Builder#symmetricGrainColumn} from that key so
+     * {@code emitSymmetricAggregate} de-duplicates the operand on the key
+     * before aggregating — the bridge-free counterpart of {@link
+     * #findBridgeFanoutGrain}.
+     *
+     * <p>Fails closed: a load mixing a distinct-grain measure with a plain
+     * measure (de-duping a plain SUM would be silently wrong) or mixing two
+     * different distinct keys (the request-wide grain cannot satisfy both) is
+     * refused with {@link UnsupportedTranslation}, so the caller re-issues it
+     * as homogeneous per-measure segments. A bridge grain already pinned by
+     * the #103 path takes precedence and is left untouched (a bridge load
+     * never carries a measure-level distinct key in the corpus, but the guard
+     * keeps the two grains from clobbering each other).
+     */
+    private static void applyMeasureLevelDistinctGrain(
+        PlannerRequest.Builder b,
+        List<Segment> segments)
+    {
+        RolapSchema.PhysColumn distinctKey = null;
+        boolean anyDistinct = false;
+        boolean anyPlain = false;
+        for (Segment seg : segments) {
+            RolapSchema.PhysColumn k = seg.aggMeasure.getDistinctKeyColumn();
+            if (k == null) {
+                anyPlain = true;
+                continue;
+            }
+            anyDistinct = true;
+            if (distinctKey == null) {
+                distinctKey = k;
+            } else if (!distinctKey.equals(k)) {
+                throw new UnsupportedTranslation(
+                    "fromSegmentLoad: measures with different distinctKeyColumn "
+                    + "in one load (" + distinctKey + " vs " + k + ")");
+            }
+        }
+        if (!anyDistinct) {
+            return;
+        }
+        if (anyPlain) {
+            throw new UnsupportedTranslation(
+                "fromSegmentLoad: a distinct-grain measure cannot share a load "
+                + "with a plain measure (the request-wide DISTINCT would "
+                + "mis-aggregate the plain one)");
+        }
+        if (b.hasSymmetricGrainColumn()) {
+            // A bridge fan-out grain is already pinned; do not clobber it.
+            return;
+        }
+        if (!(distinctKey instanceof RolapSchema.PhysRealColumn)) {
+            throw new UnsupportedTranslation(
+                "fromSegmentLoad: distinctKeyColumn is not a real column: "
+                + distinctKey);
+        }
+        b.symmetricGrainColumn(
+            new PlannerRequest.Column(
+                distinctKey.relation.getAlias(),
+                ((RolapSchema.PhysRealColumn) distinctKey).name));
     }
 
     private static void ensureJoinedChain(

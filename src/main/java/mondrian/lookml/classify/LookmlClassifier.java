@@ -150,6 +150,13 @@ public final class LookmlClassifier {
                       + "` is a star/snowflake of left-joins")
               .producedM4("cube")
               .build()));
+      // A star-eligible join whose key the transpiler cannot recover: its
+      // conformed dimension is omitted, so record a DEGRADE note (#115).
+      for (JoinEdge edge : graph.edges()) {
+        if (!edge.hasResolvableKey()) {
+          out.add(unparseableJoinRecord(graph.exploreName(), edge));
+        }
+      }
     }
 
     // aggregate_table blocks degrade independently of the explore outcome.
@@ -210,6 +217,22 @@ public final class LookmlClassifier {
         + "` (" + graph.nonStarCause(edge)
         + ") is not a star/snowflake fact→dim left-join; "
         + "it would break structurally";
+  }
+
+  /** A DEGRADE record for a join whose {@code sql_on} cannot be reduced to a
+   * single fact/dimension key pair (#115). */
+  private CoverageRecord unparseableJoinRecord(String exploreName,
+      JoinEdge edge) {
+    final String qn = "explore:" + exploreName + ".join:" + edge.joinName();
+    return CoverageRecord.builder(Scope.EXPLORE, qn,
+            ReasonCode.DEGRADE_JOIN_SQL_ON_UNPARSEABLE,
+            "join `" + edge.joinName() + "` on explore `" + exploreName
+                + "` has a sql_on that does not reduce to a single "
+                + "fact/dimension key pair (multi-column or expression join); "
+                + "its conformed dimension is omitted (#115)")
+        .lostCapability("joined dimension `" + edge.joinedView()
+            + "` not queryable")
+        .build();
   }
 
   private CoverageRecord aggregateTableRecord(String exploreName,
@@ -296,9 +319,10 @@ public final class LookmlClassifier {
     return Optional.of(CoverageRecord.builder(Scope.VIEW, "view:" + viewName,
             ReasonCode.DEGRADE_PDT_PERSISTENCE_DROPPED,
             "derived_table on view `" + viewName + "` has a persistence policy "
-                + "that is dropped; emitted as a plain <View> (segment-cache "
+                + "that is dropped; emitted as a SQL-backed <Query> physical "
+                + "table (the persistence policy maps to the segment-cache "
                 + "story #94/#95/#96)")
-        .producedM4("View")
+        .producedM4("Query")
         .lostCapability("PDT persistence policy dropped")
         .build());
   }

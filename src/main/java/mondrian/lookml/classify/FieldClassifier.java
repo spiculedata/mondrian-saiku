@@ -97,6 +97,11 @@ final class FieldClassifier {
           type, fanOutEdge);
     }
 
+    final Optional<CoverageRecord> unknownFormat =
+        unknownValueFormatName(qn, measure);
+    if (unknownFormat.isPresent()) {
+      return unknownFormat.get();
+    }
     return clean(qn, Scope.FIELD,
         "measure `" + simpleName(measure) + "` (" + type
             + ") converts with full fidelity"
@@ -115,23 +120,49 @@ final class FieldClassifier {
    */
   private CoverageRecord classifyDistinctAggregate(String qn,
       LookmlNode measure, String type, PrimaryKey primaryKey) {
-    if (!primaryKey.isPresent()) {
-      return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
-          type, Optional.empty());
-    }
     final Optional<String> rawKey =
         measure.stringValue(LookmlKeywords.SQL_DISTINCT_KEY);
     // No explicit key → fall back to the base view's primary key (de-dup on
-    // the fact grain is a no-op).
+    // the fact grain is a no-op). Requires a declared primary key.
     if (rawKey.isEmpty()) {
+      if (!primaryKey.isPresent()) {
+        return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
+            type, Optional.empty());
+      }
       return distinctClean(qn, measure, type);
     }
     final Optional<String> resolved = DistinctKey.resolveSameView(rawKey.get());
-    if (resolved.isPresent() && primaryKey.matches(resolved.get())) {
+    // #119: an unresolvable / cross-view key cannot be honoured at measure
+    // level (the de-dup grain would be a foreign key) — stay REFUSE so we
+    // never emit a silently-wrong de-dup.
+    if (resolved.isEmpty()) {
+      return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
+          type, Optional.empty());
+    }
+    // De-dup on the base view primary key is a no-op → plain SUM/AVG (#117).
+    if (primaryKey.isPresent() && primaryKey.matches(resolved.get())) {
       return distinctClean(qn, measure, type);
     }
-    return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure, type,
-        Optional.empty());
+    // #119: a resolvable same-view key that is NOT the primary key maps to an
+    // M4 measure-level distinct grain — the engine de-duplicates on the
+    // declared key column before aggregating, without a <BridgeLink>. CLEAN.
+    return distinctGrainClean(qn, measure, type, resolved.get());
+  }
+
+  /** #119: a {@code sum_distinct} / {@code average_distinct} whose
+   * {@code sql_distinct_key} resolves to a real same-view column that is NOT
+   * the primary key. Maps to an M4 measure declaring a distinct grain
+   * ({@code distinctKeyColumn}); the engine de-duplicates the operand on that
+   * key before aggregating, reusing the #103 symmetric-aggregate machinery
+   * without a bridge. */
+  private CoverageRecord distinctGrainClean(String qn, LookmlNode measure,
+      String type, String key) {
+    return clean(qn, Scope.FIELD,
+        "measure `" + simpleName(measure) + "` (" + type
+            + ") de-duplicates on `" + key + "` (a non-PK same-view key); "
+            + "maps to an M4 " + plainAggregator(type)
+            + " with a measure-level distinct grain (#119) — fan-out-safe "
+            + "without a bridge");
   }
 
   private CoverageRecord distinctClean(String qn, LookmlNode measure,
@@ -188,8 +219,41 @@ final class FieldClassifier {
     if (guard.isPresent()) {
       return refusal(qn, guard.get(), dimension, type, Optional.empty());
     }
+    final Optional<CoverageRecord> unknownFormat =
+        unknownValueFormatName(qn, dimension);
+    if (unknownFormat.isPresent()) {
+      return unknownFormat.get();
+    }
     return clean(qn, Scope.FIELD,
         "dimension `" + simpleName(dimension) + "` converts with full fidelity");
+  }
+
+  /** A DEGRADE record if {@code field} carries a {@code value_format_name} that
+   * is not a known Looker preset (#115): the unknown name is emitted verbatim as
+   * the {@code format_string}, so it may not render as Looker intended. Empty
+   * when the format is absent or a known preset (then the field is CLEAN). */
+  private Optional<CoverageRecord> unknownValueFormatName(String qn,
+      LookmlNode field) {
+    final Optional<String> name =
+        field.stringValue(LookmlKeywords.VALUE_FORMAT_NAME)
+            .map(String::trim)
+            .filter(s -> !s.isEmpty());
+    if (name.isEmpty()) {
+      return Optional.empty();
+    }
+    final String lower = name.get().toLowerCase(Locale.ROOT);
+    if (LookmlKeywords.KNOWN_VALUE_FORMAT_NAMES.contains(lower)) {
+      return Optional.empty();
+    }
+    return Optional.of(CoverageRecord.builder(Scope.FIELD, qn,
+            ReasonCode.DEGRADE_VALUE_FORMAT_NAME_UNKNOWN,
+            "field `" + simpleName(field) + "` uses value_format_name `"
+                + name.get() + "`, which is not a known Looker named preset; "
+                + "it is emitted verbatim as the format_string and may not "
+                + "render as Looker intended (#115)")
+        .producedM4("emitted (format_string verbatim)")
+        .lostCapability("unknown named format may not render correctly")
+        .build());
   }
 
   // --- shared refusal guards (apply to any field) ------------------------
