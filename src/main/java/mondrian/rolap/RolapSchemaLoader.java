@@ -2058,8 +2058,13 @@ public class RolapSchemaLoader {
         // (We cannot do this in the constructor,
         // because cannot parse the generated query,
         // because the schema has not been set in the cube at this point.)
+        List<MondrianDef.CalculatedMember> calcMembers =
+            new ArrayList<MondrianDef.CalculatedMember>(
+                xmlCube.getCalculatedMembers());
+        calcMembers.addAll(
+            desugarTimeCalcs(xmlCube.getTimeCalcs(), measureList, cube));
         createCalcMembersAndNamedSets(
-            xmlCube.getCalculatedMembers(),
+            calcMembers,
             xmlCube.getNamedSets(),
             measureList,
             cube.calculatedMemberList,
@@ -5279,6 +5284,62 @@ public class RolapSchemaLoader {
                 "Error while creating cube from XML [" + xml + "]");
         }
         return cube;
+    }
+
+    /**
+     * #112: desugar a cube's &lt;TimeCalc&gt; declarations into calculated
+     * members on [Measures]. Validates the base measure exists and a typed Time
+     * dimension is resolvable; fails closed at load otherwise.
+     */
+    private List<MondrianDef.CalculatedMember> desugarTimeCalcs(
+        List<MondrianDef.TimeCalc> xmlTimeCalcs,
+        List<RolapMember> measureList,
+        RolapCube cube)
+    {
+        List<MondrianDef.CalculatedMember> out =
+            new ArrayList<MondrianDef.CalculatedMember>();
+        if (xmlTimeCalcs == null || xmlTimeCalcs.isEmpty()) {
+            return out;
+        }
+        for (MondrianDef.TimeCalc tc : xmlTimeCalcs) {
+            // Base measure must exist.
+            boolean found = false;
+            for (RolapMember m : measureList) {
+                if (m.getName().equals(tc.measure)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                throw new MondrianException(
+                    "TimeCalc '" + tc.name + "': measure '" + tc.measure
+                    + "' not found in cube '" + cube.getName() + "'");
+            }
+            // Resolve the time hierarchy + year level.
+            mondrian.olap.Level yearLevel = cube.getTimeLevel(
+                org.olap4j.metadata.Level.Type.TIME_YEARS);
+            if (yearLevel == null) {
+                throw new MondrianException(
+                    "TimeCalc '" + tc.name + "': cube '" + cube.getName()
+                    + "' has no Time dimension with a TimeYears level");
+            }
+            String timeHierarchy =
+                yearLevel.getHierarchy().getUniqueName();
+            String measureUniqueName = "[Measures].[" + tc.measure + "]";
+            String formula = TimeCalcDesugarer.formula(
+                tc.type, measureUniqueName, timeHierarchy,
+                yearLevel.getUniqueName(),
+                tc.window, tc.function);
+
+            MondrianDef.CalculatedMember cm =
+                new MondrianDef.CalculatedMember();
+            cm.name = tc.name;
+            cm.dimension = "Measures";
+            cm.formula = formula;
+            cm.formatString = tc.formatString;
+            out.add(cm);
+        }
+        return out;
     }
 
     /**
