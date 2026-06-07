@@ -5303,33 +5303,28 @@ public class RolapSchemaLoader {
         }
         for (MondrianDef.TimeCalc tc : xmlTimeCalcs) {
             // Base measure must exist.
-            boolean found = false;
-            for (RolapMember m : measureList) {
-                if (m.getName().equals(tc.measure)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
+            if (findMeasure(measureList, tc.measure) == null) {
                 throw new MondrianException(
                     "TimeCalc '" + tc.name + "': measure '" + tc.measure
                     + "' not found in cube '" + cube.getName() + "'");
             }
             // Resolve the time hierarchy + year level.
-            mondrian.olap.Level yearLevel = cube.getTimeLevel(
-                org.olap4j.metadata.Level.Type.TIME_YEARS);
-            if (yearLevel == null) {
-                throw new MondrianException(
-                    "TimeCalc '" + tc.name + "': cube '" + cube.getName()
-                    + "' has no Time dimension with a TimeYears level");
-            }
+            mondrian.olap.Level yearLevel =
+                resolveYearLevel(cube, tc.timeDimension, tc.name);
             String timeHierarchy =
                 yearLevel.getHierarchy().getUniqueName();
             String measureUniqueName = "[Measures].[" + tc.measure + "]";
-            String formula = TimeCalcDesugarer.formula(
-                tc.type, measureUniqueName, timeHierarchy,
-                yearLevel.getUniqueName(),
-                tc.window, tc.function);
+            String formula;
+            try {
+                formula = TimeCalcDesugarer.formula(
+                    tc.type, measureUniqueName, timeHierarchy,
+                    yearLevel.getUniqueName(),
+                    tc.window, tc.function);
+            } catch (IllegalArgumentException e) {
+                throw new MondrianException(
+                    "TimeCalc '" + tc.name + "' in cube '" + cube.getName()
+                    + "': " + e.getMessage());
+            }
 
             MondrianDef.CalculatedMember cm =
                 new MondrianDef.CalculatedMember();
@@ -5340,6 +5335,41 @@ public class RolapSchemaLoader {
             out.add(cm);
         }
         return out;
+    }
+
+    /**
+     * #112: resolve the TimeYears level of the cube's Time dimension. Honors an
+     * explicit {@code timeDimension} name; otherwise uses the first TIME
+     * dimension. Fails closed if none matches.
+     */
+    private mondrian.olap.Level resolveYearLevel(
+        RolapCube cube, String timeDimension, String tcName)
+    {
+        for (mondrian.olap.Dimension dim : cube.getDimensionList()) {
+            if (dim.getDimensionType()
+                != org.olap4j.metadata.Dimension.Type.TIME)
+            {
+                continue;
+            }
+            if (timeDimension != null
+                && !Util.equalName(dim.getName(), timeDimension))
+            {
+                continue;
+            }
+            for (mondrian.olap.Hierarchy h : dim.getHierarchyList()) {
+                for (mondrian.olap.Level lvl : h.getLevelList()) {
+                    if (lvl.getLevelType()
+                        == org.olap4j.metadata.Level.Type.TIME_YEARS)
+                    {
+                        return lvl;
+                    }
+                }
+            }
+        }
+        throw new MondrianException(
+            "TimeCalc '" + tcName + "': no Time dimension"
+            + (timeDimension == null ? "" : " named '" + timeDimension + "'")
+            + " with a TimeYears level in cube '" + cube.getName() + "'");
     }
 
     /**
