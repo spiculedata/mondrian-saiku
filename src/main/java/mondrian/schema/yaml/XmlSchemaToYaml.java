@@ -244,6 +244,13 @@ public final class XmlSchemaToYaml {
             if (!cms.isEmpty()) {
                 body.put("calculated_members", cms);
             }
+            List<Map<String, Object>> tcs = new ArrayList<>();
+            for (Element tc : directChildren(c, "TimeCalc")) {
+                tcs.add(toTimeCalc(tc));
+            }
+            if (!tcs.isEmpty()) {
+                body.put("time_calcs", tcs);
+            }
             List<Map<String, Object>> ns = collectNamedSets(c);
             if (!ns.isEmpty()) {
                 body.put("named_sets", ns);
@@ -576,6 +583,18 @@ public final class XmlSchemaToYaml {
             }
             m.put("properties", pmap);
         }
+        return m;
+    }
+
+    private static Map<String, Object> toTimeCalc(Element tc) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        putAttrIfPresent(m, tc, "name", "name");
+        putAttrIfPresent(m, tc, "type", "type");
+        putAttrIfPresent(m, tc, "measure", "measure");
+        putAttrIfPresent(m, tc, "timeDimension", "time_dimension");
+        putAttrIfPresent(m, tc, "window", "window");
+        putAttrIfPresent(m, tc, "function", "function");
+        putAttrIfPresent(m, tc, "formatString", "format_string");
         return m;
     }
 

@@ -2058,8 +2058,13 @@ public class RolapSchemaLoader {
         // (We cannot do this in the constructor,
         // because cannot parse the generated query,
         // because the schema has not been set in the cube at this point.)
+        List<MondrianDef.CalculatedMember> calcMembers =
+            new ArrayList<MondrianDef.CalculatedMember>(
+                xmlCube.getCalculatedMembers());
+        calcMembers.addAll(
+            desugarTimeCalcs(xmlCube.getTimeCalcs(), measureList, cube));
         createCalcMembersAndNamedSets(
-            xmlCube.getCalculatedMembers(),
+            calcMembers,
             xmlCube.getNamedSets(),
             measureList,
             cube.calculatedMemberList,
@@ -5279,6 +5284,92 @@ public class RolapSchemaLoader {
                 "Error while creating cube from XML [" + xml + "]");
         }
         return cube;
+    }
+
+    /**
+     * #112: desugar a cube's &lt;TimeCalc&gt; declarations into calculated
+     * members on [Measures]. Validates the base measure exists and a typed Time
+     * dimension is resolvable; fails closed at load otherwise.
+     */
+    private List<MondrianDef.CalculatedMember> desugarTimeCalcs(
+        List<MondrianDef.TimeCalc> xmlTimeCalcs,
+        List<RolapMember> measureList,
+        RolapCube cube)
+    {
+        List<MondrianDef.CalculatedMember> out =
+            new ArrayList<MondrianDef.CalculatedMember>();
+        if (xmlTimeCalcs == null || xmlTimeCalcs.isEmpty()) {
+            return out;
+        }
+        for (MondrianDef.TimeCalc tc : xmlTimeCalcs) {
+            // Base measure must exist.
+            if (findMeasure(measureList, tc.measure) == null) {
+                throw new MondrianException(
+                    "TimeCalc '" + tc.name + "': measure '" + tc.measure
+                    + "' not found in cube '" + cube.getName() + "'");
+            }
+            // Resolve the time hierarchy + year level.
+            mondrian.olap.Level yearLevel =
+                resolveYearLevel(cube, tc.timeDimension, tc.name);
+            String timeHierarchy =
+                yearLevel.getHierarchy().getUniqueName();
+            String measureUniqueName = "[Measures].[" + tc.measure + "]";
+            String formula;
+            try {
+                formula = TimeCalcDesugarer.formula(
+                    tc.type, measureUniqueName, timeHierarchy,
+                    yearLevel.getUniqueName(),
+                    tc.window, tc.function);
+            } catch (IllegalArgumentException e) {
+                throw new MondrianException(
+                    "TimeCalc '" + tc.name + "' in cube '" + cube.getName()
+                    + "': " + e.getMessage());
+            }
+
+            MondrianDef.CalculatedMember cm =
+                new MondrianDef.CalculatedMember();
+            cm.name = tc.name;
+            cm.dimension = "Measures";
+            cm.formula = formula;
+            cm.formatString = tc.formatString;
+            out.add(cm);
+        }
+        return out;
+    }
+
+    /**
+     * #112: resolve the TimeYears level of the cube's Time dimension. Honors an
+     * explicit {@code timeDimension} name; otherwise uses the first TIME
+     * dimension. Fails closed if none matches.
+     */
+    private mondrian.olap.Level resolveYearLevel(
+        RolapCube cube, String timeDimension, String tcName)
+    {
+        for (mondrian.olap.Dimension dim : cube.getDimensionList()) {
+            if (dim.getDimensionType()
+                != org.olap4j.metadata.Dimension.Type.TIME)
+            {
+                continue;
+            }
+            if (timeDimension != null
+                && !Util.equalName(dim.getName(), timeDimension))
+            {
+                continue;
+            }
+            for (mondrian.olap.Hierarchy h : dim.getHierarchyList()) {
+                for (mondrian.olap.Level lvl : h.getLevelList()) {
+                    if (lvl.getLevelType()
+                        == org.olap4j.metadata.Level.Type.TIME_YEARS)
+                    {
+                        return lvl;
+                    }
+                }
+            }
+        }
+        throw new MondrianException(
+            "TimeCalc '" + tcName + "': no Time dimension"
+            + (timeDimension == null ? "" : " named '" + timeDimension + "'")
+            + " with a TimeYears level in cube '" + cube.getName() + "'");
     }
 
     /**
