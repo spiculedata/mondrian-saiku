@@ -61,6 +61,10 @@ final class M4CubeBuilder {
         if (nss instanceof List && !((List<?>) nss).isEmpty()) {
             cubeKids.add(buildNamedSets((List<?>) nss));
         }
+        Object tcs = body.get("time_calcs");
+        if (tcs instanceof List && !((List<?>) tcs).isEmpty()) {
+            cubeKids.add(buildTimeCalcs((List<?>) tcs));
+        }
         if (!cubeKids.isEmpty()) {
             cube.childArray = cubeKids.toArray(new MondrianDef.CubeElement[0]);
         }
@@ -163,6 +167,35 @@ final class M4CubeBuilder {
         ns.name = M4YamlToXml.str(m.get("name"));
         ns.formula = M4YamlToXml.str(m.get("formula"));
         return ns;
+    }
+
+    // ---- time calcs ----
+
+    private static MondrianDef.TimeCalcs buildTimeCalcs(List<?> list) {
+        MondrianDef.TimeCalcs wrapper = new MondrianDef.TimeCalcs();
+        List<MondrianDef.TimeCalc> tcs = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map) {
+                tcs.add(buildTimeCalc((Map<?, ?>) item));
+            }
+        }
+        wrapper.array = tcs.toArray(new MondrianDef.TimeCalc[0]);
+        return wrapper;
+    }
+
+    private static MondrianDef.TimeCalc buildTimeCalc(Map<?, ?> m) {
+        MondrianDef.TimeCalc tc = new MondrianDef.TimeCalc();
+        tc.name = M4YamlToXml.str(m.get("name"));
+        tc.type = M4YamlToXml.str(m.get("type"));
+        tc.measure = M4YamlToXml.str(m.get("measure"));
+        tc.timeDimension = M4YamlToXml.str(m.get("time_dimension"));
+        Object w = m.get("window");
+        if (w != null) {
+            tc.window = Integer.valueOf(String.valueOf(w));
+        }
+        tc.function = M4YamlToXml.str(m.get("function"));
+        tc.formatString = M4YamlToXml.str(m.get("format_string"));
+        return tc;
     }
 
     // ---- private cube helpers ----

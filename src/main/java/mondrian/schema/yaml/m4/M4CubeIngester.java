@@ -45,6 +45,7 @@ final class M4CubeIngester {
             List<Object> mgList = null;
             List<Object> cmList = null;
             List<Object> nsList = null;
+            List<Object> tcList = null;
             for (MondrianDef.CubeElement ce : c.childArray) {
                 if (ce instanceof MondrianDef.Annotations) {
                     annMap = M4XmlToYaml.annotations((MondrianDef.Annotations) ce);
@@ -56,6 +57,8 @@ final class M4CubeIngester {
                     cmList = calculatedMembers((MondrianDef.CalculatedMembers) ce);
                 } else if (ce instanceof MondrianDef.NamedSets) {
                     nsList = namedSets((MondrianDef.NamedSets) ce);
+                } else if (ce instanceof MondrianDef.TimeCalcs) {
+                    tcList = timeCalcs((MondrianDef.TimeCalcs) ce);
                 }
             }
             // Annotations placed first (after default_measure, before dimensions)
@@ -73,6 +76,9 @@ final class M4CubeIngester {
             }
             if (nsList != null && !nsList.isEmpty()) {
                 out.put("named_sets", nsList);
+            }
+            if (tcList != null && !tcList.isEmpty()) {
+                out.put("time_calcs", tcList);
             }
         }
         return out;
@@ -224,6 +230,38 @@ final class M4CubeIngester {
         }
         if (formula != null) {
             out.put("formula", formula);
+        }
+        return out;
+    }
+
+    // ---- time calcs ----
+
+    private static List<Object> timeCalcs(MondrianDef.TimeCalcs wrapper) {
+        List<Object> out = new ArrayList<>();
+        if (wrapper.array != null) {
+            for (MondrianDef.TimeCalc tc : wrapper.array) {
+                out.add(timeCalc(tc));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> timeCalc(MondrianDef.TimeCalc tc) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", tc.name);
+        out.put("type", tc.type);
+        out.put("measure", tc.measure);
+        if (tc.timeDimension != null) {
+            out.put("time_dimension", tc.timeDimension);
+        }
+        if (tc.window != null) {
+            out.put("window", tc.window);
+        }
+        if (tc.function != null) {
+            out.put("function", tc.function);
+        }
+        if (tc.formatString != null) {
+            out.put("format_string", tc.formatString);
         }
         return out;
     }
