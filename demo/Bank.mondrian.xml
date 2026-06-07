@@ -264,6 +264,7 @@
       <Attribute name="Month" levelType="TimeMonths" hasHierarchy="false">
         <Key><Column name="month_key"/></Key>
         <Name><Column name="month_name"/></Name>
+        <OrderBy><Column name="month_key"/></OrderBy>
       </Attribute>
     </Attributes>
     <Hierarchies>
