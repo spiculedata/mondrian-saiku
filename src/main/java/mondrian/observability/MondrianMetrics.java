@@ -46,6 +46,15 @@ import io.opentelemetry.api.metrics.Meter;
  *       legacy SQL. Attribute {@code mondrian.calcite.fallback.site}
  *       identifies which code path tripped (segment-load / tuple-read
  *       / drillthrough). Pairs with #10 audit work.</li>
+ *   <li>{@code mondrian.calcite.divergence} — counter, incremented when
+ *       the opt-in parity guard (#90) ran BOTH the legacy and the Calcite
+ *       SQL for the same segment load and they returned different
+ *       results — the "valid-but-wrong SQL" class the exception-based
+ *       fallback cannot catch. Attributes
+ *       {@code mondrian.calcite.divergence.site} (e.g. {@code segment-load})
+ *       and {@code mondrian.calcite.divergence.detail} — a LOW-CARDINALITY
+ *       category only ({@code row-count} / {@code cell-count} /
+ *       {@code cell-value}); never raw values, member names, or SQL.</li>
  * </ul>
  *
  * <h3>Hot-path care</h3>
@@ -79,6 +88,7 @@ public final class MondrianMetrics {
     private static volatile LongCounter cacheSegmentHits;
     private static volatile LongCounter cacheSegmentMisses;
     private static volatile LongCounter calciteFallback;
+    private static volatile LongCounter calciteDivergence;
 
     private MondrianMetrics() {}
 
@@ -208,6 +218,53 @@ public final class MondrianMetrics {
     }
 
     /**
+     * #90 divergence guard counter. Incremented when the opt-in parity
+     * check ({@code -Dmondrian.calcite.parityCheck=true}) ran the legacy
+     * and the Calcite SQL for the SAME segment load and the two result
+     * sets disagreed — the silent "valid-but-wrong SQL" class that the
+     * exception-based {@link #calciteFallback()} cannot catch.
+     */
+    public static LongCounter calciteDivergence() {
+        LongCounter c = calciteDivergence;
+        if (c == null) {
+            c = meter().counterBuilder("mondrian.calcite.divergence")
+                .setDescription(
+                    "Segment loads where the opt-in parity guard found the "
+                    + "Calcite and legacy SQL returned different results")
+                .setUnit("{divergence}")
+                .build();
+            calciteDivergence = c;
+        }
+        return c;
+    }
+
+    /**
+     * Convenience: increment {@link #calciteDivergence()} with the
+     * standard {@code site} + {@code detail} attribute pair. Swallows
+     * exceptions internally — telemetry must never break a query.
+     *
+     * <p>SECURITY / cardinality: {@code detail} MUST be a low-cardinality
+     * category only — e.g. {@code row-count}, {@code cell-count},
+     * {@code cell-value}. NEVER pass raw cell values, member names, or SQL
+     * text: that would leak PII and blow up the metric's cardinality.
+     *
+     * @param site   where the divergence was detected (e.g.
+     *               {@code segment-load})
+     * @param detail the low-cardinality divergence category
+     */
+    public static void recordCalciteDivergence(String site, String detail) {
+        try {
+            calciteDivergence().add(1,
+                io.opentelemetry.api.common.Attributes.of(
+                    io.opentelemetry.api.common.AttributeKey.stringKey(
+                        "mondrian.calcite.divergence.site"), site,
+                    io.opentelemetry.api.common.AttributeKey.stringKey(
+                        "mondrian.calcite.divergence.detail"),
+                    detail == null ? "unknown" : detail));
+        } catch (RuntimeException ignored) { }
+    }
+
+    /**
      * Test-only: drop the cached Meter + instruments. After this call,
      * the next instrument access resolves against the (possibly newly
      * registered) {@link GlobalOpenTelemetry} provider. Lets tests
@@ -222,6 +279,7 @@ public final class MondrianMetrics {
         cacheSegmentHits = null;
         cacheSegmentMisses = null;
         calciteFallback = null;
+        calciteDivergence = null;
     }
 }
 

@@ -173,6 +173,44 @@ public class MondrianMetricsTest {
         assertTrue("expected segment-load fallback point", foundSegmentLoad);
     }
 
+    /**
+     * #90: the Calcite divergence counter helper increments cleanly and
+     * attaches the site + (low-cardinality) detail attributes the
+     * dashboards group by.
+     */
+    @Test
+    public void recordCalciteDivergenceIncrementsCounter() {
+        MondrianMetrics.recordCalciteDivergence("segment-load", "cell-value");
+        MondrianMetrics.recordCalciteDivergence("segment-load", "row-count");
+
+        Collection<MetricData> metrics = reader.collectAllMetrics();
+        MetricData divergence =
+            findMetric(metrics, "mondrian.calcite.divergence");
+        assertNotNull(
+            "expected mondrian.calcite.divergence counter — got: " + metrics,
+            divergence);
+        long total = sumLongCounter(divergence);
+        assertTrue(
+            "expected divergence counter >= 2 — got " + total,
+            total >= 2L);
+
+        boolean foundSite = false;
+        boolean foundCellValueDetail = false;
+        boolean foundRowCountDetail = false;
+        for (LongPointData p : divergence.getLongSumData().getPoints()) {
+            String site = p.getAttributes().get(
+                AttributeKey.stringKey("mondrian.calcite.divergence.site"));
+            String detail = p.getAttributes().get(
+                AttributeKey.stringKey("mondrian.calcite.divergence.detail"));
+            if ("segment-load".equals(site)) foundSite = true;
+            if ("cell-value".equals(detail)) foundCellValueDetail = true;
+            if ("row-count".equals(detail)) foundRowCountDetail = true;
+        }
+        assertTrue("expected segment-load divergence site", foundSite);
+        assertTrue("expected cell-value detail point", foundCellValueDetail);
+        assertTrue("expected row-count detail point", foundRowCountDetail);
+    }
+
     // ---------- helpers ----------
 
     private static MetricData findMetric(
