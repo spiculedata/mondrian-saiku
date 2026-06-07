@@ -153,4 +153,27 @@ public class BankShowcaseH2EndToEndTest {
             mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         }
     }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"xml", "yaml"})
+    public void memberGrantRowSecurityBySegment(String form) {
+        // Premium customers: alice, bob, erin, grace. Accounts with >=1 Premium
+        // owner: 1(alice/bob),2(bob),3(alice/carol),4(erin/frank),6(grace/heidi),
+        // 7(erin/grace). Account 5 (frank only=Standard) and 8 (heidi only) are
+        // excluded. Full-count de-duped balance over visible-owner accounts:
+        // 1000+500+300+2000+700+4000 = 8500.
+        Connection premium = connect(form, "Premium", null);
+        Connection all = connect(form, null, null);
+        try {
+            String mdx = "SELECT {[Measures].[Balance]} ON COLUMNS"
+                + " FROM [Joint Accounts (Full Count)]";
+            assertEquals(8500.0, scalar(premium, mdx), 0.001,
+                "Premium role excludes Standard-only accounts (5,8)");
+            assertEquals(13000.0, scalar(all, mdx), 0.001,
+                "ungranted sees the full 13000");
+        } finally {
+            premium.close(); all.close();
+            mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
+        }
+    }
 }

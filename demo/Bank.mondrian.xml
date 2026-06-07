@@ -217,4 +217,18 @@
     </SchemaGrant>
   </Role>
 
+  <!-- Member/Hierarchy-grant row-security (#107) on the bridge dimension:
+       the Premium role sees only Premium-segment customers; the bridge
+       fan-out is constrained to visible owners (Standard-only accounts drop). -->
+  <Role name="Premium">
+    <SchemaGrant access="all">
+      <CubeGrant cube="Joint Accounts (Full Count)" access="all">
+        <HierarchyGrant hierarchy="[Customer].[By Segment]" access="custom"
+                        bottomLevel="[Customer].[By Segment].[Customer]">
+          <MemberGrant member="[Customer].[By Segment].[Premium]" access="all"/>
+        </HierarchyGrant>
+      </CubeGrant>
+    </SchemaGrant>
+  </Role>
+
 </Schema>
