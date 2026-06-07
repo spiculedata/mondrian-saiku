@@ -244,6 +244,8 @@ public class SegmentLoader {
                 final boolean securedLoad =
                     CalcitePlannerAdapters.isPredicateSecuredLoad(segs, star)
                     || CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
+                        segs, star)
+                    || CalcitePlannerAdapters.touchesCurrencyConversion(
                         segs, star);
                 CalciteSqlPlanner planner = plannerFor(star);
                 if (securedLoad && planner == null) {
@@ -825,6 +827,9 @@ public class SegmentLoader {
                     groupingSetsList.getDefaultSegments(), star)
                 || mondrian.calcite.CalcitePlannerAdapters
                     .isBridgeMemberSecuredLoad(
+                        groupingSetsList.getDefaultSegments(), star)
+                || mondrian.calcite.CalcitePlannerAdapters
+                    .touchesCurrencyConversion(
                         groupingSetsList.getDefaultSegments(), star)))
         {
             throw new MondrianException(
@@ -921,6 +926,8 @@ public class SegmentLoader {
                     CalcitePlannerAdapters.isPredicateSecuredLoad(
                         groupingSetsList.getDefaultSegments(), star)
                     || CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
+                        groupingSetsList.getDefaultSegments(), star)
+                    || CalcitePlannerAdapters.touchesCurrencyConversion(
                         groupingSetsList.getDefaultSegments(), star);
                 CalciteSqlPlanner planner = plannerFor(star);
                 if (securedLoad && planner == null) {
@@ -1004,6 +1011,8 @@ public class SegmentLoader {
                 && !CalcitePlannerAdapters.isPredicateSecuredLoad(
                     groupingSetsList.getDefaultSegments(), star)
                 && !CalcitePlannerAdapters.isBridgeMemberSecuredLoad(
+                    groupingSetsList.getDefaultSegments(), star)
+                && !CalcitePlannerAdapters.touchesCurrencyConversion(
                     groupingSetsList.getDefaultSegments(), star)
                 && !CalcitePlannerAdapters.isCalciteOnlyAggregation(
                     groupingSetsList.getDefaultSegments()))
