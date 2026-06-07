@@ -931,6 +931,7 @@ version 3.x schemas.</p>
                     MeasureGroups.class,
                     Dimensions.class,
                     CalculatedMembers.class,
+                    TimeCalcs.class,
                     NamedSets.class)
                 {
                     CubeElement[] getArray() {
@@ -948,6 +949,9 @@ version 3.x schemas.</p>
             }
             public NamedList<CalculatedMember> getCalculatedMembers() {
                 return children.only(CalculatedMembers.EMPTY).list();
+            }
+            public NamedList<TimeCalc> getTimeCalcs() {
+                return children.only(TimeCalcs.EMPTY).list();
             }
             public NamedList<NamedSet> getNamedSets() {
                 return children.only(NamedSets.EMPTY).list();
@@ -1809,6 +1813,83 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                         }
                     }
                 );
+            }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="TimeCalcs" class="Holder,CubeElement">
+        <Doc>
+            Collection of TimeCalc elements (#112 declarative time intelligence).
+        </Doc>
+        <Array name="array" type="TimeCalc"/>
+        <Code>
+            <![CDATA[
+            private static final TimeCalcs EMPTY;
+            static {
+                EMPTY = new TimeCalcs();
+                EMPTY.array = new TimeCalc[0];
+            }
+            public TimeCalcs copy() {
+                TimeCalcs c = new TimeCalcs();
+                c.array = array.clone();
+                return c;
+            }
+            public NamedList<TimeCalc> list() {
+                return new NamedListImpl<TimeCalc>(
+                    new MutableArrayList<TimeCalc>() {
+                        protected TimeCalc[] getArray() {
+                            return array == null ? EMPTY.array : array;
+                        }
+                        protected void setArray(TimeCalc[] ts) {
+                            array = ts;
+                        }
+                    }
+                );
+            }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="TimeCalc" class="NamedElement">
+        <Doc>
+            A declarative time-intelligence metric (#112). Desugars at load into
+            a calculated member on [Measures].
+        </Doc>
+        <Attribute name="name" required="true">
+            <Doc>Name of the generated calculated member.</Doc>
+        </Attribute>
+        <Attribute name="type" required="true">
+            <Doc>One of yoy, pop, ytd, rolling.</Doc>
+            <Value>yoy</Value>
+            <Value>pop</Value>
+            <Value>ytd</Value>
+            <Value>rolling</Value>
+        </Attribute>
+        <Attribute name="measure" required="true">
+            <Doc>The base measure this metric is computed from.</Doc>
+        </Attribute>
+        <Attribute name="timeDimension">
+            <Doc>
+                The Time dimension to navigate. Defaults to the cube's single
+                dimension of type="TIME"; required if there is more than one.
+            </Doc>
+        </Attribute>
+        <Attribute name="window" type="Integer">
+            <Doc>Number of periods for type="rolling". Required for rolling.</Doc>
+        </Attribute>
+        <Attribute name="function">
+            <Doc>Aggregation for type="rolling": sum (default) or avg.</Doc>
+            <Value>sum</Value>
+            <Value>avg</Value>
+        </Attribute>
+        <Attribute name="formatString">
+            <Doc>FORMAT_STRING property for the generated member.</Doc>
+        </Attribute>
+        <Code>
+            <![CDATA[
+            public String getNameAttribute() {
+                return name;
             }
             ]]>
         </Code>

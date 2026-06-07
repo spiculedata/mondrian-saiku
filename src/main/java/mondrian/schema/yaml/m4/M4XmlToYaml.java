@@ -453,6 +453,13 @@ public final class M4XmlToYaml {
         }
         if (a.orderByColumn != null) {
             out.put("order_by_column", a.orderByColumn);
+        } else {
+            // Fall back to <OrderBy> child element (single-column form)
+            MondrianDef.OrderBy orderByChild = findOrderByChild(a.childArray);
+            if (orderByChild != null && orderByChild.array != null
+                    && orderByChild.array.length == 1) {
+                out.put("order_by_column", orderByChild.array[0].name);
+            }
         }
         // #108: native tier / duration child elements.
         MondrianDef.Tier tier = findTierChild(a.childArray);
@@ -558,6 +565,20 @@ public final class M4XmlToYaml {
         for (MondrianDef.AttributeElement ae : kids) {
             if (ae instanceof MondrianDef.Duration) {
                 return (MondrianDef.Duration) ae;
+            }
+        }
+        return null;
+    }
+
+    private static MondrianDef.OrderBy findOrderByChild(
+        MondrianDef.AttributeElement[] kids)
+    {
+        if (kids == null) {
+            return null;
+        }
+        for (MondrianDef.AttributeElement ae : kids) {
+            if (ae instanceof MondrianDef.OrderBy) {
+                return (MondrianDef.OrderBy) ae;
             }
         }
         return null;

@@ -295,6 +295,9 @@ public final class YamlSchemaConverter {
         for (Object cm : listOrEmpty(c, "calculated_members")) {
             emitCalculatedMember(buf, (Map<?, ?>) cm);
         }
+        for (Object tc : listOrEmpty(c, "time_calcs")) {
+            emitTimeCalc(buf, (Map<?, ?>) tc);
+        }
         for (Object ns : listOrEmpty(c, "named_sets")) {
             emitNamedSet(buf, (Map<?, ?>) ns, "    ");
         }
@@ -729,6 +732,18 @@ public final class YamlSchemaConverter {
             }
         }
         buf.append("    </CalculatedMember>\n");
+    }
+
+    private static void emitTimeCalc(StringBuilder buf, Map<?, ?> tc) {
+        buf.append("    <TimeCalc");
+        attrIfPresent(buf, tc, "name", "name");
+        attrIfPresent(buf, tc, "type", "type");
+        attrIfPresent(buf, tc, "measure", "measure");
+        attrIfPresent(buf, tc, "time_dimension", "timeDimension");
+        attrIfPresent(buf, tc, "window", "window");
+        attrIfPresent(buf, tc, "function", "function");
+        attrIfPresent(buf, tc, "format_string", "formatString");
+        buf.append("/>\n");
     }
 
     /**
