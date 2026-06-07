@@ -967,6 +967,34 @@ public class SegmentLoader {
             // calciteSql == null => dialect not in Calcite map for this
             // datasource; fall back to the legacy sql string already in
             // `sql` from pair.left.
+
+            // #90 divergence guard: when the opt-in parity check is enabled
+            // and a *distinct* Calcite SQL was actually chosen (sql != legacy
+            // pair.left), run the legacy SQL alongside it and compare the
+            // JDBC row-sets. Guarded behind a single cheap boolean so there's
+            // zero hot-path cost when disabled. SAFETY: NEVER run the legacy
+            // comparison for a predicate-secured load — the legacy generator
+            // drops the row-security filter, so running it would leak rows.
+            // #90 CORRECTNESS: also skip any Calcite-only-correct aggregation
+            // (distinct grain #119, median/percentile #104). For these the
+            // legacy generator does NOT throw — it emits a plain aggregate
+            // that ignores the Calcite-only semantics and RUNS, returning a
+            // different-by-design number (e.g. legacy 950 vs Calcite's correct
+            // de-duped 450). Comparing would record a FALSE divergence (and
+            // strict mode would THROW on a correct result). The bridge /
+            // symmetric-grain case (#103/#107) is covered by the guard's
+            // "legacy threw → skip" path (bridge legacy refuses).
+            if (CalciteParityGuard.isEnabled()
+                && calciteSql != null
+                && !calciteSql.equals(pair.left)
+                && !CalcitePlannerAdapters.isPredicateSecuredLoad(
+                    groupingSetsList.getDefaultSegments(), star)
+                && !CalcitePlannerAdapters.isCalciteOnlyAggregation(
+                    groupingSetsList.getDefaultSegments()))
+            {
+                CalciteParityGuard.compare(
+                    star.getDataSource(), pair.left, calciteSql);
+            }
         }
 
         try {

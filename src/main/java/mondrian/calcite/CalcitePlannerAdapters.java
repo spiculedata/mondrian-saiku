@@ -3990,6 +3990,69 @@ public final class CalcitePlannerAdapters {
     }
 
     /**
+     * #90 divergence-guard correctness gate: whether a segment load carries a
+     * Calcite-only-<em>correct</em> AGGREGATION whose legacy SQL does NOT throw
+     * but instead RUNS and returns a different-by-design number. For these the
+     * parity guard ({@link mondrian.rolap.agg.SegmentLoader}) MUST NOT run the
+     * legacy comparison: legacy emits a plain aggregate that ignores the
+     * Calcite-only semantics, so the comparison would record a FALSE
+     * {@code mondrian.calcite.divergence} (and, in strict mode, THROW on a
+     * correct result). The guard's "legacy threw → skip" path does NOT cover
+     * these because legacy does not throw — it silently mis-aggregates.
+     *
+     * <p>Returns {@code true} when ANY segment's measure is:
+     * <ul>
+     *   <li><b>#119 measure-level distinct grain</b> — a measure with a
+     *       non-null {@code distinctKeyColumn}
+     *       ({@link mondrian.rolap.RolapStar.Measure#getDistinctKeyColumn()}).
+     *       Legacy emits a plain {@code SUM(col)} (no DISTINCT de-dup), e.g.
+     *       950 while Calcite correctly returns the de-duped 450.</li>
+     *   <li><b>#104 median / percentile</b> — a non-additive aggregator
+     *       ({@link mondrian.rolap.RolapAggregator.PercentileAggregator},
+     *       covering both {@code median} and {@code percentile}); legacy may
+     *       emit different/invalid SQL.</li>
+     * </ul>
+     *
+     * <p>The #103/#107 bridge / symmetric-grain fan-out case is intentionally
+     * NOT detected here: the symmetric grain is derived during translation from
+     * the load's column list + join topology and is not cheaply available at
+     * the SegmentLoader call site without re-running translation. Bridge legacy
+     * SQL <em>refuses</em> (throws) to express the fan-out, so the guard's
+     * existing "legacy threw → not comparable → skip" path already covers it.
+     *
+     * <p>Conservative by design: when in doubt, SKIP. A missed comparison is
+     * harmless; a false divergence is not. See #90/#119/#104/#103.
+     *
+     * @param segments the load's segments
+     * @return {@code true} if any segment carries a Calcite-only-correct
+     *     aggregation (distinct grain or median/percentile)
+     */
+    public static boolean isCalciteOnlyAggregation(List<Segment> segments) {
+        if (segments == null) {
+            return false;
+        }
+        for (Segment seg : segments) {
+            RolapStar.Measure m = seg.aggMeasure;
+            if (m == null) {
+                continue;
+            }
+            // #119: measure-level distinct grain — legacy SUM ignores the
+            // de-dup and over-counts the fan-out.
+            if (m.getDistinctKeyColumn() != null) {
+                return true;
+            }
+            // #104: non-additive median / percentile leaf aggregate. Use the
+            // engine's own type marker rather than string-matching the name.
+            if (m.getAggregator()
+                instanceof RolapAggregator.PercentileAggregator)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * #106: apply a single predicate grant as a filter on the measure group's
      * real fact column. Fails closed (universalFalse) when the bound parameter
      * is not declared in the request's parameter context.
