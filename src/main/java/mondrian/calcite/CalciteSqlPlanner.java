@@ -751,20 +751,23 @@ public final class CalciteSqlPlanner {
             } else if (j.kind == PlannerRequest.JoinKind.BAND) {
                 // #112 currency-conversion rate join: equi on currency +
                 // rate_type, plus an effective-date interval band
-                // (fact.date >= valid_from AND fact.date < valid_to). The fact
-                // side is the LHS (input 0); the rate table is the RHS alias.
+                // (fact.date >= valid_from AND fact.date < valid_to). The
+                // fact-side fields are qualified by the fact alias
+                // (j.leftTable) so they resolve unambiguously even when a
+                // dimension join has brought in an identically-named column;
+                // the rate table is the RHS alias (j.dimTable).
                 b.join(JoinRelType.INNER, b.and(
                     b.equals(
-                        b.field(2, 0, j.factCurrencyKey),
+                        b.field(2, j.leftTable, j.factCurrencyKey),
                         b.field(2, j.dimTable, j.rateCurrencyCol)),
                     b.equals(
                         b.field(2, j.dimTable, j.rateTypeCol),
                         b.literal(j.rateTypeValue)),
                     b.greaterThanOrEqual(
-                        b.field(2, 0, j.factDateKey),
+                        b.field(2, j.leftTable, j.factDateKey),
                         b.field(2, j.dimTable, j.validFromCol)),
                     b.lessThan(
-                        b.field(2, 0, j.factDateKey),
+                        b.field(2, j.leftTable, j.factDateKey),
                         b.field(2, j.dimTable, j.validToCol))));
             } else {
                 // For single-hop joins (leftTable == null), the LHS is the

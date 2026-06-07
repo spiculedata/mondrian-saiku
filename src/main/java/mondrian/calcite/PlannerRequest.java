@@ -560,17 +560,23 @@ public final class PlannerRequest {
             this.rateTypeCol = null;
             this.rateTypeValue = null;
         }
-        /** #112 private band-join constructor (kind = BAND). */
+        /** #112 private band-join constructor (kind = BAND). {@code factAlias}
+         *  is stored in {@link #leftTable} so the renderer qualifies the
+         *  fact-side band fields against the fact table — robust whether the
+         *  band join is emitted before or after the dimension joins (e.g. the
+         *  fact date column would otherwise collide with a Calendar dim's
+         *  identically-named key). */
         private Join(
-            String rateTable, String physName, String factCurrencyKey,
-            String rateCurrencyCol, String factDateKey, String validFromCol,
-            String validToCol, String rateTypeCol, String rateTypeValue)
+            String factAlias, String rateTable, String physName,
+            String factCurrencyKey, String rateCurrencyCol, String factDateKey,
+            String validFromCol, String validToCol, String rateTypeCol,
+            String rateTypeValue)
         {
             this.dimTable = rateTable;
             this.factKey = null;
             this.dimKey = null;
             this.kind = JoinKind.BAND;
-            this.leftTable = null;
+            this.leftTable = factAlias;
             this.physName = physName;
             this.factCurrencyKey = factCurrencyKey;
             this.rateCurrencyCol = rateCurrencyCol;
@@ -582,13 +588,14 @@ public final class PlannerRequest {
         }
         /** #112 factory for a currency-conversion rate band join. */
         public static Join band(
-            String rateTable, String physName,
+            String factAlias, String rateTable, String physName,
             String factCurrencyKey, String rateCurrencyCol,
             String factDateKey, String validFromCol, String validToCol,
             String rateTypeCol, String rateTypeValue)
         {
-            return new Join(rateTable, physName, factCurrencyKey, rateCurrencyCol,
-                factDateKey, validFromCol, validToCol, rateTypeCol, rateTypeValue);
+            return new Join(factAlias, rateTable, physName, factCurrencyKey,
+                rateCurrencyCol, factDateKey, validFromCol, validToCol,
+                rateTypeCol, rateTypeValue);
         }
         /** Convenience factory for an unconditional CROSS JOIN. */
         public static Join cross(String dimTable) {
