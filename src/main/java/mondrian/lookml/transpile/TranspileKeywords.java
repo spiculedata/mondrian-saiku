@@ -53,6 +53,10 @@ final class TranspileKeywords {
   static final String TIERS = "tiers";
   static final String INTERVALS = "intervals";
   static final String PERCENTILE = "percentile";
+  // #119: the de-dup key on a sum_distinct / average_distinct measure.
+  static final String SQL_DISTINCT_KEY = "sql_distinct_key";
+  static final String TYPE_SUM_DISTINCT = "sum_distinct";
+  static final String TYPE_AVERAGE_DISTINCT = "average_distinct";
   static final String FIELD = "field";
   static final String USER_ATTRIBUTE = "user_attribute";
   static final String LABEL = "label";

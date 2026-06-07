@@ -3519,6 +3519,26 @@ public final class CalcitePlannerAdapters {
                         ((RolapSchema.PhysRealColumn) grain).name));
             }
         }
+
+        // #119 measure-level distinct grain: a SECOND, bridge-independent way
+        // to pin PlannerRequest.symmetricGrainColumn. When a measure declares
+        // its own de-dup key (distinctKeyColumn — the native form of LookML
+        // sum_distinct / average_distinct on a sql_distinct_key), the
+        // aggregation must de-duplicate the operand on that key before
+        // summing/averaging, exactly as the #103 bridge path does, but driven
+        // by the measure declaration rather than join topology. We reuse the
+        // identical emitSymmetricAggregate machinery downstream — the only new
+        // surface is setting the grain here from the measure key. The
+        // symmetric grain is request-wide and applies the DISTINCT to every
+        // measure operand, so we fail closed (UnsupportedTranslation → the
+        // load is not pushed down) unless the load is homogeneous: every
+        // measure in it declares the SAME distinct key, and no plain measure
+        // is mixed in (de-duping a plain SUM on someone else's key would be
+        // silently wrong). A heterogeneous load is split into per-measure
+        // segments by the caller, each of which is homogeneous.
+        if (bridgeWeight == null) {
+            applyMeasureLevelDistinctGrain(b, segments);
+        }
         // #107 weighted bridge: scale every measure's operand by this
         // bridge weight column — SUM(operand × weight) — whatever the
         // measure's shape (real column, CASE, arithmetic, literal). Null for
@@ -4502,6 +4522,69 @@ public final class CalcitePlannerAdapters {
             }
         }
         return null;
+    }
+
+    /**
+     * #119 measure-level distinct grain: if every segment in this load is a
+     * measure that declares the SAME {@code distinctKeyColumn}, pin
+     * {@link PlannerRequest.Builder#symmetricGrainColumn} from that key so
+     * {@code emitSymmetricAggregate} de-duplicates the operand on the key
+     * before aggregating — the bridge-free counterpart of {@link
+     * #findBridgeFanoutGrain}.
+     *
+     * <p>Fails closed: a load mixing a distinct-grain measure with a plain
+     * measure (de-duping a plain SUM would be silently wrong) or mixing two
+     * different distinct keys (the request-wide grain cannot satisfy both) is
+     * refused with {@link UnsupportedTranslation}, so the caller re-issues it
+     * as homogeneous per-measure segments. A bridge grain already pinned by
+     * the #103 path takes precedence and is left untouched (a bridge load
+     * never carries a measure-level distinct key in the corpus, but the guard
+     * keeps the two grains from clobbering each other).
+     */
+    private static void applyMeasureLevelDistinctGrain(
+        PlannerRequest.Builder b,
+        List<Segment> segments)
+    {
+        RolapSchema.PhysColumn distinctKey = null;
+        boolean anyDistinct = false;
+        boolean anyPlain = false;
+        for (Segment seg : segments) {
+            RolapSchema.PhysColumn k = seg.aggMeasure.getDistinctKeyColumn();
+            if (k == null) {
+                anyPlain = true;
+                continue;
+            }
+            anyDistinct = true;
+            if (distinctKey == null) {
+                distinctKey = k;
+            } else if (!distinctKey.equals(k)) {
+                throw new UnsupportedTranslation(
+                    "fromSegmentLoad: measures with different distinctKeyColumn "
+                    + "in one load (" + distinctKey + " vs " + k + ")");
+            }
+        }
+        if (!anyDistinct) {
+            return;
+        }
+        if (anyPlain) {
+            throw new UnsupportedTranslation(
+                "fromSegmentLoad: a distinct-grain measure cannot share a load "
+                + "with a plain measure (the request-wide DISTINCT would "
+                + "mis-aggregate the plain one)");
+        }
+        if (b.hasSymmetricGrainColumn()) {
+            // A bridge fan-out grain is already pinned; do not clobber it.
+            return;
+        }
+        if (!(distinctKey instanceof RolapSchema.PhysRealColumn)) {
+            throw new UnsupportedTranslation(
+                "fromSegmentLoad: distinctKeyColumn is not a real column: "
+                + distinctKey);
+        }
+        b.symmetricGrainColumn(
+            new PlannerRequest.Column(
+                distinctKey.relation.getAlias(),
+                ((RolapSchema.PhysRealColumn) distinctKey).name));
     }
 
     private static void ensureJoinedChain(

@@ -77,6 +77,19 @@ public class LookmlTranspilerTest {
     // payments by user: GB users (10,20) → 30+70+20 = 120; US user (30) → 80.
     "INSERT INTO \"payments\" VALUES"
         + " (1,10,30),(2,10,70),(3,20,20),(4,30,80)",
+    // #119: an already-fanned-out fact — one row per (basket, line), repeating
+    // the basket's amount on every line. A sum_distinct on basket_id must
+    // de-dup to the true per-basket total.
+    //   basket 1: amount 100, country GB, 3 lines
+    //   basket 2: amount 50,  country GB, 1 line
+    //   basket 3: amount 300, country US, 2 lines
+    //   distinct total = 450; naive SUM over the fan-out = 950
+    "DROP TABLE IF EXISTS \"basket_line\"",
+    "CREATE TABLE \"basket_line\" (\"basket_id\" INTEGER, \"line\" VARCHAR(4),"
+        + " \"country\" VARCHAR(8), \"amount\" INTEGER)",
+    "INSERT INTO \"basket_line\" VALUES"
+        + " (1,'a','GB',100),(1,'b','GB',100),(1,'c','GB',100),"
+        + " (2,'a','GB',50),(3,'a','US',300),(3,'b','US',300)",
   };
 
   /** The core fixture: single-base star, two clean measures + a filtered
@@ -228,9 +241,10 @@ public class LookmlTranspilerTest {
   }
 
   /** #117: a sum_distinct / average_distinct keyed on the base view primary
-   * key emits a plain SUM / AVG measure (de-dup is a no-op on the fact grain).
-   * A distinct-key measure whose key is NOT the primary key is refused and not
-   * emitted. */
+   * key emits a plain SUM / AVG measure (de-dup is a no-op on the fact grain),
+   * with NO distinct_key_column attribute. #119: a same-view non-PK distinct
+   * key emits the attribute (a measure-level distinct grain). A cross-view key
+   * is refused and not emitted. */
   @Test
   public void distinctKeyAggregatorMapping() {
     String lookml =
@@ -238,6 +252,7 @@ public class LookmlTranspilerTest {
         + "  sql_table_name: orders ;;\n"
         + "  dimension: id { type: number primary_key: yes"
         + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  dimension: basket { type: number sql: ${TABLE}.basket_id ;; }\n"
         + "  measure: total_d {\n"
         + "    type: sum_distinct\n"
         + "    sql_distinct_key: ${id} ;;\n"
@@ -246,6 +261,11 @@ public class LookmlTranspilerTest {
         + "  measure: avg_d {\n"
         + "    type: average_distinct\n"
         + "    sql_distinct_key: ${TABLE}.order_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "  measure: basket_d {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
         + "    sql: ${TABLE}.amount ;;\n"
         + "  }\n"
         + "  measure: bad_d {\n"
@@ -262,8 +282,58 @@ public class LookmlTranspilerTest {
     assertTrue(yaml.contains("aggregator: \"sum\""), yaml);
     assertTrue(yaml.contains("name: \"avg_d\""), yaml);
     assertTrue(yaml.contains("aggregator: \"avg\""), yaml);
-    // bad_d (non-PK distinct key) is refused: not emitted.
+    // #119: basket_d (same-view non-PK key) emits a distinct_key_column.
+    assertTrue(yaml.contains("name: \"basket_d\""), yaml);
+    assertTrue(yaml.contains("distinct_key_column: \"basket_id\""), yaml);
+    // PK-keyed measures collapse to plain agg: no distinct_key_column for the
+    // order_id key (only basket_id appears).
+    assertFalse(yaml.contains("distinct_key_column: \"order_id\""), yaml);
+    // bad_d (cross-view distinct key) is refused: not emitted.
     assertFalse(yaml.contains("bad_d"), yaml);
+  }
+
+  /** #119 end-to-end: a LookML sum_distinct on a same-view NON-PK key
+   * (basket_id) over an already-fanned-out fact transpiles to an M4
+   * measure-level distinct grain, loads, and returns the DE-DUPLICATED total
+   * (450), not the fanned-out one (950) — the exact case #117 could not do. */
+  @Test
+  public void endToEndDistinctGrainNonPrimaryKey() {
+    String lookml =
+        "view: baskets {\n"
+        + "  sql_table_name: basket_line ;;\n"
+        + "  dimension: country { type: string sql: ${TABLE}.country ;; }\n"
+        + "  measure: distinct_amount {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "  measure: naive_amount { type: sum sql: ${TABLE}.amount ;; }\n"
+        + "}\n"
+        + "explore: baskets { }\n";
+    TranspileResult result = transpile(lookml);
+    assertTrue(result.yaml().contains("distinct_key_column: \"basket_id\""),
+        result.yaml());
+    Connection conn = connect(result.toXml());
+    try {
+      // Distinct de-dups on basket_id: 100+50+300 = 450; naive double-counts.
+      assertEquals(450.0, scalar(conn,
+          "SELECT {[Measures].[distinct_amount]} ON COLUMNS FROM [baskets]"),
+          0.001, "distinct_amount de-dups to the true per-basket total");
+      assertEquals(950.0, scalar(conn,
+          "SELECT {[Measures].[naive_amount]} ON COLUMNS FROM [baskets]"),
+          0.001, "naive_amount double-counts the fanned-out rows");
+    } finally {
+      conn.close();
+    }
+  }
+
+  /** Single cell from a COLUMNS-only query. */
+  private Double scalar(Connection conn, String mdx) {
+    Query q = conn.parseQuery(mdx);
+    Result r = conn.execute(q);
+    Object v = r.getCell(new int[]{0}).getValue();
+    r.close();
+    return v == null ? null : ((Number) v).doubleValue();
   }
 
   // --- Test 3: filtered measure → calculated member -----------------------

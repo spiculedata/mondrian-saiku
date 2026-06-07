@@ -835,6 +835,16 @@ public class RolapStar {
         private final String cubeName;
         private final RolapAggregator aggregator;
         private final Dialect.Datatype datatype;
+        /** #119 measure-level distinct grain. When non-null, this measure
+         *  de-duplicates its operand on the distinct values of this column
+         *  before aggregating — the native form of LookML sum_distinct /
+         *  average_distinct on a sql_distinct_key. Resolved at load time
+         *  from the {@code distinctKeyColumn} attribute and consumed by
+         *  {@code CalcitePlannerAdapters.translateSegmentLoad}, which sets
+         *  {@code PlannerRequest.symmetricGrainColumn} from it
+         *  independently of bridge join topology. Null for ordinary
+         *  measures. */
+        private RolapSchema.PhysColumn distinctKeyColumn;
 
         public Measure(
             String name,
@@ -867,6 +877,20 @@ public class RolapStar {
 
         public RolapAggregator getAggregator() {
             return aggregator;
+        }
+
+        /** #119: the measure-level distinct-grain key column, or null for an
+         *  ordinary measure. See {@link #distinctKeyColumn}. */
+        public RolapSchema.PhysColumn getDistinctKeyColumn() {
+            return distinctKeyColumn;
+        }
+
+        /** #119: set the measure-level distinct-grain key column (load-time
+         *  only). */
+        public void setDistinctKeyColumn(
+            RolapSchema.PhysColumn distinctKeyColumn)
+        {
+            this.distinctKeyColumn = distinctKeyColumn;
         }
 
         public boolean equals(Object o) {
@@ -1169,6 +1193,10 @@ public class RolapStar {
                     this,
                     expr,
                     datatype);
+            // #119: carry the measure-level distinct grain onto the star
+            // measure so the Calcite segment-load translator can pin
+            // PlannerRequest.symmetricGrainColumn from it.
+            starMeasure.setDistinctKeyColumn(measure.getDistinctKeyColumn());
 
             addColumn(starMeasure);
             return starMeasure;

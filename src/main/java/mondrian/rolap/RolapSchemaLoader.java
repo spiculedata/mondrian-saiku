@@ -2530,6 +2530,46 @@ public class RolapSchemaLoader {
         measureGroup.measureList.add(measure);
         validator.putXml(measure, xmlMeasure);
 
+        // #119 measure-level distinct grain: resolve the optional
+        // distinctKeyColumn against the measure's table and pin it on the
+        // measure. Only meaningful for sum/avg on the Calcite backend (the
+        // native form of LookML sum_distinct / average_distinct). A
+        // cross-table key cannot be expressed here (the column resolves
+        // against the same relation as the measure), so it fails closed at
+        // load time rather than emitting a silently-wrong de-dup.
+        if (xmlMeasure.distinctKeyColumn != null
+            && !xmlMeasure.distinctKeyColumn.trim().isEmpty())
+        {
+            if (aggregator != RolapAggregator.Sum
+                && aggregator != RolapAggregator.Avg)
+            {
+                handler.error(
+                    "Measure '" + xmlMeasure.name + "': distinctKeyColumn "
+                    + "is only supported for aggregator 'sum' or 'avg' (got '"
+                    + xmlMeasure.aggregator + "')",
+                    xmlMeasure,
+                    "distinctKeyColumn");
+            } else {
+                RolapSchema.PhysColumn distinctKey =
+                    createColumn(
+                        xmlMeasure,
+                        "distinctKeyColumn",
+                        measureGroupTable,
+                        xmlMeasure.distinctKeyColumn.trim(),
+                        xmlMeasure.getArguments());
+                if (distinctKey == null) {
+                    handler.error(
+                        "Measure '" + xmlMeasure.name + "': distinctKeyColumn '"
+                        + xmlMeasure.distinctKeyColumn
+                        + "' cannot be resolved",
+                        xmlMeasure,
+                        "distinctKeyColumn");
+                } else {
+                    measure.setDistinctKeyColumn(distinctKey);
+                }
+            }
+        }
+
         CellFormatter cellFormatter =
             makeCellFormatter(xmlMeasure, measure.getUniqueName());
         if (cellFormatter != null) {

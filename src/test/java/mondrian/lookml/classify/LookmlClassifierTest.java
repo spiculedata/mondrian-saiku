@@ -625,10 +625,11 @@ class LookmlClassifierTest {
         record(classify(lookml), "orders.avg_amt").reasonCode());
   }
 
-  /** A sum_distinct whose sql_distinct_key is NOT the base view primary key
-   * (here a joined-view key) cannot be de-duplicated at measure level by the
-   * engine — a plain SUM would be silently wrong — so it stays REFUSE. */
-  @Test void sumDistinctOnNonPrimaryKeyStaysRefused() {
+  /** A sum_distinct whose sql_distinct_key is a CROSS-VIEW reference
+   * ({@code ${customer.sfid}}) cannot be de-duplicated at measure level by the
+   * engine — the de-dup grain would be a foreign key — so it stays REFUSE
+   * (never silently wrong). */
+  @Test void sumDistinctOnCrossViewKeyStaysRefused() {
     final String lookml = ""
         + "explore: orders {}\n"
         + "view: orders {\n"
@@ -642,6 +643,63 @@ class LookmlClassifierTest {
         + "}\n";
 
     assertEquals(ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** #119: a sum_distinct whose sql_distinct_key resolves to a real SAME-VIEW
+   * column that is NOT the primary key now maps to an M4 measure-level distinct
+   * grain (distinctKeyColumn) — the engine de-duplicates on the declared key
+   * without a bridge — so it is CLEAN (the #117 residual recovered). */
+  @Test void sumDistinctOnSameViewNonPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  dimension: basket { type: number sql: ${TABLE}.basket_id ;; }\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.total").reasonCode());
+  }
+
+  /** #119: an average_distinct on a same-view non-PK key is likewise CLEAN. */
+  @Test void averageDistinctOnSameViewNonPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  dimension: id { type: number primary_key: yes"
+        + "    sql: ${TABLE}.order_id ;; }\n"
+        + "  measure: avg_amt {\n"
+        + "    type: average_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
+        record(classify(lookml), "orders.avg_amt").reasonCode());
+  }
+
+  /** #119: a same-view non-PK distinct key is CLEAN even with NO primary_key
+   * declared — the de-dup grain is the declared key itself, not the fact PK. */
+  @Test void sumDistinctOnSameViewKeyWithoutPrimaryKeyIsClean() {
+    final String lookml = ""
+        + "explore: orders {}\n"
+        + "view: orders {\n"
+        + "  measure: total {\n"
+        + "    type: sum_distinct\n"
+        + "    sql_distinct_key: ${TABLE}.basket_id ;;\n"
+        + "    sql: ${TABLE}.amount ;;\n"
+        + "  }\n"
+        + "}\n";
+
+    assertEquals(ReasonCode.CLEAN,
         record(classify(lookml), "orders.total").reasonCode());
   }
 

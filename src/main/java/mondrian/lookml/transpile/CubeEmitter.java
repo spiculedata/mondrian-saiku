@@ -466,6 +466,10 @@ final class CubeEmitter {
   private void emitMeasures(LookmlNode baseView, String baseViewName,
       String mgPath, String cubePath, Optional<String> factCountColumn,
       List<Object> measures, List<Object> calculatedMembers) {
+    // #119: the base view's primary-key column, so a distinct-key measure can
+    // tell a no-op de-dup (key == PK → plain SUM/AVG) from a real
+    // measure-level distinct grain (key != PK → distinctKeyColumn).
+    final Optional<String> primaryKey = primaryKeyColumn(baseView);
     for (LookmlNode measure : baseView.children(TranspileKeywords.MEASURE)) {
       final String measureName = measure.name().orElse("");
       if (measureName.isEmpty()
@@ -473,7 +477,8 @@ final class CubeEmitter {
         continue;
       }
       Measures.emit(measure, measureName, baseViewName, mgPath, cubePath,
-          factCountColumn, measures, calculatedMembers, provenance);
+          factCountColumn, primaryKey, baseView, measures, calculatedMembers,
+          provenance);
     }
   }
 }

@@ -42,6 +42,14 @@ public class RolapBaseCubeMeasure
     private final Dialect.Datatype datatype;
 
     /**
+     * #119 measure-level distinct grain: the de-dup key column declared by
+     * the {@code distinctKeyColumn} attribute, or null for an ordinary
+     * measure. Propagated onto the {@link RolapStar.Measure} in
+     * {@link RolapStar.Table#makeMeasure}.
+     */
+    private RolapSchema.PhysColumn distinctKeyColumn;
+
+    /**
      * Creates a RolapBaseCubeMeasure.
      *
      * @param measureGroup Measure group that this measure belongs to
@@ -100,6 +108,16 @@ public class RolapBaseCubeMeasure
 
     public RolapStar.Measure getStarMeasure() {
         return starMeasure;
+    }
+
+    /** #119: the measure-level distinct-grain key column, or null. */
+    public RolapSchema.PhysColumn getDistinctKeyColumn() {
+        return distinctKeyColumn;
+    }
+
+    /** #119: set the measure-level distinct-grain key column (load-time). */
+    void setDistinctKeyColumn(RolapSchema.PhysColumn distinctKeyColumn) {
+        this.distinctKeyColumn = distinctKeyColumn;
     }
 
     void setStarMeasure(RolapStar.Measure starMeasure) {

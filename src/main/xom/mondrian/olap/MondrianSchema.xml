@@ -1689,6 +1689,24 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 (the median) when omitted.
             </Doc>
         </Attribute>
+        <Attribute name="distinctKeyColumn" required="false">
+            <Doc>
+                #119 measure-level distinct grain. When set, the measure
+                de-duplicates its operand on the distinct values of this
+                column before aggregating — i.e. SUM/AVG over a
+                SELECT DISTINCT (group keys, distinctKeyColumn, operand)
+                subquery — making the measure fan-out-safe over a
+                one-to-many join WITHOUT a &lt;BridgeLink&gt;. This is the
+                native form of LookML sum_distinct / average_distinct on a
+                sql_distinct_key. The column is resolved against the
+                measure's table (the fact / base view); a cross-table key
+                is rejected at load time. Honoured only for aggregator
+                "sum" and "avg" on the Calcite backend; ignored otherwise.
+                Reuses the same symmetric-aggregate machinery as
+                &lt;BridgeLink&gt; (#103) — see PlannerRequest
+                symmetricGrainColumn.
+            </Doc>
+        </Attribute>
         <Attribute name="formatter" required="false">
             <Doc>
                 <p>Name of a formatter class for the appropriate cell being

@@ -120,23 +120,49 @@ final class FieldClassifier {
    */
   private CoverageRecord classifyDistinctAggregate(String qn,
       LookmlNode measure, String type, PrimaryKey primaryKey) {
-    if (!primaryKey.isPresent()) {
-      return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
-          type, Optional.empty());
-    }
     final Optional<String> rawKey =
         measure.stringValue(LookmlKeywords.SQL_DISTINCT_KEY);
     // No explicit key → fall back to the base view's primary key (de-dup on
-    // the fact grain is a no-op).
+    // the fact grain is a no-op). Requires a declared primary key.
     if (rawKey.isEmpty()) {
+      if (!primaryKey.isPresent()) {
+        return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
+            type, Optional.empty());
+      }
       return distinctClean(qn, measure, type);
     }
     final Optional<String> resolved = DistinctKey.resolveSameView(rawKey.get());
-    if (resolved.isPresent() && primaryKey.matches(resolved.get())) {
+    // #119: an unresolvable / cross-view key cannot be honoured at measure
+    // level (the de-dup grain would be a foreign key) — stay REFUSE so we
+    // never emit a silently-wrong de-dup.
+    if (resolved.isEmpty()) {
+      return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure,
+          type, Optional.empty());
+    }
+    // De-dup on the base view primary key is a no-op → plain SUM/AVG (#117).
+    if (primaryKey.isPresent() && primaryKey.matches(resolved.get())) {
       return distinctClean(qn, measure, type);
     }
-    return refusal(qn, ReasonCode.REFUSE_UNSUPPORTED_AGGREGATOR, measure, type,
-        Optional.empty());
+    // #119: a resolvable same-view key that is NOT the primary key maps to an
+    // M4 measure-level distinct grain — the engine de-duplicates on the
+    // declared key column before aggregating, without a <BridgeLink>. CLEAN.
+    return distinctGrainClean(qn, measure, type, resolved.get());
+  }
+
+  /** #119: a {@code sum_distinct} / {@code average_distinct} whose
+   * {@code sql_distinct_key} resolves to a real same-view column that is NOT
+   * the primary key. Maps to an M4 measure declaring a distinct grain
+   * ({@code distinctKeyColumn}); the engine de-duplicates the operand on that
+   * key before aggregating, reusing the #103 symmetric-aggregate machinery
+   * without a bridge. */
+  private CoverageRecord distinctGrainClean(String qn, LookmlNode measure,
+      String type, String key) {
+    return clean(qn, Scope.FIELD,
+        "measure `" + simpleName(measure) + "` (" + type
+            + ") de-duplicates on `" + key + "` (a non-PK same-view key); "
+            + "maps to an M4 " + plainAggregator(type)
+            + " with a measure-level distinct grain (#119) — fan-out-safe "
+            + "without a bridge");
   }
 
   private CoverageRecord distinctClean(String qn, LookmlNode measure,
