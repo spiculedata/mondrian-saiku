@@ -36,12 +36,12 @@ public final class TimeCalcDesugarer {
         case "yoy": {
             String prior = "(" + measure + ", ParallelPeriod("
                 + yearLevel + ", 1))";
-            return "(" + measure + " - " + prior + ") / " + prior;
+            return growthPercent(measure, prior);
         }
         case "pop": {
             String prior = "(" + measure + ", "
                 + timeHierarchy + ".CurrentMember.PrevMember)";
-            return "(" + measure + " - " + prior + ") / " + prior;
+            return growthPercent(measure, prior);
         }
         case "ytd":
             return "Aggregate(Ytd(" + timeHierarchy + ".CurrentMember), "
@@ -62,5 +62,15 @@ public final class TimeCalcDesugarer {
                 "unknown TimeCalc type '" + type + "'"
                 + " (expected yoy|pop|ytd|rolling)");
         }
+    }
+
+    /**
+     * A period-over-period growth ratio {@code (measure − prior) / prior},
+     * guarded against an empty or zero prior period: the first period (no prior)
+     * and any divide-by-zero render as NULL (blank) rather than Infinity.
+     */
+    private static String growthPercent(String measure, String prior) {
+        return "IIf(IsEmpty(" + prior + ") OR (" + prior + " = 0), NULL, ("
+            + measure + " - " + prior + ") / " + prior + ")";
     }
 }

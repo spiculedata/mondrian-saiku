@@ -486,7 +486,7 @@ public final class PlannerRequest {
     /** Join flavour. INNER = equi-join on ({@link Join#factKey},
      *  {@link Join#dimKey}); CROSS = unconditional cross-join (the key
      *  fields are ignored). Added for multi-target tuple-read (Task H). */
-    public enum JoinKind { INNER, CROSS }
+    public enum JoinKind { INNER, CROSS, BAND }
 
     public static final class Join {
         /** Alias the renderer uses to refer to this dim's row-set on the
@@ -517,6 +517,17 @@ public final class PlannerRequest {
          *  {@code dimTable="store_2"} for the third Store usage. Issue
          *  #46 third-class fix. */
         public final String physName;
+        /** #112 band join (currency conversion): the fact currency column,
+         *  the rate currency column, the fact date column, the rate interval
+         *  start/end columns, the rate-type column, and the literal rate-type
+         *  value to match. Non-null only when {@link #kind} is BAND. */
+        public final String factCurrencyKey;
+        public final String rateCurrencyCol;
+        public final String factDateKey;
+        public final String validFromCol;
+        public final String validToCol;
+        public final String rateTypeCol;
+        public final String rateTypeValue;
         public Join(String dimTable, String factKey, String dimKey) {
             this(dimTable, factKey, dimKey, JoinKind.INNER, null, null);
         }
@@ -541,6 +552,50 @@ public final class PlannerRequest {
             this.kind = kind;
             this.leftTable = leftTable;
             this.physName = physName;
+            this.factCurrencyKey = null;
+            this.rateCurrencyCol = null;
+            this.factDateKey = null;
+            this.validFromCol = null;
+            this.validToCol = null;
+            this.rateTypeCol = null;
+            this.rateTypeValue = null;
+        }
+        /** #112 private band-join constructor (kind = BAND). {@code factAlias}
+         *  is stored in {@link #leftTable} so the renderer qualifies the
+         *  fact-side band fields against the fact table — robust whether the
+         *  band join is emitted before or after the dimension joins (e.g. the
+         *  fact date column would otherwise collide with a Calendar dim's
+         *  identically-named key). */
+        private Join(
+            String factAlias, String rateTable, String physName,
+            String factCurrencyKey, String rateCurrencyCol, String factDateKey,
+            String validFromCol, String validToCol, String rateTypeCol,
+            String rateTypeValue)
+        {
+            this.dimTable = rateTable;
+            this.factKey = null;
+            this.dimKey = null;
+            this.kind = JoinKind.BAND;
+            this.leftTable = factAlias;
+            this.physName = physName;
+            this.factCurrencyKey = factCurrencyKey;
+            this.rateCurrencyCol = rateCurrencyCol;
+            this.factDateKey = factDateKey;
+            this.validFromCol = validFromCol;
+            this.validToCol = validToCol;
+            this.rateTypeCol = rateTypeCol;
+            this.rateTypeValue = rateTypeValue;
+        }
+        /** #112 factory for a currency-conversion rate band join. */
+        public static Join band(
+            String factAlias, String rateTable, String physName,
+            String factCurrencyKey, String rateCurrencyCol,
+            String factDateKey, String validFromCol, String validToCol,
+            String rateTypeCol, String rateTypeValue)
+        {
+            return new Join(factAlias, rateTable, physName, factCurrencyKey,
+                rateCurrencyCol, factDateKey, validFromCol, validToCol,
+                rateTypeCol, rateTypeValue);
         }
         /** Convenience factory for an unconditional CROSS JOIN. */
         public static Join cross(String dimTable) {

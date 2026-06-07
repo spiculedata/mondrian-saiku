@@ -37,6 +37,7 @@
     <Table name="mm_txn"/>
     <Table name="mm_calendar"/>
     <Table name="mm_monthly"/>
+    <Table name="fx_rate"/>
   </PhysicalSchema>
 
   <!-- The many-to-many dimension. Customers roll up into segments; full-count
@@ -287,6 +288,17 @@
           <Measure name="Revenue" column="revenue" aggregator="sum"
                    formatString="#,###"/>
         </Measures>
+        <!-- #112 phase 3: convert EUR revenue to USD via an effective-date
+             rate band join (fx_rate, rate_type='ECB'). -->
+        <CurrencyConversions>
+          <CurrencyConversion name="Revenue (USD)" measure="Revenue"
+              rateTable="fx_rate" rateColumn="rate"
+              rateType="ECB" rateTypeColumn="rate_type"
+              factCurrencyColumn="currency_id" rateCurrencyColumn="currency_id"
+              factDateColumn="month_key"
+              rateValidFromColumn="valid_from" rateValidToColumn="valid_to"
+              formatString="#,##0.00"/>
+        </CurrencyConversions>
         <DimensionLinks>
           <ForeignKeyLink dimension="Calendar" foreignKeyColumn="month_key"/>
         </DimensionLinks>

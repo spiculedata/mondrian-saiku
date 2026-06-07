@@ -16,6 +16,7 @@ DROP TABLE IF EXISTS "mm_date";
 DROP TABLE IF EXISTS "mm_txn";
 DROP TABLE IF EXISTS "mm_calendar";
 DROP TABLE IF EXISTS "mm_monthly";
+DROP TABLE IF EXISTS "fx_rate";
 
 CREATE TABLE "mm_fact" (
     "account_id" INTEGER,
@@ -110,8 +111,9 @@ CREATE TABLE "mm_calendar" (
     "yr"         INTEGER
 );
 CREATE TABLE "mm_monthly" (
-    "month_key" INTEGER,
-    "revenue"   INTEGER
+    "month_key"   INTEGER,
+    "currency_id" VARCHAR(8),
+    "revenue"     INTEGER
 );
 INSERT INTO "mm_calendar" ("month_key","month_name","quarter","yr") VALUES
     (202401, 'Jan', '2024-Q1', 2024),
@@ -120,9 +122,25 @@ INSERT INTO "mm_calendar" ("month_key","month_name","quarter","yr") VALUES
     (202501, 'Jan', '2025-Q1', 2025),
     (202502, 'Feb', '2025-Q1', 2025),
     (202503, 'Mar', '2025-Q1', 2025);
-INSERT INTO "mm_monthly" ("month_key","revenue") VALUES
-    (202401, 100), (202402, 200), (202403, 300),
-    (202501, 150), (202502, 250), (202503, 350);
+INSERT INTO "mm_monthly" ("month_key","currency_id","revenue") VALUES
+    (202401,'EUR',100), (202402,'EUR',200), (202403,'EUR',300),
+    (202501,'EUR',150), (202502,'EUR',250), (202503,'EUR',350);
+
+-- #112 phase 3: effective-date currency conversion (EUR -> USD).
+-- Non-overlapping intervals: 1.10 across 2024, 1.20 across 2025.
+-- Golden: Revenue (USD) = (100+200+300)*1.10 + (150+250+350)*1.20
+--                       = 660 + 900 = 1560.
+CREATE TABLE "fx_rate" (
+    "currency_id" VARCHAR(8),
+    "rate_type"   VARCHAR(8),
+    "valid_from"  INTEGER,
+    "valid_to"    INTEGER,
+    "rate"        DECIMAL(8,4)
+);
+INSERT INTO "fx_rate"
+  ("currency_id","rate_type","valid_from","valid_to","rate") VALUES
+    ('EUR','ECB',202401,202500,1.10),
+    ('EUR','ECB',202501,202600,1.20);
 
 -- Golden values (asserted in BankShowcaseH2EndToEndTest):
 --   Balance grand total ........................ 13000
