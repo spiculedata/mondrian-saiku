@@ -188,6 +188,7 @@ shared_dimensions:
       key:
       - "time_id"
       name_column: "day_of_month"
+      order_by_column: "time_id"
       level_type: "TimeDays"
       has_hierarchy: false
     - name: "Month Name"
@@ -905,6 +906,7 @@ cubes:
         - "management_role"
         - "position_title"
         name_column: "position_title"
+        order_by_column: "position_id"
       - name: "Marital Status"
         table: "employee"
         key_column: "marital_status"
