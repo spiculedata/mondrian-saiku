@@ -31,7 +31,9 @@ tests that guarantee total coverage and serve as living documentation.
 
 - **Shape:** unified shared dataset, parallel schemas (hand-written M4 showcase
   + synthetic LookML over the SAME tables; both queryable on one DB).
-- **Domain:** extend the existing **Bank** (`mm_*`) domain.
+- **Domain:** extend the existing **Bank** (`mm_*`) domain, reusing the SHIPPED
+  `bank.sql` (`../saiku/saiku-launcher/src/main/resources/seed/bank.sql`) verbatim
+  as the base rather than inventing a new dataset.
 - **Coverage:** every new feature must be demonstrated and tested; reuse existing
   per-feature tests, add new tests only to close gaps and to provide the unified
   demonstration.
@@ -55,36 +57,47 @@ tests that guarantee total coverage and serve as living documentation.
 | Native tier dimension (#108) | `Accounts` balance tier | `tiers: [...]` dimension | TierDurationH2EndToEndTest |
 | Native duration dimension (#108) | `Accounts` account-age duration | duration `dimension_group` | TierDurationH2EndToEndTest |
 
-## Dataset — `demo/bank.sql` (H2 + portable SQL)
+## Dataset — reuse + extend the SHIPPED `bank.sql`
 
-One small, hand-verifiable dataset. Tables (all prefixed `mm_`):
+The canonical joint-accounts dataset already shipped at
+`../saiku/saiku-launcher/src/main/resources/seed/bank.sql` (loaded by
+`Database.loadBank()` into the same H2 as FoodMart). It uses quoted-lowercase
+`mm_*` tables matching `demo/Bank.mondrian.xml` and already provides much of what
+we need:
 
-- `mm_customer(customer_id PK, customer_name, segment_id)` — links to segment.
-- `mm_segment(segment_id PK, segment_name)` — e.g. `Retail`, `Private`
-  (drives the Customer → Segment hierarchy and the member-grant RLS test).
-- `mm_owner(account_id, customer_id, weight DECIMAL)` — the **bridge** table
-  (many-to-many account↔customer) with an ownership `weight`.
-- `mm_branch(branch_id PK, branch_name, region)` — `region` drives nothing alone
-  but supports a conformed dimension; predicate RLS uses `tenant` (below).
-- `mm_fact(account_id PK, branch_id, tenant INT, balance INT, open_date DATE)` —
-  one row per account: `tenant` → predicate RLS; `balance` → median/percentile +
-  balance **tier**; `open_date` → account-age **duration**.
-- `mm_txn(txn_id, line_no, account_id, amount INT)` — a deliberately
+- `mm_fact(account_id, date_key, branch_id, balance, fees)` — 8 accounts, total
+  balance 13000 / fees 130. `balance` → median/percentile + balance **tier**.
+- `mm_owner(account_id, customer_id, weight)` — the **bridge** (full + weighted).
+- `mm_customer(customer_id, customer_name, segment)` — **`segment`**
+  (Premium/Standard) already present → drives the Customer→Segment hierarchy and
+  the **member-grant RLS** test.
+- `mm_branch(branch_id, branch_name)`, `mm_date(date_key, yr)` — star dims.
+
+We **reuse it verbatim** as the base and bring a copy into
+`demo/bank.sql` (this also fixes `demo/Bank.mondrian.xml`, which references a
+`bank.sql` that is currently missing from this repo). We then **extend it as a
+backward-compatible superset** — existing readers (`Bank.mondrian.xml`,
+`BridgeExampleParityTest`'s own inline DDL) are unaffected because the additions
+are new columns/tables:
+
+- add `tenant INT` to `mm_fact` → **predicate RLS** (#106) + query parameter (#105);
+- add `open_date DATE` to `mm_fact` → account-age **duration** (#108) (paired
+  with a FIXED reference date so test numbers are stable);
+- add `mm_txn(txn_id, line_no, account_id, amount)` — a deliberately
   **fanned-out** transactions table (one logical txn repeated across lines with
   the SAME amount) for **measure-level distinct grain** (`sum_distinct` over
-  `txn_id`). A second small set with a varying amount documents the
-  count-each-grain-once fix (#119).
+  `txn_id`, #119); plus one small varying-amount group documenting the
+  count-each-grain-once fix.
 
-Row counts kept tiny (≈3 customers, 2 segments, ≈4 accounts, ≈6 owner rows incl.
-joint accounts, ≈6 txn lines) so every asserted number is hand-derivable and the
-data reads as documentation. Sample numbers (e.g. full-count grand total, the
-de-duped distinct sum, tenant-partitioned RLS totals) are spelled out in
-comments in `bank.sql` and asserted in the tests.
+Every added number is kept tiny and hand-derivable, with golden values spelled
+out in comments (mirroring the shipped file's "Golden values" block) and
+asserted in the tests.
 
-The dataset is a **superset**: it backs the shipped `demo/Bank.mondrian.xml`
-(which only reads `mm_fact`/`mm_owner`/`mm_customer`/`mm_branch`/`mm_date`) AND
-the new `Showcase` cubes. (`mm_date` retained for Bank; the Showcase uses
-`open_date` directly. If Bank needs `mm_date`, it is included.)
+**Cross-repo sync:** the shipped `../saiku` copy stays the launcher's source of
+truth; `demo/bank.sql` here is the superset used for tests + the Showcase demo. A
+note in both files (and the README) records that the base rows must stay in sync;
+the additions are purely additive. (Reconciling/relocating the canonical copy is
+a follow-up, deliberately out of scope here.)
 
 ## M4 showcase — `demo/Showcase.mondrian.xml` (+ YAML round-trip)
 
@@ -153,9 +166,13 @@ Both load `demo/bank.sql` into an in-memory H2 (same pattern as the existing
 - **Duration reference date:** account-age duration needs a stable "as of" date
   or it drifts with wall-clock. Use a fixed reference (a literal in the
   dimension definition or a `mm_date`-anchored value) so test numbers are stable.
-- **Bank.mondrian.xml compatibility:** `bank.sql` must satisfy the shipped
-  schema's column expectations exactly; verify by loading Bank against it too
-  (a smoke assertion) so we don't fix one demo and break another.
+- **Bank.mondrian.xml compatibility:** the base rows are reused verbatim from the
+  shipped `bank.sql` and additions are new columns/tables only, so the shipped
+  schema keeps working; verify with a smoke assertion that loads Bank against the
+  superset.
+- **Cross-repo drift:** `demo/bank.sql` (here) duplicates the shipped `../saiku`
+  base. Keep base rows identical; record the sync requirement in both files.
+  Relocating to a single source of truth is a follow-up.
 - **LookML loose equivalence:** keep the LookML test assertions about
   classification/provenance + sanity numbers, not exact parity, per the chosen
   approach.
