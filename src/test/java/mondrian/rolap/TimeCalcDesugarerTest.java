@@ -21,19 +21,21 @@ public class TimeCalcDesugarerTest {
     private static final String TH = "[Calendar].[Calendar]";
     private static final String YL = "[Calendar].[Calendar].[Year]";
 
-    @Test public void yoyIsYearOverYearGrowthPercent() {
+    @Test public void yoyGrowthPercentGuardedAgainstEmptyPrior() {
         String f = TimeCalcDesugarer.formula("yoy", M, TH, YL, null, null);
+        String prior = "(" + M + ", ParallelPeriod(" + YL + ", 1))";
         assertEquals(
-            "(" + M + " - (" + M + ", ParallelPeriod(" + YL + ", 1)))"
-            + " / (" + M + ", ParallelPeriod(" + YL + ", 1))",
+            "IIf(IsEmpty(" + prior + ") OR (" + prior + " = 0), NULL, ("
+            + M + " - " + prior + ") / " + prior + ")",
             f);
     }
 
-    @Test public void popIsPeriodOverPeriodGrowthPercent() {
+    @Test public void popGrowthPercentGuardedAgainstEmptyPrior() {
         String f = TimeCalcDesugarer.formula("pop", M, TH, YL, null, null);
+        String prior = "(" + M + ", " + TH + ".CurrentMember.PrevMember)";
         assertEquals(
-            "(" + M + " - (" + M + ", " + TH + ".CurrentMember.PrevMember))"
-            + " / (" + M + ", " + TH + ".CurrentMember.PrevMember)",
+            "IIf(IsEmpty(" + prior + ") OR (" + prior + " = 0), NULL, ("
+            + M + " - " + prior + ") / " + prior + ")",
             f);
     }
 
