@@ -10,9 +10,11 @@
 package mondrian.calcite;
 
 import mondrian.olap.Evaluator;
+import mondrian.olap.Hierarchy;
 import mondrian.olap.Member;
 import mondrian.rolap.DefaultTupleConstraint;
 import mondrian.rolap.DescendantsConstraint;
+import mondrian.rolap.SqlConstraintUtils;
 import mondrian.rolap.SqlContextConstraint;
 import mondrian.rolap.RolapAggregator;
 import mondrian.rolap.RolapAttribute;
@@ -2171,12 +2173,28 @@ public final class CalcitePlannerAdapters {
                 argHierarchies.add(a.getLevel().getHierarchy());
             }
         }
+        // saiku#1665: hierarchies carrying a compound (multi-position)
+        // slicer contribute NO filter, exactly as legacy
+        // SqlConstraintUtils.removeMultiPositionSlicerMembers does. The
+        // evaluator context holds only the last member of the slicer set
+        // ([Time].[1998] for WHERE {[Time].[1997],[Time].[1998]}), so
+        // pinning it would restrict the read to one position of the
+        // slicer — and where that position has no fact rows, a NON EMPTY
+        // axis came back empty. The fact join still filters the read; the
+        // rolled-up cells then drive NON EMPTY pruning. Note the read's
+        // cache key (SqlContextConstraint's ctor) is likewise built with
+        // these members removed, so emitting a narrower filter here would
+        // also bleed across slicer sets that share a key.
+        Set<Hierarchy> multiPositionSlicer =
+            SqlConstraintUtils.multiPositionSlicerHierarchies(evaluator);
         RolapMember[] members = evaluator.getNonAllMembers();
         for (RolapMember m : members) {
             if (m.isMeasure() || m.isAll() || m.isCalculated()) {
                 continue;
             }
-            if (argHierarchies.contains(m.getHierarchy())) {
+            if (argHierarchies.contains(m.getHierarchy())
+                || multiPositionSlicer.contains(m.getHierarchy()))
+            {
                 continue;
             }
             // Mirror legacy removeCalculatedAndDefaultMembers: a member

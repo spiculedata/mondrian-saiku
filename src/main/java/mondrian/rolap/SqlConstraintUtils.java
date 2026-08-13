@@ -263,37 +263,70 @@ public class SqlConstraintUtils {
         return false;
     }
 
+    /**
+     * Returns the hierarchies that contribute more than one distinct member
+     * to the evaluator's slicer — i.e. a compound (multi-position) slicer
+     * such as {@code WHERE {[Time].[1997], [Time].[1998]}}.
+     *
+     * <p>A member of such a hierarchy must NOT contribute a WHERE
+     * restriction to a member read. The evaluator context holds only the
+     * <em>last</em> member of the set, so pinning it would silently narrow
+     * the read to one position of the compound slicer — and if that
+     * position has no fact rows, a NON EMPTY axis collapses to nothing
+     * (saiku#1665). The rolled-up value over the whole slicer set is
+     * computed by the aggregation instead, and NON EMPTY is applied to the
+     * resulting cells, so leaving the read unrestricted is safe.
+     *
+     * @param evaluator the evaluator to look at; a non-Rolap evaluator
+     *     carries no slicer members and yields an empty set
+     * @return the hierarchies whose slicer restriction must be dropped
+     */
+    public static Set<Hierarchy> multiPositionSlicerHierarchies(
+        Evaluator evaluator)
+    {
+        if (!(evaluator instanceof RolapEvaluator)) {
+            return Collections.emptySet();
+        }
+        // Group the slicer members by hierarchy; a hierarchy with two or
+        // more distinct members is multi-position. Repeats of the same
+        // member (e.g. [Time].[1997] in every tuple of a cross-hierarchy
+        // slicer set) are a single position and stay pinned.
+        Map<Hierarchy, Set<Member>> mapOfSlicerMembers =
+            new HashMap<Hierarchy, Set<Member>>();
+        for (Member slicerMember
+            : ((RolapEvaluator) evaluator).getSlicerMembers())
+        {
+            Hierarchy hierarchy = slicerMember.getHierarchy();
+            if (!mapOfSlicerMembers.containsKey(hierarchy)) {
+                mapOfSlicerMembers.put(hierarchy, new HashSet<Member>());
+            }
+            mapOfSlicerMembers.get(hierarchy).add(slicerMember);
+        }
+        Set<Hierarchy> multiPosition = new HashSet<Hierarchy>();
+        for (Map.Entry<Hierarchy, Set<Member>> entry
+            : mapOfSlicerMembers.entrySet())
+        {
+            if (entry.getValue().size() >= 2) {
+                multiPosition.add(entry.getKey());
+            }
+        }
+        return multiPosition;
+    }
+
     protected static void removeMultiPositionSlicerMembers(
         List<RolapMember> memberList,
         Evaluator evaluator)
     {
-        List<RolapMember> slicerMembers = null;
-        if (evaluator instanceof RolapEvaluator) {
-            // get the slicer members from the evaluator
-            slicerMembers =
-                ((RolapEvaluator)evaluator).getSlicerMembers();
+        Set<Hierarchy> multiPosition =
+            multiPositionSlicerHierarchies(evaluator);
+        if (multiPosition.isEmpty()) {
+            return;
         }
-        if (slicerMembers != null) {
-            // Iterate the list of slicer members, grouping them by hierarchy
-            Map<Hierarchy, Set<Member>> mapOfSlicerMembers =
-                new HashMap<Hierarchy, Set<Member>>();
-            for (Member slicerMember : slicerMembers) {
-                Hierarchy hierarchy = slicerMember.getHierarchy();
-                if (!mapOfSlicerMembers.containsKey(hierarchy)) {
-                    mapOfSlicerMembers.put(hierarchy, new HashSet<Member>());
-                }
-                mapOfSlicerMembers.get(hierarchy).add(slicerMember);
-            }
-            // Iterate the given list of members, removing any whose hierarchy
-            // has multiple members on the slicer axis
-            for (int i = 0; i < memberList.size(); i++) {
-                RolapMember member = memberList.get(i);
-                Hierarchy hierarchy = member.getHierarchy();
-                if (mapOfSlicerMembers.containsKey(hierarchy)
-                    && mapOfSlicerMembers.get(hierarchy).size() >= 2)
-                {
-                    memberList.remove(i--);
-                }
+        // Iterate the given list of members, removing any whose hierarchy
+        // has multiple members on the slicer axis
+        for (int i = 0; i < memberList.size(); i++) {
+            if (multiPosition.contains(memberList.get(i).getHierarchy())) {
+                memberList.remove(i--);
             }
         }
     }
