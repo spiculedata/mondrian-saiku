@@ -671,6 +671,37 @@ public final class CalciteSqlPlanner {
         return out.toString();
     }
 
+    /**
+     * Type system that widens a UNION of unequal-length {@code CHAR} types to
+     * {@code VARCHAR} instead of blank-padding the shorter branches.
+     *
+     * <p>Standard SQL pads: {@code SELECT 'USA' UNION ALL SELECT 'Mexico'}
+     * types as {@code CHAR(6)} and turns {@code 'USA'} into {@code 'USA   '}.
+     * That is fatal for an {@code <InlineTable>}, whose values are joined to
+     * real dimension columns -- {@code store.store_country = 'USA   '} matches
+     * nothing. Every database Mondrian supports treats these as varying-length
+     * strings, and the legacy SQL generator has always relied on that. Making
+     * it explicit keeps the Calcite backend's SQL semantically identical.
+     */
+    public static final class RaggedUnionTypeSystem
+        extends org.apache.calcite.rel.type.DelegatingTypeSystem
+    {
+        /** Public no-arg constructor: Calcite instantiates the type system
+         *  reflectively from its class name when it round-trips the config
+         *  through connection properties. */
+        public RaggedUnionTypeSystem() {
+            super(org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+        }
+
+        @Override
+        public boolean shouldConvertRaggedUnionTypesToVarying() {
+            return true;
+        }
+    }
+
+    private static final org.apache.calcite.rel.type.RelDataTypeSystem
+        RAGGED_UNION_TYPE_SYSTEM = new RaggedUnionTypeSystem();
+
     /** Build the Calcite {@link RelNode} (used by plan-snapshot tests). */
     public RelNode planRel(PlannerRequest req) {
         if (req == null) {
@@ -679,6 +710,7 @@ public final class CalciteSqlPlanner {
         long tCfg = PROFILE ? System.nanoTime() : 0L;
         FrameworkConfig cfg = Frameworks.newConfigBuilder()
             .defaultSchema(schema.schema())
+            .typeSystem(RAGGED_UNION_TYPE_SYSTEM)
             .build();
         RelBuilder b = RelBuilder.create(cfg);
         long tBuild = PROFILE ? System.nanoTime() : 0L;

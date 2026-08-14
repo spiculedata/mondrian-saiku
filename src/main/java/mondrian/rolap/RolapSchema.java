@@ -921,6 +921,19 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public final PhysStatistic statistic;
 
         /**
+         * Returns every relation declared in this physical schema, keyed by
+         * the alias each is referenced by. Read by the Calcite backend, which
+         * has to register the relations that do not exist in the database --
+         * {@link PhysInlineTable} and {@link PhysView} -- as Calcite tables
+         * before it can plan against them.
+         *
+         * @return relations, in declaration order
+         */
+        public Collection<PhysRelation> getRelations() {
+            return Collections.unmodifiableCollection(tablesByName.values());
+        }
+
+        /**
          * Creates a physical schema.
          *
          * @param dialect Dialect
@@ -1451,6 +1464,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         void addColumn(PhysColumn column);
 
+        /**
+         * Returns the columns of this relation, in declaration order.
+         *
+         * @return columns
+         */
+        Collection<PhysColumn> getColumns();
+
         PhysRelation cloneWithAlias(String newAlias);
     }
 
@@ -1475,6 +1495,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         LinkedHashMap<String, PhysColumn> getColumnsByName() {
             return columnsByName;
+        }
+
+        public Collection<PhysColumn> getColumns() {
+            return Collections.unmodifiableCollection(columnsByName.values());
         }
 
         void setPopulated(boolean populated) {
@@ -1780,6 +1804,17 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         private void setRowList(List<String[]> rowList) {
             this.rowList.addAll(rowList);
+        }
+
+        /**
+         * Returns the literal rows of this inline table. Each row has one
+         * entry per column of {@link #getColumns()}, in the same order; a
+         * null entry is a SQL NULL.
+         *
+         * @return rows
+         */
+        public List<String[]> getRowList() {
+            return Collections.unmodifiableList(rowList);
         }
 
         @Override
