@@ -818,6 +818,11 @@ public class SegmentBuilderTest extends BatchTestCase {
      *  prefixed with {@code !} must NOT appear, which is how a segment is
      *  distinguished from a coarser one that shares its axis values. */
     private static boolean matchesAll(SegmentHeader header, String[] matcher) {
+        if (header == null) {
+            // The composite cache can report a header slot that has since
+            // been evicted; it matches nothing.
+            return false;
+        }
         final String description = header.toString();
         for (String part : matcher) {
             if (part.startsWith("!")) {

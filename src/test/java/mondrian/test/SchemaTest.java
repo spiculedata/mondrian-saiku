@@ -4336,7 +4336,10 @@ Test that get error if a dimension has more than one hierarchy with same name.
         // The hierarchy caption is prefixed by the caption of the dimension
         // usage.
         assertEquals(
-            "Time1.Time shared hierarchy caption",
+            // The CAPTION is qualified by the usage's caption, not its name
+            // (Larders.prefix): a caption is what an end user reads. The
+            // description below keeps the name, which identifies the usage.
+            "Time usage caption.Time shared hierarchy caption",
             timeHierarchy.getCaption());
         // No annotations.
         checkAnnotations(timeHierarchy.getAnnotationMap());
