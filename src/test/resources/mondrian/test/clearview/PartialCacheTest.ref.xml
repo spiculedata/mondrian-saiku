@@ -9,7 +9,7 @@ partially fill cache with data for CA
         <Resource name="mdx">
             <![CDATA[
 SELECT 
-{[Customers].[USA].[CA]} ON ROWS,
+{[Customer].[Customers].[USA].[CA]} ON ROWS,
 {[Measures].[Unit Sales]} ON COLUMNS
 FROM [Sales]
 ]]>
@@ -21,7 +21,7 @@ Axis #0:
 Axis #1:
 {[Measures].[Unit Sales]}
 Axis #2:
-{[Customers].[USA].[CA]}
+{[Customer].[Customers].[USA].[CA]}
 Row #0: 74,748
 ]]>
         </Resource>
@@ -55,7 +55,7 @@ partially fill cache with data for OR
         <Resource name="mdx">
             <![CDATA[
 SELECT 
-{[Customers].[USA].[OR]} ON ROWS,
+{[Customer].[Customers].[USA].[OR]} ON ROWS,
 {[Measures].[Unit Sales]} ON COLUMNS
 FROM [Sales]
 ]]>
@@ -67,7 +67,7 @@ Axis #0:
 Axis #1:
 {[Measures].[Unit Sales]}
 Axis #2:
-{[Customers].[USA].[OR]}
+{[Customer].[Customers].[USA].[OR]}
 Row #0: 67,659
 ]]>
         </Resource>
@@ -101,7 +101,7 @@ partially fill cache with data for CA and WA
         <Resource name="mdx">
             <![CDATA[
 SELECT 
-{[Customers].[USA].[CA], 
+{[Customer].[Customers].[USA].[CA], 
 [Customers].[USA].[WA]} ON ROWS,
 {[Measures].[Unit Sales]} ON COLUMNS
 FROM [Sales]
@@ -114,8 +114,8 @@ Axis #0:
 Axis #1:
 {[Measures].[Unit Sales]}
 Axis #2:
-{[Customers].[USA].[CA]}
-{[Customers].[USA].[WA]}
+{[Customer].[Customers].[USA].[CA]}
+{[Customer].[Customers].[USA].[WA]}
 Row #0: 74,748
 Row #1: 124,366
 ]]>
