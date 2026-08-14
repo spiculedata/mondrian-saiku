@@ -251,23 +251,44 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
             + "\n\nto\n\n"
             + newHeader.toString());
         final HeaderInfo headerInfo = headerMap.get(oldHeader);
+        if (headerInfo == null) {
+            // The old header is not in the index: it was removed while its
+            // load was still in flight. Carrying on would put a NULL VALUE
+            // into headerMap under the new header, and every later read of
+            // that entry then fails with "Cannot read field ... because x0 is
+            // null" -- a corrupt index reported as a mystery NPE from
+            // whichever query happened to touch it next.
+            LOGGER.debug(
+                "SegmentCacheIndexImpl.update: old header is not in the "
+                + "index; nothing to update");
+            return;
+        }
         headerMap.remove(oldHeader);
         headerMap.put(newHeader, headerInfo);
 
+        // The three lists below are populated by add() alongside headerMap,
+        // so they should all have an entry -- but a missing one must not take
+        // the query down, for the same reason.
         final List oldBitkeyKey = makeBitkeyKey(oldHeader);
         List<SegmentHeader> headerList = bitkeyMap.get(oldBitkeyKey);
-        headerList.remove(oldHeader);
-        headerList.add(newHeader);
+        if (headerList != null) {
+            headerList.remove(oldHeader);
+            headerList.add(newHeader);
+        }
 
         final List oldFactKey = makeFactKey(oldHeader);
         final FactInfo factInfo = factMap.get(oldFactKey);
-        factInfo.headerList.remove(oldHeader);
-        factInfo.headerList.add(newHeader);
+        if (factInfo != null) {
+            factInfo.headerList.remove(oldHeader);
+            factInfo.headerList.add(newHeader);
+        }
 
         final List oldFuzzyFactKey = makeFuzzyFactKey(oldHeader);
         final FuzzyFactInfo fuzzyFactInfo = fuzzyFactMap.get(oldFuzzyFactKey);
-        fuzzyFactInfo.headerList.remove(oldHeader);
-        fuzzyFactInfo.headerList.add(newHeader);
+        if (fuzzyFactInfo != null) {
+            fuzzyFactInfo.headerList.remove(oldHeader);
+            fuzzyFactInfo.headerList.add(newHeader);
+        }
     }
 
     public void loadSucceeded(SegmentHeader header, SegmentBody body) {
@@ -748,7 +769,18 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
                 measureName,
                 compoundPredicates);
             final List<SegmentHeader> headers = bitkeyMap.get(bitkeyKey);
-            assert headers != null : "bitkeyPoset / bitkeyMap inconsistency";
+            if (headers == null) {
+                // Not an inconsistency. bitkeyPoset holds bit keys alone,
+                // shared by every measure and predicate set of this fact
+                // table, whereas bitkeyMap is keyed by bit key AND measure
+                // AND compound predicates. A dimensionality reached through
+                // one measure therefore has no bitkeyMap entry under
+                // another, which simply means there is nothing to roll up
+                // from here. Asserting instead took the query down outright
+                // whenever assertions were on -- which is to say, in every
+                // test run.
+                continue;
+            }
 
             // For columns that are still present after roll up, make sure that
             // the required value is in the range covered by the segment.

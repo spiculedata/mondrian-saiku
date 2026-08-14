@@ -139,10 +139,23 @@ public class ConcurrentValidatingQueryRunner extends Thread {
                         mSuccessCount++;
                     }
                 } catch (Exception e) {
+                    // Include the cause in the MESSAGE. The assertion that
+                    // reads this list prints each entry's toString, so a
+                    // wrapper that carries the cause only as a linked
+                    // exception reports "Exception occurred in iteration 6 of
+                    // thread Thread-11" and nothing whatsoever about what
+                    // went wrong.
+                    Throwable root = e;
+                    while (root.getCause() != null
+                        && root.getCause() != root)
+                    {
+                        root = root.getCause();
+                    }
                     mExceptions.add(
                         new Exception(
                             "Exception occurred in iteration " + mRunCount
-                            + " of thread " + Thread.currentThread().getName(),
+                            + " of thread " + Thread.currentThread().getName()
+                            + ": " + root,
                             e));
                 }
             }
