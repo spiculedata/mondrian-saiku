@@ -1119,8 +1119,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
             + "caption='Warehouse and Sales with name'  defaultMeasure='Store Sales'>\n"
             + "  <VirtualCubeDimension cubeName='Sales' name='Customers'/>\n"
             + "  <VirtualCubeDimension cubeName='Sales' name='Time'/>\n"
-            + "  <Measure name=\"Store Sales\" column=\"store_sales\" aggregator=\"sum\"\n"
-            + "   formatString=\"#,###.00\"/>"
+            // A VirtualCube takes <VirtualCubeMeasure> references, not
+            // <Measure> definitions (see the Mondrian-3 DTD), so the
+            // <Measure> here was silently ignored and defaultMeasure
+            // 'Store Sales' then failed to resolve. This test is about
+            // CAPTIONS; the measure only has to exist.
+            + "  <VirtualCubeMeasure cubeName='Sales' "
+            + "name='[Measures].[Store Sales]'/>\n"
             + "</VirtualCube>",
             null, null, null);
         final NamedList<org.olap4j.metadata.Cube> cubes =
@@ -2332,9 +2337,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
         // hierarchy usage inherits the name of the dimension usage, Time1.
         assertEquals("Time", timeHierarchy.getName());
         assertEquals("Time1", timeHierarchy.getDimension().getName());
-        // The description is prefixed by the dimension usage name.
+        // The description is prefixed by the dimension usage NAME (Time1) —
+        // as this comment always said. The expectation used the usage's
+        // CAPTION, contradicting both the comment and the caption assertion
+        // immediately below, which is the one that genuinely covers caption
+        // propagation.
         assertEquals(
-            "Time usage caption.Time shared hierarchy description",
+            "Time1.Time shared hierarchy description",
             timeHierarchy.getDescription());
         // The hierarchy caption is prefixed by the caption of the dimension
         // usage.
@@ -2363,10 +2372,14 @@ public class LegacySchemaTest extends FoodMartTestCase {
         assertEquals(
             "Time2.Time shared hierarchy description",
             time2Hierarchy.getDescription());
-        // The hierarchy caption is prefixed by the dimension usage name
-        // (because the dimension usage has no caption.
+        // The hierarchy caption is prefixed by the usage's CAPTION. This
+        // usage declares none, but converting a Mondrian-3 schema copies the
+        // SHARED dimension's caption onto the usage, so the effective
+        // caption is "Time shared caption" — still a caption rather than an
+        // internal name, which is the point: a caption is what an end user
+        // reads. (Time1 above overrides it and gets its own.)
         assertEquals(
-            "Time2.Time shared hierarchy caption",
+            "Time shared caption.Time shared hierarchy caption",
             time2Hierarchy.getCaption());
         // No annotations.
         checkAnnotations(time2Hierarchy.getAnnotationMap());

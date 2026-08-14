@@ -3443,7 +3443,8 @@ public class RolapSchemaLoader {
                     .populate(dimension.getLarder())
                     .build());
         initCubeDimension(
-            cubeDimension, xmlCubeDimension.source, cubeHierarchyList);
+            cubeDimension, xmlCubeDimension.source, cubeHierarchyList,
+            xmlCubeDimension.caption);
         validator.putXml(cubeDimension, xmlCubeDimension);
 
         // Populate attribute map. (REVIEW: Should attributes go ONLY in the
@@ -3854,6 +3855,23 @@ public class RolapSchemaLoader {
         String dimSource,
         List<RolapCubeHierarchy> hierarchyList)
     {
+        initCubeDimension(cubeDimension, dimSource, hierarchyList, null);
+    }
+
+    /**
+     * As above, but takes the caption DECLARED on the dimension usage —
+     * null when the usage does not override it, which is exactly the
+     * distinction {@link Larders#prefix} needs: an uncaptioned usage must
+     * keep qualifying with its name.
+     *
+     * @param usageCaption Caption declared on the usage, or null
+     */
+    void initCubeDimension(
+        RolapCubeDimension cubeDimension,
+        String dimSource,
+        List<RolapCubeHierarchy> hierarchyList,
+        String usageCaption)
+    {
         final int originalSize = hierarchyList.size();
         for (RolapHierarchy hierarchy
             : cubeDimension.rolapDimension.getHierarchyList())
@@ -3880,7 +3898,8 @@ public class RolapSchemaLoader {
                             Larders.prefix(
                                 hierarchy.getLarder(),
                                 dimSource,
-                                cubeDimension.getName()))
+                                cubeDimension.getName(),
+                                usageCaption))
                         .build());
             final MondrianDef.Hierarchy xmlHierarchy =
                 validator.getXml(hierarchy, false);
