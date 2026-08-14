@@ -1393,11 +1393,38 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysRelation relation)
             throws PhysSchemaException
         {
+            findPath(pathBuilder, relation, true);
+        }
+
+        /**
+         * As {@link #findPath(PhysPathBuilder, PhysRelation)}, but able to
+         * walk a link against its direction.
+         *
+         * <p>Links point from the table holding the foreign key to the table
+         * holding the primary key, and a directed search can only follow them
+         * that way. A self-join reverses that: an {@code employee} table
+         * aliased as {@code employee_manager} is reached from {@code employee}
+         * by {@code employee.supervisor_id = employee_manager.employee_id}, so
+         * getting back from the alias to the table means walking the one link
+         * backwards. There is no other route, and refusing to take it fails
+         * schema load outright.
+         *
+         * @param pathBuilder Path builder to extend
+         * @param relation Relation to reach
+         * @param directed Whether links may only be followed forwards
+         * @throws PhysSchemaException if there is no unique path
+         */
+        public void findPath(
+            PhysPathBuilder pathBuilder,
+            PhysRelation relation,
+            boolean directed)
+            throws PhysSchemaException
+        {
             addHopsBetween(
                 pathBuilder,
                 pathBuilder.hopList.get(
                     pathBuilder.hopList.size() - 1).relation,
-                Collections.<PhysRelation>singleton(relation), true);
+                Collections.<PhysRelation>singleton(relation), directed);
         }
     }
 

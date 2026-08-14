@@ -725,6 +725,37 @@ public final class CalciteSqlPlanner {
         return out;
     }
 
+    /**
+     * Scans a table under a different name, and under that name only.
+     *
+     * <p>{@code RelBuilder.as} <em>adds</em> an alias rather than replacing
+     * the one a table scan already carries, so {@code scan("employee")
+     * .as("employee_manager")} leaves both names matching the same input.
+     * A self-join has the real table on the other side of the join carrying
+     * the same name, so {@code field(2, "employee", "supervisor_id")} can
+     * resolve against the alias instead -- turning the join condition into a
+     * comparison of two columns of one table, which Calcite renders as a
+     * filter inside that scan plus a CROSS JOIN, and the query returns
+     * nothing. Projecting first gives the frame a clean slate, because a
+     * Project carries no alias of its own.
+     *
+     * @param b Builder to push the scan onto
+     * @param physName Table name in the database
+     * @param alias Name the request refers to this scan by
+     */
+    private static void scanAs(RelBuilder b, String physName, String alias) {
+        b.scan(physName);
+        // Wrap in a Project, then pop and re-push it. RelBuilder derives a
+        // frame's alias from the RelNode, and only a TableScan has one -- so
+        // re-pushing a Project gives fields with no alias at all, and the as()
+        // below is then the only name they answer to. Projecting alone is not
+        // enough: RelBuilder carries the input frame's aliases through a
+        // projection.
+        b.project(b.fields(), b.peek().getRowType().getFieldNames(), true);
+        b.push(b.build());
+        b.as(alias);
+    }
+
     private RelNode build(RelBuilder b, PlannerRequest req) {
         // Cross-measure-group tuple read: UNION (distinct) of one
         // fact-rooted member sub-query per measure group, with a single
@@ -758,7 +789,7 @@ public final class CalciteSqlPlanner {
         if (req.factPhysName != null
             && !req.factPhysName.equals(req.factTable))
         {
-            b.scan(req.factPhysName).as(req.factTable);
+            scanAs(b, req.factPhysName, req.factTable);
         } else {
             // Alias even when it matches the scanned name. RelBuilder derives
             // a frame's alias from the RelNode, and only a TableScan carries
@@ -777,7 +808,7 @@ public final class CalciteSqlPlanner {
             // alias so b.field(2, dimAlias, ...) below resolves against
             // the correct LHS slot.
             if (j.physName != null && !j.physName.equals(j.dimTable)) {
-                b.scan(j.physName).as(j.dimTable);
+                scanAs(b, j.physName, j.dimTable);
             } else {
                 // Always alias; see the fact-table scan above.
                 b.scan(j.dimTable).as(j.dimTable);

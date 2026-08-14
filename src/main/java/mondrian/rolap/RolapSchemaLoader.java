@@ -2376,9 +2376,17 @@ public class RolapSchemaLoader {
         try {
             graph.findPath(pathBuilder, expr.relation);
         } catch (RolapSchema.PhysSchemaException e) {
-            // TODO: user error
-            throw Util.newInternal(
-                e, "Could not find path to " + expr.relation);
+            // No path following links from foreign key to primary key. A
+            // self-join has none -- the alias is reached from the table, not
+            // the other way round -- so try walking the links backwards
+            // before giving up. See PhysSchemaGraph.findPath.
+            try {
+                graph.findPath(pathBuilder, expr.relation, false);
+            } catch (RolapSchema.PhysSchemaException e2) {
+                // TODO: user error
+                throw Util.newInternal(
+                    e, "Could not find path to " + expr.relation);
+            }
         }
         final RolapStar star = measureGroup.getStar();
         RolapStar.Table starTable = star.getTable(pathBuilder.done());
