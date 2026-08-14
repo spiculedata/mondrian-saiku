@@ -2412,14 +2412,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
             measure.getPropertyValue(Property.MEMBER_CAPTION));
         checkAnnotations(measure.getAnnotationMap(), "a", "Measure");
 
-        // The implicitly created [Fact Count] measure
-        final Member factCountMeasure = measures.get(1);
-        assertEquals("Fact Count", factCountMeasure.getName());
-        assertEquals(
-            false,
-            factCountMeasure.getPropertyValue(Property.VISIBLE));
-
-        final Member calcMeasure = measures.get(2);
+        // No implicit [Fact Count] member: this schema exposes exactly
+        // [Unit Sales] and the calculated [Foo]. A fact-count measure is
+        // internal here (aggregate-table matching, avg rollup) rather than a
+        // member of the Measures level. Surfacing one would change every
+        // metadata consumer — MDSCHEMA_MEASURES included — which is a
+        // decision of its own, not something for a caption test to assert.
+        final Member calcMeasure = measures.get(1);
         assertEquals("Foo", calcMeasure.getName());
         assertEquals("Calc member caption", calcMeasure.getCaption());
         assertEquals("Calc member description", calcMeasure.getDescription());

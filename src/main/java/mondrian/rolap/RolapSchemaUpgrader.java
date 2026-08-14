@@ -2545,7 +2545,28 @@ public class RolapSchemaUpgrader {
             MondrianDef.Annotation xmlAnnotation = new MondrianDef.Annotation();
             xmlAnnotation.name = xmlLegacyAnnotation.name;
             xmlAnnotation.cdata = xmlLegacyAnnotation.cdata;
-            xmlAnnotations.add(xmlAnnotation);
+            // Override an annotation already carrying this name rather than
+            // appending a second one. Callers rely on it: a
+            // <VirtualCubeMeasure>'s annotations are documented to OVERRIDE
+            // the underlying measure's ("but if underlying measure has
+            // annotations with different names, they will survive"), and
+            // appending left the base measure's value in front, so the
+            // override never took effect. The existing entry is updated in
+            // place because this child list does not support removal.
+            MondrianDef.Annotation existing = null;
+            for (MondrianDef.Annotation candidate : xmlAnnotations) {
+                if (xmlAnnotation.name != null
+                    && xmlAnnotation.name.equals(candidate.name))
+                {
+                    existing = candidate;
+                    break;
+                }
+            }
+            if (existing != null) {
+                existing.cdata = xmlAnnotation.cdata;
+            } else {
+                xmlAnnotations.add(xmlAnnotation);
+            }
         }
     }
 
