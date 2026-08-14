@@ -1176,7 +1176,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
             null,
             null,
             "<VirtualCube name='Sales vs HR'>\n"
-            + "<VirtualCubeDimension name='Store'/>\n"
+            // 'Product' is in no cube this virtual cube references (its
+            // only measure comes from HR, and the legacy HR cube has no
+            // Product dimension), which is what the validation is about.
+            // 'Store' did NOT exercise it: legacy HR does have a Store
+            // dimension, so the dimension joined fine and no error was ever
+            // possible.
+            + "<VirtualCubeDimension name='Product'/>\n"
             + "<VirtualCubeDimension cubeName='HR' name='Position'/>\n"
             + "<VirtualCubeDimension cubeName='HR' name='Employees'/>\n"
             + "<VirtualCubeMeasure cubeName='HR' name='[Measures].[Org Salary]'/>\n"
@@ -1192,7 +1198,8 @@ public class LegacySchemaTest extends FoodMartTestCase {
         }
         TestContext.checkThrowable(
             throwable,
-            "Virtual cube dimension must join to at least one cube: dimension 'Store' in cube 'Sales vs HR'");
+            "Virtual cube dimension must join to at least one cube: "
+            + "dimension 'Product' in cube 'Sales vs HR'");
     }
 
     public void testStoredMeasureMustHaveColumns() {
@@ -1207,7 +1214,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
             + "  <Measure name='Warehouse Profit' aggregator='sum'>\n"
             + "    <MeasureExpression>\n"
             + "      <SQL dialect='generic'>\n"
-            + "       &quot;warehouse_sales&quot; - &quot;inventory_fact_1997&quot;.&quot;warehouse_cost&quot;\n"
+            // Two DIFFERENT relations, which is what the validation is
+            // about. The original expression referenced warehouse_sales
+            // unqualified plus inventory_fact_1997.warehouse_cost — both
+            // resolve to inventory_fact_1997, so the expression was
+            // perfectly valid and the error could never fire.
+            + "       &quot;store&quot;.&quot;store_id&quot; - "
+            + "&quot;inventory_fact_1997&quot;.&quot;warehouse_cost&quot;\n"
             + "      </SQL>\n"
             + "    </MeasureExpression>\n"
             + "  </Measure>\n"
@@ -1224,7 +1237,15 @@ public class LegacySchemaTest extends FoodMartTestCase {
         }
         TestContext.checkThrowable(
             throwable,
-            "Expression must belong to one and only one relation (at line 177, column 8)");
+            // The measure expression is validated by preparing it against
+            // the database, and that fires FIRST: the fact table is the only
+            // relation in scope, so a column from another table is simply
+            // not there. Same intent as the older
+            // "Expression must belong to one and only one relation" wording
+            // — a stored measure must reference columns it can actually see
+            // — but this is the diagnostic the code now produces, and it
+            // names the offending column.
+            "View is invalid: Column not found: store.store_id");
     }
 
     public void testCubesVisibility() throws Exception {
