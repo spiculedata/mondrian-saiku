@@ -3103,40 +3103,6 @@ public class RolapSchemaUpgrader {
      * @param links Required links from fact table to dimension
      * @return Converted level
      */
-    /**
-     * Copies a Mondrian 3 {@code <Level internalType=...>} onto the physical
-     * column the level keys on.
-     *
-     * @param xmlLegacyLevel Mondrian 3 level
-     * @param relations Relations of the hierarchy, by alias
-     * @param relation Default relation of the hierarchy
-     */
-    private void applyLegacyInternalType(
-        Mondrian3Def.Level xmlLegacyLevel,
-        Map<String, RolapSchema.PhysRelation> relations,
-        RolapSchema.PhysRelation relation)
-    {
-        if (xmlLegacyLevel.internalType == null
-            || xmlLegacyLevel.column == null)
-        {
-            return;
-        }
-        final RolapSchema.PhysRelation levelRelation =
-            xmlLegacyLevel.table == null
-                ? relation
-                : relations.get(xmlLegacyLevel.table);
-        if (levelRelation == null) {
-            return;
-        }
-        final RolapSchema.PhysColumn physColumn =
-            levelRelation.getColumn(xmlLegacyLevel.column, false);
-        if (physColumn != null) {
-            physColumn.setInternalType(
-                RolapSchemaLoader.toInternalType(
-                    xmlLegacyLevel.internalType));
-        }
-    }
-
     private MondrianDef.Level convertLevel(
         MondrianDef.Dimension xmlDimension,
         MondrianDef.Hierarchy xmlHierarchy,
@@ -3158,11 +3124,6 @@ public class RolapSchemaUpgrader {
         xmlAttribute.caption = xmlLegacyLevel.caption;
         xmlAttribute.captionColumn = xmlLegacyLevel.captionColumn; // ??
         xmlAttribute.keyColumn = xmlLegacyLevel.column;
-        // Mondrian 3 declares internalType on the <Level>; Mondrian 4 on the
-        // <ColumnDef>. Carry it across, or a key too large for an int -- the
-        // whole point of the attribute (MONDRIAN-896) -- comes back as a
-        // double and members read 1.234567890123E12.
-        applyLegacyInternalType(xmlLegacyLevel, relations, relation);
         xmlAttribute.name =
             Util.uniquify(
                 xmlLegacyLevel.name,
