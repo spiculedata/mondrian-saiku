@@ -2192,6 +2192,30 @@ public class RolapSchemaUpgrader {
     {
         MondrianDef.Schema xmlSchema = new MondrianDef.Schema();
         xmlSchema.name = xmlLegacySchema.name;
+        // Carry the schema-level defaultRole across the conversion. Dropping
+        // it silently ignored the operator's choice of default role AND
+        // suppressed the loader's "Role 'x' not found" diagnostic, since the
+        // loader only validates an attribute that survives to the converted
+        // schema (mondrian.test.LegacySchemaTest.testInvalidRoleError).
+        xmlSchema.defaultRole = xmlLegacySchema.defaultRole;
+        if (xmlLegacySchema.defaultRole != null) {
+            boolean found = false;
+            for (Mondrian3Def.Role xmlLegacyRole : xmlLegacySchema.roles) {
+                if (xmlLegacySchema.defaultRole.equals(xmlLegacyRole.name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Report against the LEGACY node: it came from the parsed
+                // document and therefore carries an XML location, where the
+                // converted schema's nodes are synthesised and cannot.
+                loader.getHandler().warning(
+                    "Role '" + xmlLegacySchema.defaultRole + "' not found",
+                    xmlLegacySchema,
+                    "defaultRole");
+            }
+        }
         xmlSchema.metamodelVersion =
             MondrianServer.forConnection(schema.getInternalConnection())
                 .getVersion().getVersionString();

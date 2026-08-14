@@ -1302,8 +1302,13 @@ public class LegacySchemaTest extends FoodMartTestCase {
                 "<Schema name='FoodMart' defaultRole='Unknown'");
         final TestContext testContext =
             getTestContext().withSchema(schema);
+        // A LEGACY node renders unnamed — "(in Schema)" — because
+        // Mondrian-3 element classes do not implement NamedElement. That is
+        // the established convention here: testCubeRequiresFactTable,
+        // testCubeHasFact and testDimensionRequiresForeignKey all expect the
+        // same unnamed form.
         testContext.assertErrorList().containsError(
-            "Role 'Unknown' not found \\(in Schema 'FoodMart'\\) \\(at ${pos}\\)",
+            "Role 'Unknown' not found \\(in Schema\\) \\(at ${pos}\\)",
             "<Schema name='FoodMart' defaultRole='Unknown'>");
     }
 
