@@ -3672,11 +3672,27 @@ public final class CalcitePlannerAdapters {
             // weight just like plain ones.
             PlannerRequest.Measure base;
             if (rawExpr == null) {
-                // Synthetic/null-expression measure → SUM(NULL).
+                // Synthetic/null-expression measure. SUM(NULL) is NULL,
+                // which is the right "no value" answer for SUM/MIN/MAX.
+                //
+                // COUNT is different, and getting it wrong is silent: a
+                // column-less <Measure aggregator='count'/> is a FACT COUNT
+                // — count the rows — but COUNT(NULL) is 0, not the row
+                // count. The measure came back as 0 for every cell while
+                // legacy answered 86,837. Aggregate a non-null literal
+                // instead, which is COUNT(*) by another spelling.
+                //
+                // A DISTINCT count always carries a column (you cannot
+                // distinct-count "the rows"), so it keeps the NULL operand
+                // rather than silently counting 1.
+                final Object nullExprOperand =
+                    op.fn == PlannerRequest.AggFn.COUNT && !op.distinct
+                        ? Integer.valueOf(1)
+                        : PlannerRequest.Measure.NULL_LITERAL;
                 base = new PlannerRequest.Measure(
                     op.fn,
                     new PlannerRequest.Column(factTable.getAlias(), alias),
-                    alias, op.distinct, PlannerRequest.Measure.NULL_LITERAL);
+                    alias, op.distinct, nullExprOperand);
             } else if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
                 if (op.fn == PlannerRequest.AggFn.PERCENTILE_CONT) {
