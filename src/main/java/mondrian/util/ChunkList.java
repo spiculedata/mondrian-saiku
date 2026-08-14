@@ -718,7 +718,19 @@ public class ChunkList<E> extends AbstractSequentialList<E>
                 setElement(chunk, end, null); // allow gc
                 setEnd(chunk, end);
                 if (b) {
-                    if (nextIndex == end) {
+                    this.end = end;
+                    if (lastReturned < this.nextIndex) {
+                        // The cursor was left just past the element next()
+                        // returned, and everything after that element has
+                        // just shifted down one slot. Bring the cursor back
+                        // so it still points at the same logical element --
+                        // without this, remove() skips an element and the
+                        // iterator walks off the shrinking end of the chunk
+                        // (AbstractList.removeRange, i.e. subList().clear(),
+                        // does exactly next()/remove() in a loop).
+                        this.nextIndex = pos;
+                    }
+                    if (this.nextIndex >= end) {
                         final Object[] next = ChunkList.next(chunk);
                         if (next != null) {
                             startIndex += (end - HEADER_SIZE);
@@ -726,8 +738,6 @@ public class ChunkList<E> extends AbstractSequentialList<E>
                             this.nextIndex = HEADER_SIZE;
                             this.end = end(next);
                         }
-                    } else {
-                        this.end = end;
                     }
                 }
             }
@@ -742,6 +752,18 @@ public class ChunkList<E> extends AbstractSequentialList<E>
         }
 
         public void add(E e) {
+            if (chunk == null && last != null) {
+                // The cursor ran off the end of the last chunk -- next()
+                // clears `chunk` once it has returned the final element.
+                // Adding here means appending to the list, so re-seat the
+                // cursor on the last chunk first; otherwise the branch below
+                // reads the null chunk as "empty list" and starts a fresh
+                // one, dropping everything already in it.
+                chunk = last;
+                end = end(chunk);
+                nextIndex = end;
+                startIndex = size - (end - HEADER_SIZE);
+            }
             if (nextIndex == end) {
                 if (chunk == null) {
                     // Allocate a new chunk.
