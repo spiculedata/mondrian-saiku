@@ -201,6 +201,23 @@ public class SqlStatisticsProvider implements StatisticsProvider {
                             + table + "." + column + " — falling back to "
                             + "legacy SQL: " + e.getMessage());
                     }
+                    if (!mondrian.calcite.CalciteFallbackPolicy
+                        .unsupportedShapeMayFallBack())
+                    {
+                        // strict=full forbids running legacy SQL. A
+                        // cardinality probe is only an optimizer hint, and
+                        // -1 already means "unknown", so skip the probe
+                        // rather than either executing legacy SQL or
+                        // hard-failing the user's query over a hint.
+                        LOGGER.warn(
+                            "Calcite cardinality probe unsupported for "
+                            + table + "." + column + " and "
+                            + mondrian.calcite.CalciteFallbackPolicy
+                                .STRICT_PROPERTY
+                            + "=full forbids the legacy probe; continuing "
+                            + "with unknown cardinality.");
+                        return -1;
+                    }
                 }
             }
             // planner == null => CalciteDialectMap returned no mapping for

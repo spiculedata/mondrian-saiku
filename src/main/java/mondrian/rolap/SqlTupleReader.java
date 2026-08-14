@@ -858,10 +858,22 @@ public class SqlTupleReader implements TupleReader {
                             boolean known =
                                 ex instanceof mondrian.calcite
                                     .UnsupportedTranslation;
+                            if (known
+                                && !mondrian.calcite.CalciteFallbackPolicy
+                                    .unsupportedShapeMayFallBack())
+                            {
+                                // strict=full: never serve a Calcite-backed
+                                // read from the legacy generator. On a
+                                // dialect legacy cannot generate for, the
+                                // fallback would fail anyway — and as a
+                                // dialect error rather than as the coverage
+                                // gap it really is.
+                                throw mondrian.calcite.CalciteFallbackPolicy
+                                    .noFallback("tuple-read", ex);
+                            }
                             if (!known
-                                && !"false".equals(
-                                    System.getProperty(
-                                        "mondrian.calcite.strict")))
+                                && !mondrian.calcite.CalciteFallbackPolicy
+                                    .unknownFailureMayFallBack())
                             {
                                 throw ex;
                             }
