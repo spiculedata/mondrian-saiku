@@ -33,7 +33,10 @@ public class SqlTupleReaderTest extends FoodMartTestCase {
 
     @Override
     protected void tearDown() throws Exception {
-        propSaver.reset();
+        // super.tearDown() is what resets propSaver. Duplicating its body
+        // instead means this class silently skips anything the base class
+        // starts cleaning up later.
+        super.tearDown();
     }
 
     public void testAddLevelMembersSqlOrderByAliasCalcExpr() {

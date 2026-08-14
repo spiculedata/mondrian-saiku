@@ -54,32 +54,46 @@ public class CacheControlTest extends FoodMartTestCase {
      * @param testContext Test context
      */
     public static void flushCache(TestContext testContext) {
-        // Drop the schema pool first. The segment cache is JVM-wide, and the
-        // loop below can only reach the cubes of THIS schema -- segments left
-        // by another test's substituted schema would survive it and then show
-        // up in the "cache is empty" check below, which is why these tests
-        // passed alone and failed in a full run.
+        // Two passes, in this order. The segment cache is JVM-wide while a
+        // measures region only reaches the cubes of one schema, so neither
+        // step alone leaves a blank page: flushing regions first evicts what
+        // THIS schema put there, dropping the pool then discards the schemas
+        // another test substituted, and the second pass starts from the fresh
+        // schema that replaces them. Dropping the pool first would leave the
+        // first schema's segments in the cache with nothing left to address
+        // them by -- which is what made these tests pass alone and fail in a
+        // full run.
+        flushMeasuresRegions(testContext);
         testContext.flushSchemaCache();
-
-        final CacheControl cacheControl =
-            testContext.getConnection().getCacheControl(null);
-
-        // Flush the entire cache.
-        CellRegion measuresRegion = null;
-        for (Cube cube
-            : testContext.getConnection().getSchema().getCubes())
-        {
-            measuresRegion =
-                cacheControl.createMeasuresRegion(cube);
-          cacheControl.flush(measuresRegion);
-        }
+        final CellRegion measuresRegion = flushMeasuresRegions(testContext);
 
         // Check the cache is empty.
+        final CacheControl cacheControl =
+            testContext.getConnection().getCacheControl(null);
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
         cacheControl.printCacheState(pw, measuresRegion);
         pw.flush();
         assertEquals("", sw.toString());
+    }
+
+    /**
+     * Flushes the measures region of every cube in the context's schema.
+     *
+     * @param testContext Test context
+     * @return the last region flushed, for use in a cache-state check
+     */
+    private static CellRegion flushMeasuresRegions(TestContext testContext) {
+        final CacheControl cacheControl =
+            testContext.getConnection().getCacheControl(null);
+        CellRegion measuresRegion = null;
+        for (Cube cube
+            : testContext.getConnection().getSchema().getCubes())
+        {
+            measuresRegion = cacheControl.createMeasuresRegion(cube);
+            cacheControl.flush(measuresRegion);
+        }
+        return measuresRegion;
     }
 
     /**
