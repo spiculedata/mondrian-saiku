@@ -57,6 +57,13 @@ public class CacheTest extends FoodMartTestCase {
         String iteration)
         throws InterruptedException, ExecutionException
     {
+        // Drop the schema pool first. The segment cache is JVM-wide, and the
+        // measures-region flush below can only reach this schema's cubes, so
+        // a segment left by another test's substituted schema could still
+        // answer the queries -- no segment would be created and the "exactly
+        // one segment" assertion would compare identical counters.
+        getTestContext().flushSchemaCache();
+
         final MondrianServer server =
             MondrianServer.forConnection(getConnection());
         final CacheControl cacheControl =

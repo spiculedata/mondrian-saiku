@@ -54,6 +54,13 @@ public class CacheControlTest extends FoodMartTestCase {
      * @param testContext Test context
      */
     public static void flushCache(TestContext testContext) {
+        // Drop the schema pool first. The segment cache is JVM-wide, and the
+        // loop below can only reach the cubes of THIS schema -- segments left
+        // by another test's substituted schema would survive it and then show
+        // up in the "cache is empty" check below, which is why these tests
+        // passed alone and failed in a full run.
+        testContext.flushSchemaCache();
+
         final CacheControl cacheControl =
             testContext.getConnection().getCacheControl(null);
 
