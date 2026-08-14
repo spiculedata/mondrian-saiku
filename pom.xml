@@ -534,7 +534,15 @@ class MondrianServerVersion {
                javaagent flag, and surefire concatenates that with our
                add-opens. Without @{argLine} JaCoCo's coverage agent
                wouldn't load and the report would be empty. -->
-          <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argLine>
+          <!-- Locale and time zone are pinned so results do not depend on
+               the developer's machine. Mondrian formats numbers, currency
+               and dates through the JDK's locale data, so a UK box turned
+               `$1.00` into `£1.00` and shifted week-of-year by one — tests
+               that passed in CI failed locally, and vice versa. en_US/UTC
+               is what the expected strings in FormatTest / VbaTest /
+               I18nTest are written against. Tests that need another locale
+               set it explicitly. -->
+          <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Duser.language=en -Duser.country=US -Duser.timezone=UTC</argLine>
           <!-- Exclude tests that depend on olap4j-tck (not in deps), or legacy JUnit 3 loader. -->
           <excludes>
             <exclude>**/AbstractMondrianOlap4jTester.java</exclude>

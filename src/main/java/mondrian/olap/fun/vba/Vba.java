@@ -70,6 +70,73 @@ public class Vba {
 
     // public Currency cCur(Object expression)
 
+    /**
+     * Whitespace directly before a trailing AM/PM marker — one of the two
+     * places where modern JDK locale data disagrees with what people type.
+     */
+    private static final Pattern AM_PM_SEPARATOR =
+        Pattern.compile("[ \\u00A0\\u202F]+(?=[AaPp][Mm]\\.?\\s*$)");
+
+    /**
+     * The space between a four-digit year and a following time — the other
+     * such place. CLDR now writes ", " here where it used to write " ".
+     */
+    private static final Pattern DATE_TIME_SEPARATOR =
+        Pattern.compile("(?<=\\d{4}) (?=\\d{1,2}:)");
+
+    /**
+     * Returns the spellings of {@code s} to attempt when parsing a date.
+     *
+     * <p>The JDK's locale data has changed twice in ways that break date
+     * strings people have typed for years, and that sit inside existing MDX:
+     *
+     * <ul>
+     *   <li>since JDK 20, a NARROW NO-BREAK SPACE (U+202F) separates the
+     *       time from the AM/PM marker, so {@code "4:35:47 PM"} with a plain
+     *       space no longer parses;</li>
+     *   <li>the date-time pattern gained a comma, so
+     *       {@code "October 19, 1962 4:35:47 PM"} no longer parses as a
+     *       date AND time — it degrades to the date alone, silently losing
+     *       the time.</li>
+     * </ul>
+     *
+     * <p>Rather than pin a JDK, {@link #cDate} tries each spelling. The
+     * unmodified string is always first, so anything that parsed before
+     * still parses the same way; the rest only widen what is accepted.
+     */
+    private static List<String> amPmSpellings(String s) {
+        final List<String> out = new ArrayList<String>(6);
+        for (String withAmPm : amPmVariants(s)) {
+            addIfAbsent(out, withAmPm);
+            addIfAbsent(
+                out,
+                DATE_TIME_SEPARATOR.matcher(withAmPm).replaceAll(", "));
+        }
+        return out;
+    }
+
+    /** {@code s} with each spelling of the AM/PM separator. */
+    private static List<String> amPmVariants(String s) {
+        final Matcher matcher = AM_PM_SEPARATOR.matcher(s);
+        if (!matcher.find()) {
+            return Collections.singletonList(s);
+        }
+        return Arrays.asList(
+            s,
+            matcher.replaceAll(" "),
+            // Single-backslash escapes: these must be the CHARACTERS, not
+            // regex escapes — Matcher.replaceAll does not interpret
+            // \\uXXXX in a replacement string.
+            matcher.replaceAll("\u202F"),
+            matcher.replaceAll("\u00A0"));
+    }
+
+    private static void addIfAbsent(List<String> list, String s) {
+        if (!list.contains(s)) {
+            list.add(s);
+        }
+    }
+
     @FunctionName("CDate")
     @Signature("CDate(date)")
     @Description(
@@ -86,23 +153,38 @@ public class Vba {
             // times
             // "October 19, 1962"
             // "4:35:47 PM"
-            try {
-                return DateFormat.getTimeInstance().parse(str);
-            } catch (ParseException ex0) {
-                try {
-                    return DateFormat.getDateTimeInstance().parse(str);
-                } catch (ParseException ex1) {
+            //
+            // Since JDK 20 the CLDR locale data separates the time from the
+            // AM/PM marker with a NARROW NO-BREAK SPACE (U+202F), so the
+            // parsers below reject the plain ASCII space that users — and
+            // every pre-existing MDX expression — actually type. Normalize
+            // the no-break space variants to whatever this JDK's locale
+            // data uses before parsing, so both spellings are accepted.
+            // Format precedence is the OUTER loop and spelling the inner
+            // one, which matters: DateFormat.parse ignores trailing text,
+            // so the date-only format would happily swallow
+            // "October 19, 1962 4:35:47 PM" and silently drop the time if
+            // it were reached before the date-time format had been tried
+            // against every spelling.
+            final List<String> spellings = amPmSpellings(str);
+            for (DateFormat format : new DateFormat[] {
+                DateFormat.getTimeInstance(),
+                DateFormat.getDateTimeInstance(),
+                DateFormat.getDateInstance()})
+            {
+                for (String candidate : spellings) {
                     try {
-                        return DateFormat.getDateInstance().parse(str);
-                    } catch (ParseException ex2) {
-                        throw new InvalidArgumentException(
-                            "Invalid parameter. "
-                            + "expression parameter of CDate function must be "
-                            + "formatted correctly ("
-                            + String.valueOf(expression) + ")");
+                        return format.parse(candidate);
+                    } catch (ParseException e) {
+                        // Try the next spelling, then the next format.
                     }
                 }
             }
+            throw new InvalidArgumentException(
+                "Invalid parameter. "
+                + "expression parameter of CDate function must be "
+                + "formatted correctly ("
+                + String.valueOf(expression) + ")");
         }
     }
 

@@ -33,6 +33,10 @@ import java.util.*;
 public class I18nTest extends FoodMartTestCase {
     public static final char Euro = '\u20AC';
     public static final char Nbsp = '\u00A0';
+    /** NARROW NO-BREAK SPACE. Modern CLDR uses this, rather than
+     * {@link #Nbsp}, as the French group separator and as the
+     * separator before AM/PM in en_US. */
+    public static final char Nnbsp = '\u202F';
     public static final char EA = '\u00e9'; // e acute
     public static final char UC = '\u00FB'; // u circumflex
 
@@ -51,7 +55,7 @@ public class I18nTest extends FoodMartTestCase {
         // Currency too
         Format currencyFormat = new Format("Currency", spanish);
         assertEquals(
-            "1.234.567,79 " + Euro,
+            "1.234.567,79\u00A0" + Euro,
             currencyFormat.format(new Double(1234567.789)));
 
         // Dates
@@ -71,7 +75,7 @@ public class I18nTest extends FoodMartTestCase {
     public void testAutoFrench() {
         // Create a connection in French.
         String localeName = "fr_FR";
-        String resultString = "12" + Nbsp + "345,67";
+        String resultString = "12" + Nnbsp + "345,67";
         assertFormatNumber(localeName, resultString);
     }
 
