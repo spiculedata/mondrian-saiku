@@ -3250,6 +3250,19 @@ public class RolapSchemaLoader {
             }
         } else {
             // degenerate dim, should only be a single attribute
+            if (attributeList.isEmpty()) {
+                // No key and no attributes to infer one from. Report it as
+                // the schema error it is; reading attributeList.get(0) below
+                // would raise a bare IndexOutOfBoundsException naming
+                // nothing. Reached by a Mondrian 3 <Dimension> element in a
+                // Mondrian 4 schema, whose attributes live in <Attributes>.
+                getHandler().error(
+                    MondrianResource.instance()
+                    .DimensionKeyOmitted.ex(xmlDimension.name),
+                    validator.getXmls(dimension),
+                    null);
+                return null;
+            }
             if (attributeList.size() > 1) {
                 getHandler().error(
                     MondrianResource.instance()

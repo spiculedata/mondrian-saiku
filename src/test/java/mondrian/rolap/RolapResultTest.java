@@ -286,7 +286,9 @@ Axis #2:
     }
 
     public void testNonAllPromotionMembers() {
-        TestContext testContext = TestContext.instance().createSubstitutingCube(
+        // Mondrian 3 dimension XML, so a Mondrian 3 context.
+        TestContext testContext =
+            TestContext.instance().legacy().createSubstitutingCube(
             "Sales",
             "<Dimension name=\"Promotions2\" foreignKey=\"promotion_id\">\n"
             + "  <Hierarchy hasAll=\"false\" primaryKey=\"promotion_id\">\n"
@@ -302,14 +304,21 @@ Axis #2:
             "Axis #0:\n"
             + "{}\n"
             + "Axis #1:\n"
-            + "{[Promotions2].[Price Winners], [Time].[Time].[1997]}\n"
-            + "{[Promotions2].[Price Winners], [Time].[Time].[1998]}\n"
-            + "{[Promotions2].[Sale Winners], [Time].[Time].[1997]}\n"
-            + "{[Promotions2].[Sale Winners], [Time].[Time].[1998]}\n"
+            + "{[Promotions2].[Promotions2].[Price Winners],"
+            + " [Time].[Time].[1997]}\n"
+            + "{[Promotions2].[Promotions2].[Price Winners],"
+            + " [Time].[Time].[1998]}\n"
+            + "{[Promotions2].[Promotions2].[Sale Winners],"
+            + " [Time].[Time].[1997]}\n"
+            + "{[Promotions2].[Promotions2].[Sale Winners],"
+            + " [Time].[Time].[1998]}\n"
             + "Axis #2:\n"
-            + "{[Store].[USA], [Store].[Store Type].[Mid-Size Grocery]}\n"
-            + "{[Store].[USA], [Store].[Store Type].[Small Grocery]}\n"
-            + "{[Store].[USA], [Store].[Store Type].[Supermarket]}\n"
+            + "{[Store].[Store].[USA],"
+            + " [Store Type].[Store Type].[Mid-Size Grocery]}\n"
+            + "{[Store].[Store].[USA],"
+            + " [Store Type].[Store Type].[Small Grocery]}\n"
+            + "{[Store].[Store].[USA],"
+            + " [Store Type].[Store Type].[Supermarket]}\n"
             + "Row #0: \n"
             + "Row #0: \n"
             + "Row #0: 444\n"
