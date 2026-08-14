@@ -6109,7 +6109,7 @@ public class RolapSchemaLoader {
             "String", SqlStatement.Type.STRING,
             "long", SqlStatement.Type.LONG);
 
-    private static SqlStatement.Type toInternalType(String internalTypeName) {
+    static SqlStatement.Type toInternalType(String internalTypeName) {
         SqlStatement.Type type = VALUES.get(internalTypeName);
         if (type == null && internalTypeName != null) {
             throw Util.newError(

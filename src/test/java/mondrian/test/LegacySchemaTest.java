@@ -484,8 +484,16 @@ public class LegacySchemaTest extends FoodMartTestCase {
             + "</Cube>", null, null, null, null)
             .assertErrorList()
             .containsError(
-                ".*Relation sales_fact_1997 does not contain column invalid_column",
-                "");
+                ".*Relation sales_fact_1997 does not contain column"
+                + " invalid_column",
+                // null, not "": the schema upgrader raises this one while
+                // registering the relation, where it no longer has the XML
+                // node to point at, so there is no location to check. Every
+                // other case in this class names the element the error should
+                // point to and matches ${pos}; passing "" here asked for a
+                // location at offset 0 of the schema, which is not what the
+                // test means.
+                null);
     }
 
     /**
@@ -1557,7 +1565,9 @@ public class LegacySchemaTest extends FoodMartTestCase {
     public void testLevelInternalType() {
         // One of the keys is larger than Integer.MAX_VALUE (2 billion), so
         // will only work if we use long values.
-        TestContext testContext = getTestContext().createSubstitutingCube(
+        // Mondrian 3 dimension XML, so a Mondrian 3 context.
+        TestContext testContext =
+            getTestContext().legacy().createSubstitutingCube(
             "Sales",
             "  <Dimension name='Big numbers' foreignKey='promotion_id'>\n"
             + "    <Hierarchy hasAll='false' primaryKey='id'>\n"
@@ -2107,10 +2117,14 @@ public class LegacySchemaTest extends FoodMartTestCase {
             if (cube.getName().equals("Warehouse and Sales")) {
                 for (Dimension dim : cube.getDimensionList()) {
                     if (dim.isMeasures()) {
+                        // Ask the CUBE's schema reader. Calculated members
+                        // are cube-scoped, and the connection's schema-level
+                        // reader has no cube to find them in -- it answers
+                        // with an empty list whether or not the conversion
+                        // kept them, which is what this test is checking.
                         List<Member> members =
-                            context.getConnection()
-                                .getSchemaReader().getLevelMembers(
-                                    dim.getHierarchy().getLevelList().get(0),
+                            cube.getSchemaReader(null).getLevelMembers(
+                                dim.getHierarchy().getLevelList().get(0),
                                 true);
                         assertTrue(
                             members.toString().contains(
@@ -2548,7 +2562,8 @@ public class LegacySchemaTest extends FoodMartTestCase {
      */
     public void testSnowflakeNotFunctionallyDependent() {
         final String cubeName = "SalesNotFD";
-        final TestContext testContext = getTestContext().create(
+        // Mondrian 3 cube XML, so a Mondrian 3 context.
+        final TestContext testContext = getTestContext().legacy().create(
             null,
             "<Cube name='" + cubeName + "' defaultMeasure='Unit Sales'>\n"
             + "  <Table name='sales_fact_1997'/>\n"

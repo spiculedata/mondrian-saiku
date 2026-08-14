@@ -560,7 +560,6 @@ class MondrianServerVersion {
             <exclude>**/mondrian/test/calcite/SqlDiffMatrixReportTest.java</exclude>
             <exclude>**/mondrian/test/calcite/PerfBenchmarkTest.java</exclude>
           </excludes>
-          <testFailureIgnore>true</testFailureIgnore>
         </configuration>
       </plugin>
 

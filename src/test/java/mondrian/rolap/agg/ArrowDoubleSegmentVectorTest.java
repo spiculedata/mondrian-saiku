@@ -191,6 +191,14 @@ public class ArrowDoubleSegmentVectorTest {
      */
     @Test
     public void perfSanityFloor_arrowWithin3xOfArray() {
+        org.junit.Assume.assumeFalse(
+            "A bytecode-instrumenting agent is attached (JaCoCo in the "
+            + "default build). Probes are inserted per basic block, so the "
+            + "two read paths are penalised by different amounts and the "
+            + "ratio measures the agent rather than the code. Run this "
+            + "without the agent -- mvn test -Djacoco.skip=true -- to "
+            + "exercise the floor.",
+            hasInstrumentingAgent());
         final int N = 100_000;
         final int iterations = 1_000;
         Random rng = new Random(0xC0FFEEL);
@@ -255,6 +263,21 @@ public class ArrowDoubleSegmentVectorTest {
             ratio < 3.0);
         // Floor only — no upper-bound floor on the array path.
         assertFalse("array path produced NaN", Double.isNaN(arraySum));
+    }
+
+    /**
+     * @return whether a {@code -javaagent} is attached to this JVM
+     */
+    private static boolean hasInstrumentingAgent() {
+        for (String arg
+            : java.lang.management.ManagementFactory
+                .getRuntimeMXBean().getInputArguments())
+        {
+            if (arg.startsWith("-javaagent")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Sums via {@code getDouble(i)} — the cell-evaluator hot path. */
