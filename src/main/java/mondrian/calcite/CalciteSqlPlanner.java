@@ -1176,6 +1176,79 @@ public final class CalciteSqlPlanner {
     private static RexNode tupleFilterRex(
         RelBuilder b, PlannerRequest.TupleFilter tf)
     {
+        if (tf.negated) {
+            return negatedTupleFilterRex(b, tf);
+        }
+        return positiveTupleFilterRex(b, tf);
+    }
+
+    /**
+     * MDX exclusion ({@code Not In} / {@code Except}): keep the rows that
+     * match NONE of the filter's rows.
+     *
+     * <p>Built as {@code AND over rows of (OR over columns of "column does
+     * not equal this row's value")} rather than by wrapping the positive
+     * predicate in {@code NOT}. That matters for NULLs, in both directions:
+     *
+     * <ul>
+     *   <li>{@code NOT (col = 'CA')} is UNKNOWN when col is NULL, so SQL
+     *       would drop a row that plainly is not 'CA'. Here the disjunct is
+     *       {@code col IS NULL OR col <> 'CA'}, which keeps it.</li>
+     *   <li>Excluding the NULL member itself must DROP null rows, so a null
+     *       row value becomes {@code col IS NOT NULL} — not a licence to
+     *       keep every null (mondrian.rolap.FilterTest
+     *       .testNotInFilterExcludeNullMember).</li>
+     * </ul>
+     *
+     * <p>It also emits only IS NULL / IS NOT NULL / {@code <>}, which every
+     * dialect supports, rather than relying on a NOT over a SEARCH/SARG or
+     * on IS [NOT] DISTINCT FROM.
+     */
+    private static RexNode negatedTupleFilterRex(
+        RelBuilder b, PlannerRequest.TupleFilter tf)
+    {
+        List<RexNode> ands = new ArrayList<>(tf.rows.size());
+        for (List<Object> row : tf.rows) {
+            List<RexNode> ors = new ArrayList<>(tf.columns.size());
+            for (int i = 0; i < tf.columns.size(); i++) {
+                Object v = row.get(i);
+                if (v
+                    == mondrian.calcite.CalcitePlannerAdapters.WILDCARD_VALUE)
+                {
+                    // Unconstrained in this row: it cannot make the row
+                    // differ, so it contributes no disjunct.
+                    continue;
+                }
+                RexNode col = b.field(tf.columns.get(i).name);
+                ors.add(notEqualNullSafe(b, col, v));
+            }
+            if (ors.isEmpty()) {
+                // A row with no constraints matches everything, so excluding
+                // it excludes everything.
+                return b.literal(false);
+            }
+            ands.add(ors.size() == 1 ? ors.get(0) : b.or(ors));
+        }
+        return ands.size() == 1 ? ands.get(0) : b.and(ands);
+    }
+
+    /**
+     * "{@code col} is not {@code literal}", with SQL NULLs treated as a
+     * value rather than as unknown: a NULL column differs from any non-null
+     * literal, and matches a null literal.
+     */
+    private static RexNode notEqualNullSafe(
+        RelBuilder b, RexNode col, Object literal)
+    {
+        if (literal == null) {
+            return b.isNotNull(col);
+        }
+        return b.or(b.isNull(col), b.notEquals(col, b.literal(literal)));
+    }
+
+    private static RexNode positiveTupleFilterRex(
+        RelBuilder b, PlannerRequest.TupleFilter tf)
+    {
         // Single-column tuple filter collapses to an OR-chain of equalities
         // (identical in shape to a multi-literal Filter) so single-column
         // OR reuses the same IN-list-like rendering.

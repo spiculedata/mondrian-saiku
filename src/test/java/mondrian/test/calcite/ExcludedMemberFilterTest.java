@@ -95,6 +95,54 @@ public class ExcludedMemberFilterTest {
             + "From [Sales]");
     }
 
+    /**
+     * The exclusion must be TRANSLATED by Calcite, not declined. An
+     * UnsupportedTranslation silently falls back to the legacy SQL
+     * generator, which is the one thing the Calcite path exists to avoid: on
+     * a dialect legacy cannot generate for, the fallback simply fails.
+     */
+    @Test public void exclusionIsTranslatedNotDeclinedToLegacy() {
+        MondrianProperties.instance().ExpandNonNative.set(false);
+        MondrianProperties.instance().EnableNativeFilter.set(true);
+        System.setProperty("mondrian.backend", "calcite");
+        SegmentLoader.clearCalcitePlannerCache();
+        final long before =
+            mondrian.calcite.CalcitePlannerAdapters.tupleReadUnsupportedCount();
+        FoodMartCapture.CapturedRun run = FoodMartCapture.executeCold(
+            new NamedMdx(
+                "excluded-member-sql",
+                "With "
+                + "Set [*NATIVE_CJ_SET] as 'NonEmptyCrossJoin("
+                + "[*BASE_MEMBERS_Customers],[*BASE_MEMBERS_Product])' "
+                + "Set [*BASE_MEMBERS_Customers] as "
+                + "'Filter([Customers].[City].Members,"
+                + "Ancestor([Customers].CurrentMember,"
+                + " [Customers].[State Province])"
+                + " Not In {[Customers].[All Customers].[USA].[CA]})' "
+                + "Set [*BASE_MEMBERS_Product] as "
+                + "'[Product].[Product Family].Members' "
+                + "Select {[Measures].[Unit Sales]} on columns, "
+                + "Non Empty [*NATIVE_CJ_SET] on rows From [Sales]"),
+            null);
+        assertEquals(
+            "the excluded-member read must not report an unsupported "
+            + "translation (which would fall back to legacy SQL)",
+            before,
+            mondrian.calcite.CalcitePlannerAdapters
+                .tupleReadUnsupportedCount());
+
+        boolean sawNegation = false;
+        for (CapturedExecution e : run.executions) {
+            if (e.sql.contains("state_province") && e.sql.contains("<>")) {
+                sawNegation = true;
+            }
+        }
+        assertTrue(
+            "expected Calcite-emitted SQL negating the excluded state: "
+            + run.executions,
+            sawNegation);
+    }
+
     private static void assertBackendsAgree(String mdx) {
         MondrianProperties.instance().ExpandNonNative.set(false);
         MondrianProperties.instance().EnableNativeFilter.set(true);

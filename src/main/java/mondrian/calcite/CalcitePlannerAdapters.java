@@ -2004,22 +2004,23 @@ public final class CalcitePlannerAdapters {
             return;
         }
         if (arg instanceof MemberListCrossJoinArg) {
-            if (((MemberListCrossJoinArg) arg).isExclude()) {
-                // The arg EXCLUDES these members (MDX `Not In`, `Except`).
-                // Emitting the IN-list below would return precisely the rows
-                // the query asked to leave out — the complement of the right
-                // answer, silently. Legacy negates it properly, including the
-                // NULL handling a negated multi-column key needs
-                // (SqlConstraintUtils.addMemberConstraint with exclude=true),
-                // so decline and let the read fall back there.
-                throw new UnsupportedTranslation(
-                    "fromTupleRead: MemberListCrossJoinArg with exclude=true "
-                    + "(Not In / Except) is not translated; falling back to "
-                    + "the legacy SQL generator, which negates the member "
-                    + "predicate correctly");
-            }
+            // The arg may EXCLUDE its members (MDX `Not In`, `Except`)
+            // rather than select them. Emitting the member list as a plain
+            // IN-list in that case returns precisely the rows the query
+            // asked to leave out — the complement of the right answer,
+            // silently — so the predicate is negated instead. This is
+            // translated here rather than declined: an UnsupportedTranslation
+            // falls back to the legacy SQL generator, which is exactly what
+            // the Calcite path exists to avoid (a dialect legacy cannot
+            // generate for would simply fail).
+            final boolean exclude =
+                ((MemberListCrossJoinArg) arg).isExclude();
             List<RolapMember> members = arg.getMembers();
             if (members == null || members.isEmpty()) {
+                if (exclude) {
+                    // Excluding nothing excludes nothing — no restriction.
+                    return;
+                }
                 // Mondrian treats this as a hard-coded FALSE predicate.
                 b.universalFalse(true);
                 return;
@@ -2056,7 +2057,12 @@ public final class CalcitePlannerAdapters {
                 for (RolapMember m : members) {
                     values.add(memberKeyLiteral(m));
                 }
-                if (values.size() == 1) {
+                if (exclude) {
+                    b.addTupleFilter(
+                        negatedTupleFilter(
+                            java.util.Collections.singletonList(col),
+                            values));
+                } else if (values.size() == 1) {
                     b.addFilter(
                         new PlannerRequest.Filter(col, values.get(0)));
                 } else {
@@ -2112,7 +2118,8 @@ public final class CalcitePlannerAdapters {
                         rows.add(row);
                     }
                     b.addTupleFilter(
-                        new PlannerRequest.TupleFilter(cols, rows));
+                        new PlannerRequest.TupleFilter(
+                            cols, rows, exclude));
                 }
                 if (!leafOnlyMembers.isEmpty()) {
                     RolapSchema.PhysColumn leaf =
@@ -2127,7 +2134,12 @@ public final class CalcitePlannerAdapters {
                     for (RolapMember m : leafOnlyMembers) {
                         values.add(unwrapSqlNull(m.getKey()));
                     }
-                    if (values.size() == 1) {
+                    if (exclude) {
+                        b.addTupleFilter(
+                            negatedTupleFilter(
+                                java.util.Collections.singletonList(col),
+                                values));
+                    } else if (values.size() == 1) {
                         b.addFilter(
                             new PlannerRequest.Filter(col, values.get(0)));
                     } else {
@@ -2142,6 +2154,23 @@ public final class CalcitePlannerAdapters {
         throw new UnsupportedTranslation(
             "fromTupleRead: unsupported CrossJoinArg subclass "
             + arg.getClass().getName());
+    }
+
+    /**
+     * A single-column NEGATED {@link PlannerRequest.TupleFilter} — "keep the
+     * rows whose {@code col} is none of {@code values}". Single-column
+     * exclusion goes through TupleFilter rather than
+     * {@link PlannerRequest.Filter} because Filter has no negated form and
+     * the renderer already handles a one-column TupleFilter.
+     */
+    private static PlannerRequest.TupleFilter negatedTupleFilter(
+        List<PlannerRequest.Column> cols, List<Object> values)
+    {
+        List<List<Object>> rows = new java.util.ArrayList<>(values.size());
+        for (Object v : values) {
+            rows.add(java.util.Collections.singletonList(v));
+        }
+        return new PlannerRequest.TupleFilter(cols, rows, true);
     }
 
     /** Extract a member's leaf key as a filter literal. Rejects composite

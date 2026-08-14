@@ -401,7 +401,23 @@ public final class PlannerRequest {
     public static final class TupleFilter {
         public final List<Column> columns;
         public final List<List<Object>> rows;
+        /**
+         * When true the predicate is NEGATED: keep the rows that match NONE
+         * of {@link #rows}. This is MDX exclusion ({@code Not In},
+         * {@code Except}) — a {@code MemberListCrossJoinArg} with
+         * {@code exclude=true}.
+         *
+         * <p>Rendered NULL-tolerantly, matching the legacy generator: a row
+         * whose key column is NULL cannot equal an excluded member, but
+         * {@code NOT (col = v)} is UNKNOWN for a NULL col and would drop it,
+         * so the renderer keeps such rows explicitly.
+         */
+        public final boolean negated;
         public TupleFilter(List<Column> columns, List<List<Object>> rows) {
+            this(columns, rows, false);
+        }
+        public TupleFilter(
+            List<Column> columns, List<List<Object>> rows, boolean negated) {
             if (columns == null || columns.isEmpty()) {
                 throw new IllegalArgumentException(
                     "TupleFilter requires at least one column");
@@ -426,6 +442,7 @@ public final class PlannerRequest {
             }
             this.columns = cols;
             this.rows = java.util.Collections.unmodifiableList(rs);
+            this.negated = negated;
         }
     }
 
