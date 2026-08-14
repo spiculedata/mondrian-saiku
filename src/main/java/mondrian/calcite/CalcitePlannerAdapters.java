@@ -3840,6 +3840,13 @@ public final class CalcitePlannerAdapters {
         List<Segment> segments,
         RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            throw new mondrian.olap.MondrianException(
+                "Row-security: cannot determine the active role (no Locus on "
+                + "this thread), so a <PredicateGrant> filter cannot be "
+                + "injected; refusing to build an unrestricted fact "
+                + "aggregation.");
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null || !role.hasPredicateGrants()) {
             return;
@@ -4073,6 +4080,12 @@ public final class CalcitePlannerAdapters {
     public static boolean isPredicateSecuredLoad(
         List<Segment> segments, RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            // Identity unknown: report SECURED so every caller refuses to
+            // serve this load through a generator that cannot enforce the
+            // grant, rather than concluding it is unrestricted.
+            return true;
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null || !role.hasPredicateGrants()) {
             return false;
@@ -4141,6 +4154,10 @@ public final class CalcitePlannerAdapters {
     public static boolean isBridgeMemberSecuredLoad(
         List<Segment> segments, RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            // Identity unknown — fail closed, as isPredicateSecuredLoad does.
+            return true;
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null) {
             return false;
@@ -4323,9 +4340,33 @@ public final class CalcitePlannerAdapters {
     }
 
     /**
+     * #106 SECURITY: whether the caller's role cannot be determined AT ALL,
+     * because no {@link mondrian.server.Locus} is active on this thread.
+     *
+     * <p>This is deliberately distinct from {@link #activeRole} returning
+     * {@code null}. "There is a Locus and its connection carries no role" is
+     * a legitimately unsecured read. "There is no Locus" is UNKNOWN — and a
+     * row-security decision taken on unknown identity must fail closed, never
+     * fall through to "not secured".
+     *
+     * <p>Before {@code Locus.peekOrNull} existed, {@code Locus.peek()} threw
+     * on an empty stack, so these paths failed loudly by accident. Making the
+     * lookup null-safe turned that into a silent "no role" — i.e. no filter
+     * injected and no gate raised. Hence this explicit check.
+     */
+    private static boolean roleContextUnavailable() {
+        return mondrian.server.Locus.peekOrNull() == null;
+    }
+
+    /**
      * #106: the active query role off the current {@link mondrian.server.Locus}
      * (execution → statement → connection), or {@code null} when there is no
      * active Locus (e.g. a unit test driving the planner directly).
+     *
+     * <p>Callers making a SECURITY decision must consult
+     * {@link #roleContextUnavailable} first: a {@code null} return conflates
+     * "no role" with "no Locus", and only the former is safe to treat as
+     * unsecured.
      */
     private static mondrian.olap.Role activeRole() {
         mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
@@ -4402,6 +4443,13 @@ public final class CalcitePlannerAdapters {
         RolapStar.Table factTable,
         java.util.Set<String> joinedAliases)
     {
+        if (roleContextUnavailable()) {
+            throw new mondrian.olap.MondrianException(
+                "Row-security: cannot determine the active role (no Locus on "
+                + "this thread), so a bridge <MemberGrant> filter cannot be "
+                + "injected; refusing to build an unrestricted bridge "
+                + "fan-out.");
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null) {
             return;
