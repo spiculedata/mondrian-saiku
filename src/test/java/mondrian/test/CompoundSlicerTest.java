@@ -757,20 +757,34 @@ public class CompoundSlicerTest extends FoodMartTestCase {
      * "Allow rollup of measures based on AVG aggregate function"</a>.
      */
     /**
-     * NOTE ON THE EXPECTED VALUES. The true average of {@code unit_sales} is
-     * 3.0721…, but HSQLDB 1.8 — the version this suite's FoodMart fixture is
-     * built for — returns {@code AVG} over a DECIMAL column with SCALE 0:
+     * THE EXPECTED AVERAGES HERE ARE THE FIXTURE'S, NOT THE TRUE ONES.
+     *
+     * <p>The real average of {@code unit_sales} is 3.0721…, but this suite's
+     * FoodMart fixture returns 3.1. HSQLDB 1.8 does not coerce an inserted
+     * value to its column's declared scale — it keeps the scale of the
+     * literal — and the fixture was loaded with values like {@code 2.0}, so
+     * {@code unit_sales DECIMAL(10,4)} actually holds scale-1 numbers.
+     * Invisible for SUM; fatal for AVG, which is sum/count, because
+     * exact-numeric division inherits the dividend's scale:
      *
      * <pre>
-     *   select avg("unit_sales") from "sales_fact_1997"  ->  3.1  (scale 0)
-     *   select sum(...)/count(*)                         ->  3.0721121181
+     *   stored 2.0    (scale 1) -> avg = 2.0    [this fixture]
+     *   stored 2.0000 (scale 4) -> avg = 2.0000 [a correctly loaded one]
+     *
+     *   select avg("unit_sales")                  -> 3.1
+     *   select avg(cast("unit_sales" as double))  -> 3.0721121181
      * </pre>
      *
-     * Mondrian pushes {@code avg()} down and reports what the database
-     * returns, so these expectations record the fixture's arithmetic, not
-     * Mondrian's. The same query on a database with sane AVG scale yields
-     * 3.072. Tracked separately: an avg-aggregator measure is materially
-     * wrong on HSQLDB 1.8.
+     * <p>Mondrian pushes {@code avg()} down and reports what the database
+     * returns, so this is the fixture's arithmetic, not a Mondrian defect —
+     * a production database stores the declared scale and yields 3.072.
+     *
+     * <p>The fix belongs upstream, in the mondrian-data-foodmart-hsql
+     * artifact: re-load it with the declared scale. Normalising the scale at
+     * bootstrap instead was tried and rejected — it changes MEMBER NAMES for
+     * decimal-keyed dimensions ([Employee].[Salary]) and invalidates every
+     * recorded golden checksum, i.e. it makes all recorded baselines depend
+     * on a mutation that is not in the versioned artifact.
      */
     public void testRollupAvg() {
         final TestContext testContext =
