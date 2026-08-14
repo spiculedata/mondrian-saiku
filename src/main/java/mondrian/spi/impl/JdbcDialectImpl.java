@@ -1192,7 +1192,18 @@ public class JdbcDialectImpl implements Dialect {
             return Datatype.Numeric;
         case Types.CHAR:
         case Types.VARCHAR:
+        case Types.LONGVARCHAR:
+        case Types.NCHAR:
+        case Types.NVARCHAR:
+        case Types.LONGNVARCHAR:
+            // LONGVARCHAR and the national-character types are strings as far
+            // as Mondrian is concerned. HSQLDB types a CASE expression over a
+            // VARCHAR column as LONGVARCHAR, so leaving it out made an
+            // <OrdinalExpression> fail to load with "mondrian is probably not
+            // familiar with this database's type system".
             return Datatype.String;
+        case Types.REAL:
+            return Datatype.Numeric;
         case Types.TIME:
             return Datatype.Time;
         case Types.TIMESTAMP:
