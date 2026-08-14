@@ -209,13 +209,30 @@ public class ArrowDoubleSegmentVectorTest {
         sumGetDouble(array, 10);
         sumGetDouble(arrow, 10);
 
-        long arrayStart = System.nanoTime();
-        double arraySum = sumGetDouble(array, iterations);
-        long arrayElapsed = System.nanoTime() - arrayStart;
+        // BEST-of-N, not a single shot. Timing noise on a shared or loaded
+        // machine (a parallel build, a GC pause, CPU contention on a CI
+        // runner) is ONE-SIDED: interference can only make a run slower,
+        // never faster. The minimum over several rounds is therefore the
+        // best available estimate of the true cost, and it keeps the 3×
+        // regression floor meaningful instead of turning it into a
+        // coin-toss — a single shot has failed this suite at 4.69× purely
+        // because another build was running.
+        final int rounds = 5;
+        long arrayElapsed = Long.MAX_VALUE;
+        long arrowElapsed = Long.MAX_VALUE;
+        double arraySum = 0d;
+        double arrowSum = 0d;
+        for (int round = 0; round < rounds; round++) {
+            long arrayStart = System.nanoTime();
+            arraySum = sumGetDouble(array, iterations);
+            arrayElapsed =
+                Math.min(arrayElapsed, System.nanoTime() - arrayStart);
 
-        long arrowStart = System.nanoTime();
-        double arrowSum = sumGetDouble(arrow, iterations);
-        long arrowElapsed = System.nanoTime() - arrowStart;
+            long arrowStart = System.nanoTime();
+            arrowSum = sumGetDouble(arrow, iterations);
+            arrowElapsed =
+                Math.min(arrowElapsed, System.nanoTime() - arrowStart);
+        }
 
         // Sums should agree (both reads come from identical input)
         assertEquals(
@@ -226,8 +243,9 @@ public class ArrowDoubleSegmentVectorTest {
         // Surface the timing for the spike report
         System.err.printf(
             "[ArrowDoubleSegmentVector perf-sanity] N=%d iter=%d "
-                + "array=%.1fms arrow=%.1fms ratio=%.2fx%n",
-            N, iterations,
+                + "rounds=%d (best-of) array=%.1fms arrow=%.1fms "
+                + "ratio=%.2fx%n",
+            N, iterations, rounds,
             arrayElapsed / 1e6, arrowElapsed / 1e6, ratio);
 
         assertTrue(
