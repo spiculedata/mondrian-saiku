@@ -1474,7 +1474,21 @@ public class RolapStar {
         }
 
         public int compare(Column o1, Column o2) {
-            return o1.getName().compareTo(o2.getName());
+            final int c = o1.getName().compareTo(o2.getName());
+            if (c != 0) {
+                return c;
+            }
+            // Distinct columns MUST NOT compare equal. Names are not unique:
+            // a star column is shared by every attribute whose key includes
+            // it, so in FoodMart the four product_class columns
+            // (product_family, product_department, product_category,
+            // product_subcategory) are all named "Brand Name" — the last
+            // attribute whose composite key covers them. This comparator
+            // backs the TreeSet in GroupingSetsList.findRollupColumns, where
+            // conflating two columns silently dropped one of them from the
+            // rollup list and produced wrong GROUPING SETS handling. Bit
+            // position is unique within a star and stable across runs.
+            return Integer.compare(o1.getBitPosition(), o2.getBitPosition());
         }
     }
 

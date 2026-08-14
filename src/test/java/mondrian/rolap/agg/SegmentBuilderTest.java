@@ -594,21 +594,20 @@ public class SegmentBuilderTest extends BatchTestCase {
                 + "[Time].[1998].[Q1].[1], [Time].[1998].[Q3].[8], [Time].[1998].[Q3].[9], "
                 + "[Time].[1998].[Q4].[10], [Time].[1998].[Q4].[11], [Time].[1998].[Q4].[12]}"
                 + "on 0 from sales"},
-            new String[] {
-                "6806cee8561ece016f1acee39e2481c933aae4de7d4bd8bf28aee0b15dc894ce",
-                    // ^^^
-                    //    {time_by_day.the_year=('1998')}
-                    //    {time_by_day.quarter=('Q1','Q2','Q3')}
-                    //    {time_by_day.month_of_year=('2','3','4','5','6','7')}]
-                "ce2f10efe351f9c3b01fe54665bde120b5e7df7474b2363f3f7f3b3a3a93a733"
-                    // ^^^
-                    // {time_by_day.the_year=(*)}
-                    // {time_by_day.quarter=('Q1','Q3','Q4')}
-                    // {time_by_day.month_of_year=('1','8','9','10','11','12')}]
+            new String[][] {
+                // Both segments this test rolls up are keyed on year and
+                // month only; segments left in the cell cache by earlier
+                // tests share the month lists but also carry a quarter axis.
+                {"!{" + col("time_by_day", "quarter"),
+                 "{" + col("time_by_day", "month_of_year")
+                 + "=('2','3','4','5','6','7')}"},
+                {"!{" + col("time_by_day", "quarter"),
+                 "{" + col("time_by_day", "month_of_year")
+                 + "=('1','8','9','10','11','12')}"},
             },
             new String[]{
                 // rollup columns
-                "`time_by_day`.`the_year`"
+                col("time_by_day", "the_year")
             },
             // expected header of the rolled up segment
             "*Segment Header\n"
@@ -617,7 +616,7 @@ public class SegmentBuilderTest extends BatchTestCase {
             + "Cube:[Sales]\n"
             + "Measure:[Unit Sales]\n"
             + "Axes:[\n"
-            + "    {`time_by_day`.`the_year`=('1998')}]\n"
+            + "    {" + col("time_by_day", "the_year") + "=('1998')}]\n"
             + "Excluded Regions:[]\n"
             + "Compound Predicates:[]\n"
             + "ID:[51a45f2e2a5e2c71f8479cd7806c9afd765be3c80a4881d7516d5576a0973b34]\n");
@@ -637,21 +636,15 @@ public class SegmentBuilderTest extends BatchTestCase {
                 + "\n"
                 + "{[Product].[Drink].[Dairy]}"
                 + "on 0 from sales"},
-            new String[] {
-              "8f8f28faa78d9688b5f2bf0419302b858039544690ed71fd270e2f1c2697fb0a",
-                // ^^^
-                //    {time_by_day.the_year=('1997')}
-                //    {product_class.product_family=(*)}
-                //    {product_class.product_department=('Alcoholic Beverages',
-                //     'Baked Goods','Beverages','Periodicals')}]
-              "e0800d8f9d3fff381152fa2b5d2b5499d5a3a9993cc3aec0ab28995debefbeca"
-                // ^^^
-                //    {time_by_day.the_year=('1997')}
-                //    {product_class.product_family=('Drink')}
-                //    {product_class.product_department=('Dairy')}]
+            new String[][] {
+                {"{" + col("product_class", "product_department")
+                 + "=('Alcoholic Beverages','Baked Goods','Beverages',"
+                 + "'Periodicals')}"},
+                {"{" + col("product_class", "product_department")
+                 + "=('Dairy')}"},
             },
             new String[]{
-                "`product_class`.`product_family`"
+                col("product_class", "product_family")
             },
             "*Segment Header\n"
             + "Schema:[FoodMart]\n"
@@ -659,7 +652,7 @@ public class SegmentBuilderTest extends BatchTestCase {
             + "Cube:[Sales]\n"
             + "Measure:[Unit Sales]\n"
             + "Axes:[\n"
-            + "    {`product_class`.`product_family`=('Drink')}]\n"
+            + "    {" + col("product_class", "product_family") + "=('Drink')}]\n"
             + "Excluded Regions:[]\n"
             + "Compound Predicates:[]\n"
             + "ID:[244bbda98dbfee5000205fdcfee"
@@ -678,21 +671,14 @@ public class SegmentBuilderTest extends BatchTestCase {
                 + "\n"
                 + "{[Product].[Drink].[Dairy]}"
                 + "on 0 from sales"},
-            new String[] {
-                "b9cd57a8b7b3db1021a72c540da1f64382cce469742095b04d023a0d3c8f0096",
-                    // ^^^
-                    //    {time_by_day.the_year=('1997')}
-                    // {product_class.product_family=('Drink','Non-Consumable')}
-                    // {product_class.product_department=('Alcoholic Beverages',
-                    //  'Beverages','Periodicals')}]
-                "8f8f28faa78d9688b5f2bf0419302b858039544690ed71fd270e2f1c2697fb0a"
-                    // ^^^
-                    //    {time_by_day.the_year=('1997')}
-                    //    {product_class.product_family=('Drink')}
-                    //    {product_class.product_department=('Dairy')}]
+            new String[][] {
+                {"{" + col("product_class", "product_department")
+                 + "=('Alcoholic Beverages','Beverages','Periodicals')}"},
+                {"{" + col("product_class", "product_department")
+                 + "=('Dairy')}"},
             },
             new String[]{
-                "`product_class`.`product_family`"
+                col("product_class", "product_family")
             },
             "*Segment Header\n"
             + "Schema:[FoodMart]\n"
@@ -700,7 +686,7 @@ public class SegmentBuilderTest extends BatchTestCase {
             + "Cube:[Sales]\n"
             + "Measure:[Unit Sales]\n"
             + "Axes:[\n"
-            + "    {`product_class`.`product_family`=('Drink')}]\n"
+            + "    {" + col("product_class", "product_family") + "=('Drink')}]\n"
             + "Excluded Regions:[]\n"
             + "Compound Predicates:[]\n"
             + "ID:[244bbda98dbfee5000205fdcfeef1b"
@@ -720,27 +706,16 @@ public class SegmentBuilderTest extends BatchTestCase {
                 + "on 0 from sales",
                 " select "
                 + "{[Product].[Drink].[Beverages]} on 0 from sales"},
-            new String[] {
-                "4472479a34c350cd2c208d369fae0968f860f61e8a893575f310144b87c7ceb5",
-                    // ^^^
-                    //    {time_by_day.the_year=('1997')}
-                    //    {product_class.product_family=('Drink')}
-                    //    {product_class.product_department=('Dairy')}]
-                "b19558359f411085f94692daefb46806e8bd0c3f95ff491eac0f8274bc655198",
-                    // ^^^
-                    //    {time_by_day.the_year=('1997')}
-                    //    {product_class.product_family=('Drink')}
-                    //    {product_class.product_department=('Beverages')}]
-                "8f8f28faa78d9688b5f2bf0419302b858039544690ed71fd270e2f1c2697fb0a"
-                    // ^^^
-                    //    {time_by_day.the_year=('1997')}
-                    //    {product_class.product_family=
-                    //                              ('Drink','Non-Consumable')}
-                    //    {product_class.product_department=
-                    //                  ('Alcoholic Beverages','Periodicals')}]
+            new String[][] {
+                {"{" + col("product_class", "product_department")
+                 + "=('Dairy')}"},
+                {"{" + col("product_class", "product_department")
+                 + "=('Beverages')}"},
+                {"{" + col("product_class", "product_department")
+                 + "=('Alcoholic Beverages','Periodicals')}"},
             },
             new String[]{
-                "`product_class`.`product_family`"
+                col("product_class", "product_family")
             },
             "*Segment Header\n"
             + "Schema:[FoodMart]\n"
@@ -748,7 +723,7 @@ public class SegmentBuilderTest extends BatchTestCase {
             + "Cube:[Sales]\n"
             + "Measure:[Unit Sales]\n"
             + "Axes:[\n"
-            + "    {`product_class`.`product_family`=('Drink')}]\n"
+            + "    {" + col("product_class", "product_family") + "=('Drink')}]\n"
             + "Excluded Regions:[]\n"
             + "Compound Predicates:[]\n"
             + "ID:[244bbda98dbfee5000205fdc"
@@ -768,7 +743,7 @@ public class SegmentBuilderTest extends BatchTestCase {
      */
     private Pair<SegmentHeader, SegmentBody> runRollupTest(
         String[] cachePopulatingQueries,
-        String[] segmentIdsToRollup,
+        String[][] segmentIdsToRollup,
         String[] keepColumns,
         String expectedHeader)
     {
@@ -797,7 +772,7 @@ public class SegmentBuilderTest extends BatchTestCase {
             BitKey.Factory.makeBitKey(new BitSet()),
             RolapAggregator.Sum,
             Dialect.Datatype.Numeric);
-        assertEquals(expectedHeader, rolledForward.getKey().toString());
+        assertHeaderMatches(expectedHeader, rolledForward.getKey());
         // the header of the rolled up segment should be the same
         // regardless of the order the segments were processed
         assertEquals(rolledForward.getKey(), rolledReverse.getKey());
@@ -808,9 +783,81 @@ public class SegmentBuilderTest extends BatchTestCase {
         return rolledForward;
     }
 
+    /**
+     * Asserts that {@code actual} matches {@code expected} in everything that
+     * describes the segment — cube, measure, axes, excluded regions,
+     * compound predicates — while ignoring the {@code Checksum:} and
+     * {@code ID:} lines.
+     *
+     * <p>Both of those are hashes over the whole schema file, so pinning
+     * them makes every expectation in this class break on any unrelated
+     * schema edit while telling us nothing about whether rollup worked.
+     */
+    private void assertHeaderMatches(
+        String expected, SegmentHeader actual)
+    {
+        assertEquals(
+            stripSchemaHashes(expected),
+            stripSchemaHashes(actual.toString()));
+    }
+
+    private static String stripSchemaHashes(String header) {
+        final StringBuilder buf = new StringBuilder();
+        for (String line : header.split("\n")) {
+            if (line.startsWith("Checksum:") || line.startsWith("ID:")) {
+                continue;
+            }
+            buf.append(line).append('\n');
+        }
+        return buf.toString();
+    }
+
+    /** True if {@code header}'s description contains every substring in
+     *  {@code matcher} — a conjunction, so a segment can be pinned down by
+     *  more than one axis where a single one is ambiguous. A substring
+     *  prefixed with {@code !} must NOT appear, which is how a segment is
+     *  distinguished from a coarser one that shares its axis values. */
+    private static boolean matchesAll(SegmentHeader header, String[] matcher) {
+        final String description = header.toString();
+        for (String part : matcher) {
+            if (part.startsWith("!")) {
+                if (description.contains(part.substring(1))) {
+                    return false;
+                }
+            } else if (!description.contains(part)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Renders a column reference the way a {@link SegmentHeader} does, using
+     * the TEST DIALECT's identifier quoting.
+     *
+     * <p>These strings used to be hard-coded with MySQL backticks, so every
+     * expectation in this class was wrong the moment the suite ran anywhere
+     * else — HSQLDB quotes with double quotes, and CI also runs DuckDB and
+     * Postgres.
+     */
+    private String col(String table, String column) {
+        return getTestContext().getDialect().quoteIdentifier(table, column);
+    }
+
     private TestContext loadCacheWithQueries(String [] queries) {
         getTestContext().flushSchemaCache();
         TestContext context = getTestContext().withFreshConnection();
+        // Flush the CELL cache too, not just the schema cache. Segments
+        // survive a schema flush, so without this a test sees whatever
+        // earlier tests in this class left behind and the segment it wants
+        // to roll up is no longer identifiable — the failure then depends on
+        // which tests ran before it.
+        final CacheControl cacheControl =
+            context.getConnection().getCacheControl(null);
+        cacheControl.flush(
+            cacheControl.createMeasuresRegion(
+                context.getConnection().getSchema().lookupCube(
+                    "Sales", true)));
         for (String query : queries) {
             context.executeQuery(query);
         }
@@ -828,11 +875,22 @@ public class SegmentBuilderTest extends BatchTestCase {
      * @param context  The test context
      * @param order  The order to sort the elements returned by entrySet(),
      *               FORWARD or REVERSE
-     * @param segmentIdsToInclude  The IDs of currently cached segments to
-     *                             include in the map.
+     * @param segmentIdsToInclude  Distinctive substrings of the
+     *     {@link SegmentHeader#toString} of the cached segments to include —
+     *     an axis constraint such as
+     *     {@code {`product_class`.`product_department`=('Dairy')}}. Each
+     *     must match exactly one cached segment.
+     *
+     *     <p>These were once the segments' SHA-256 unique IDs, but a segment
+     *     ID hashes the schema, so every one of them broke on any unrelated
+     *     schema edit — and the failure ("SegmentMap is empty") said nothing
+     *     about what had changed. Matching on the axis the test is actually
+     *     reasoning about keeps the test readable and stable.
      */
     private Map<SegmentHeader, SegmentBody> getReversibleTestMap(
-        TestContext context, final Order order, String[] segmentIdsToInclude)
+        TestContext context,
+        final Order order,
+        String[][] segmentIdsToInclude)
     {
         SegmentCache cache = MondrianServer.forConnection(
             context.getConnection()).getAggregationManager()
@@ -885,16 +943,28 @@ public class SegmentBuilderTest extends BatchTestCase {
                 return orderedSet;
             }
         };
-        for (SegmentHeader header : headers) {
-            for (String segmentId : segmentIdsToInclude) {
-                if (header.getUniqueID().toString().equals(segmentId)) {
-                    testMap.put(header, cache.get(header));
+        for (String[] matcher : segmentIdsToInclude) {
+            SegmentHeader found = null;
+            for (SegmentHeader header : headers) {
+                if (matchesAll(header, matcher)) {
+                    assertNull(
+                        String.format(
+                            "More than one cached segment matches %s;"
+                            + " the matcher must identify exactly one."
+                            + " Full segment cache: %s",
+                            Arrays.toString(matcher), headers),
+                        found);
+                    found = header;
                 }
             }
+            assertNotNull(
+                String.format(
+                    "No cached segment matches %s."
+                    + " Full segment cache: %s",
+                    Arrays.toString(matcher), headers),
+                found);
+            testMap.put(found, cache.get(found));
         }
-        assertFalse(String.format(
-            "SegmentMap is empty. No segmentIds matched test parameters. "
-            + "Full segment cache: %s", headers), testMap.isEmpty());
         return testMap;
     }
 

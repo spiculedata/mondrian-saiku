@@ -103,6 +103,13 @@ public final class GroupingSetsList {
     }
 
     private List<BitKey> loadGroupingColumnBitKeys() {
+        if (groupingSets.isEmpty()) {
+            // No grouping sets at all: there is nothing to describe, so the
+            // list is empty. (A SINGLE grouping set still yields one entry
+            // below — callers index this list per grouping set, and the
+            // non-grouping-set load reads element 0.)
+            return Collections.emptyList();
+        }
         if (!useGroupingSet) {
             return Collections.singletonList(BitKey.EMPTY);
         }
