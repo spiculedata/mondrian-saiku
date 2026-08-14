@@ -1007,7 +1007,14 @@ public final class CalciteSqlPlanner {
         if (!req.orderBy.isEmpty()) {
             List<RexNode> exprs = new ArrayList<>();
             for (PlannerRequest.OrderBy o : req.orderBy) {
-                RexNode ref = b.field(o.column.name);
+                // TABLE-QUALIFIED, like the projections above. An
+                // unqualified b.field(name) resolves both entries of
+                // "customer.yearly_income" and "customerx.yearly_income" to
+                // the same input field, so Calcite collapsed them into ONE
+                // sort key: a dimension used twice off aliased copies of a
+                // table came back with its second copy in arbitrary order —
+                // right values, wrong sequence, no error.
+                RexNode ref = fieldRef(b, o.column);
                 exprs.add(
                     o.direction == PlannerRequest.Order.DESC
                         ? b.desc(ref)

@@ -622,7 +622,16 @@ public final class CalcitePlannerAdapters {
                 if (seen.add(kcAlias + "." + kp.name)) {
                     b.addProjection(kp);
                 }
-                if (orderedKeys.add(kp.name)) {
+                // Dedup the ORDER BY by TABLE-QUALIFIED name, as the
+                // projection above does. Two targets can legitimately
+                // project the same column name from different relations —
+                // a dimension used twice off aliased copies of one table
+                // ("customer" and "customer0" both contributing
+                // yearly_income). Keying on the bare name dropped the
+                // second target's ORDER BY, so its members came back in
+                // whatever order the database felt like: the values were
+                // right, the sequence was not.
+                if (orderedKeys.add(kp.table + "." + kp.name)) {
                     b.addOrderBy(
                         new PlannerRequest.OrderBy(
                             kp, PlannerRequest.Order.ASC));
