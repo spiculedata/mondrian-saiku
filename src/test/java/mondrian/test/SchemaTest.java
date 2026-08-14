@@ -7286,7 +7286,12 @@ Test that get error if a dimension has more than one hierarchy with same name.
 
     private TestContext genTableSchema(String physSchema) throws SQLException {
         TestContext testContext = getTestContext();
-        doSql(testContext, "drop table time_by_day_generated");
+        // Quoted: the table is created with a quoted, lower-case name, and
+        // a case-folding database resolves the unquoted form to
+        // TIME_BY_DAY_GENERATED and fails to find it. doSql swallows that,
+        // so the table survived from one test -- or one build -- to the next
+        // and the following test read its columns instead of generating them.
+        doSql(testContext, "drop table \"time_by_day_generated\"");
         JdbcSchema.clearAllDBs();
         return testContext.withSchema(
             "<Schema name='FoodMart' metamodelVersion='4.0'>\n"
