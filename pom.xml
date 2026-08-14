@@ -559,8 +559,41 @@ class MondrianServerVersion {
             <exclude>**/mondrian/test/calcite/SqlDiffReportTest.java</exclude>
             <exclude>**/mondrian/test/calcite/SqlDiffMatrixReportTest.java</exclude>
             <exclude>**/mondrian/test/calcite/PerfBenchmarkTest.java</exclude>
+            <!-- Run in their own JVM by the isolated-cache-tests execution
+                 below. See that execution for why. -->
+            <exclude>**/mondrian/test/CacheTest.java</exclude>
+            <exclude>**/mondrian/rolap/CacheControlTest.java</exclude>
           </excludes>
         </configuration>
+        <executions>
+          <!--
+            These two assert on PROCESS-GLOBAL state: the segment cache is
+            shared across every schema in the JVM, and the counters
+            CacheTest reads (segmentCreateCount) are cumulative for the
+            server. Their preconditions are "nothing is cached" and "this
+            query must cause exactly one load", neither of which any earlier
+            test class can be asked to leave true.
+
+            They cannot restore those preconditions themselves either: a
+            CellRegion is built from a cube's DECLARED measures, so flushing
+            one never reaches the implicit Fact Count measure, and
+            printCacheState reports a whole star rather than the region it
+            is handed. So they get a fresh JVM instead of a contrived flush.
+          -->
+          <execution>
+            <id>isolated-cache-tests</id>
+            <phase>test</phase>
+            <goals><goal>test</goal></goals>
+            <configuration>
+              <reuseForks>false</reuseForks>
+              <includes>
+                <include>**/mondrian/test/CacheTest.java</include>
+                <include>**/mondrian/rolap/CacheControlTest.java</include>
+              </includes>
+              <excludes combine.self="override"/>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- #23: JaCoCo coverage. prepare-agent injects -javaagent into
