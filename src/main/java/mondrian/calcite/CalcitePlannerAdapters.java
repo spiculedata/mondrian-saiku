@@ -2004,6 +2004,20 @@ public final class CalcitePlannerAdapters {
             return;
         }
         if (arg instanceof MemberListCrossJoinArg) {
+            if (((MemberListCrossJoinArg) arg).isExclude()) {
+                // The arg EXCLUDES these members (MDX `Not In`, `Except`).
+                // Emitting the IN-list below would return precisely the rows
+                // the query asked to leave out — the complement of the right
+                // answer, silently. Legacy negates it properly, including the
+                // NULL handling a negated multi-column key needs
+                // (SqlConstraintUtils.addMemberConstraint with exclude=true),
+                // so decline and let the read fall back there.
+                throw new UnsupportedTranslation(
+                    "fromTupleRead: MemberListCrossJoinArg with exclude=true "
+                    + "(Not In / Except) is not translated; falling back to "
+                    + "the legacy SQL generator, which negates the member "
+                    + "predicate correctly");
+            }
             List<RolapMember> members = arg.getMembers();
             if (members == null || members.isEmpty()) {
                 // Mondrian treats this as a hard-coded FALSE predicate.
