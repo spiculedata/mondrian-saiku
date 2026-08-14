@@ -974,11 +974,12 @@ public class TestCalculatedMembers extends BatchTestCase {
         assertQueryThrows(
             query,
             "Failed to load formatter class 'java.lang.String' for member '[Measures].[Foo]'.");
-        assertQueryThrows(
-            query,
-            Util.PreJdk15
-            ? "java.lang.ClassCastException"
-            : "java.lang.ClassCastException: java.lang.String");
+        // Match the exception type only. JDK 9 rewrote ClassCastException's
+        // message from "java.lang.String" to "class java.lang.String cannot
+        // be cast to class ... (both in module java.base ...)", so pinning
+        // the message text pins the JDK. The assertion above already proves
+        // the formatter class named in the schema is the one that failed.
+        assertQueryThrows(query, "java.lang.ClassCastException");
     }
 
     public void testCalcMemberCustomFormatterInNonMeasureInQuery() {
