@@ -86,9 +86,25 @@ public class CacheControlTest extends FoodMartTestCase {
     private void assertCacheStateEquals(
         String tag, String expected, String actual)
     {
-        String expected2 = expected.replaceAll("Segment #[0-9]+", "Segment ##");
-        String actual2 = actual.replaceAll("Segment #[0-9]+", "Segment ##");
-        getDiffRepos().assertEquals(tag, expected2, actual2);
+        getDiffRepos().assertEquals(
+            tag, normaliseCacheState(expected), normaliseCacheState(actual));
+    }
+
+    /**
+     * Masks the parts of a printed cache state that say nothing about which
+     * segments are in the cache: the segment ordinals, the segment id (a hash
+     * of everything else, so it changes whenever anything does) and the
+     * dialect's identifier quoting, which is backticks on MySQL and double
+     * quotes on the database these tests actually run against.
+     *
+     * @param state Printed cache state
+     * @return state with those parts masked
+     */
+    private static String normaliseCacheState(String state) {
+        return state
+            .replaceAll("Segment #[0-9]+", "Segment ##")
+            .replaceAll("ID:\\[[0-9a-f]{8,}\\]", "ID:[##]")
+            .replace('`', '\"');
     }
 
     /**
