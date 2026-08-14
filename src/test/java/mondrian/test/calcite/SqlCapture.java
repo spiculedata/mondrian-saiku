@@ -107,7 +107,14 @@ public final class SqlCapture implements DataSource {
             throws Throwable
         {
             String name = method.getName();
-            Object result = method.invoke(target, args);
+            // Unwrap: Method.invoke wraps whatever the driver threw in an
+            // InvocationTargetException, and rethrowing that from an
+            // InvocationHandler turns it into an UndeclaredThrowableException
+            // at the call site. Callers that catch SQLException -- or the
+            // AbstractMethodError an old driver throws for a JDBC method it
+            // does not implement -- would not recognise it, so capturing SQL
+            // would change how the code under test behaves.
+            Object result = invokeUnwrapped(method, target, args);
             if ("prepareStatement".equals(name) && result instanceof PreparedStatement) {
                 String sql = (String) args[0];
                 return wrapPreparedStatement((PreparedStatement) result, sql);
@@ -145,14 +152,35 @@ public final class SqlCapture implements DataSource {
                 && args[0] instanceof String)
             {
                 String sql = (String) args[0];
-                ResultSet rs = (ResultSet) method.invoke(target, args);
+                ResultSet rs = (ResultSet) invokeUnwrapped(method, target, args);
                 try {
                     return captureAndReplay(sql, rs);
                 } finally {
                     try { rs.close(); } catch (SQLException ignored) { }
                 }
             }
+            return invokeUnwrapped(method, target, args);
+        }
+    }
+
+    /**
+     * Calls {@code method} on {@code target}, rethrowing what the target
+     * threw rather than the {@link java.lang.reflect.InvocationTargetException}
+     * reflection wraps it in. See the note in {@code ConnectionHandler}.
+     *
+     * @param method Method to call
+     * @param target Object to call it on
+     * @param args Arguments
+     * @return the method's return value
+     * @throws Throwable whatever the method threw
+     */
+    private static Object invokeUnwrapped(
+        Method method, Object target, Object[] args) throws Throwable
+    {
+        try {
             return method.invoke(target, args);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw e.getCause();
         }
     }
 
@@ -180,14 +208,14 @@ public final class SqlCapture implements DataSource {
             if ("executeQuery".equals(name)
                 && (args == null || args.length == 0))
             {
-                ResultSet rs = (ResultSet) method.invoke(target, args);
+                ResultSet rs = (ResultSet) invokeUnwrapped(method, target, args);
                 try {
                     return captureAndReplay(sql, rs);
                 } finally {
                     try { rs.close(); } catch (SQLException ignored) { }
                 }
             }
-            return method.invoke(target, args);
+            return invokeUnwrapped(method, target, args);
         }
     }
 

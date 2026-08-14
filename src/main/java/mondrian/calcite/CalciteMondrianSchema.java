@@ -555,16 +555,32 @@ public final class CalciteMondrianSchema {
      *  don't implement {@link Connection#getCatalog()} /
      *  {@link Connection#getSchema()} and throw AbstractMethodError. */
     private static String safeCatalog(Connection c) {
-        try {
-            return c.getCatalog();
-        } catch (SQLException | AbstractMethodError e) {
-            return null;
-        }
+        return safeProbe(c, true);
     }
     private static String safeSchema(Connection c) {
+        return safeProbe(c, false);
+    }
+
+    /**
+     * Reads the connection's catalog or schema, answering null for anything
+     * that goes wrong.
+     *
+     * <p>Catching Throwable rather than {@code SQLException |
+     * AbstractMethodError} is deliberate: a Connection reached through a
+     * dynamic proxy -- some pools, and the SQL-capturing harness -- reports
+     * the driver's AbstractMethodError as an UndeclaredThrowableException,
+     * which is neither. These two values are hints used to narrow a
+     * DatabaseMetaData probe; there is nothing to do with a failure but
+     * carry on without them.
+     *
+     * @param c Connection
+     * @param catalog Whether to read the catalog rather than the schema
+     * @return the value, or null
+     */
+    private static String safeProbe(Connection c, boolean catalog) {
         try {
-            return c.getSchema();
-        } catch (SQLException | AbstractMethodError e) {
+            return catalog ? c.getCatalog() : c.getSchema();
+        } catch (Throwable t) {
             return null;
         }
     }
