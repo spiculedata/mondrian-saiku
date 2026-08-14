@@ -26,7 +26,7 @@ import java.util.*;
  * @author jhyde
  * @since 29 March, 2002
  */
-public class FoodMartTestCase extends TestCase {
+public abstract class FoodMartTestCase extends TestCase {
 
     static {
         // Extract the embedded HSQLDB FoodMart fixture (from the
