@@ -2352,7 +2352,7 @@ public final class CalcitePlannerAdapters {
     private static final class TargetShape {
         final RolapCubeLevel level;
         final RolapAttribute attribute;
-        final RolapSchema.PhysTable table;
+        final RolapSchema.PhysRelation table;
         final String tableName;
         final String tableAlias;
         /**
@@ -2370,13 +2370,13 @@ public final class CalcitePlannerAdapters {
         TargetShape(
             RolapCubeLevel level,
             RolapAttribute attribute,
-            RolapSchema.PhysTable table,
+            RolapSchema.PhysRelation table,
             List<PlannerRequest.Join> dimChain)
         {
             this.level = level;
             this.attribute = attribute;
             this.table = table;
-            this.tableName = table.getName();
+            this.tableName = scanName(table);
             this.tableAlias = table.getAlias();
             this.dimChain = dimChain;
         }
@@ -2422,14 +2422,14 @@ public final class CalcitePlannerAdapters {
         }
         RolapSchema.PhysColumn leafKey = keyList.get(keyList.size() - 1);
         RolapSchema.PhysRelation relation = leafKey.relation;
-        if (!(relation instanceof RolapSchema.PhysTable)) {
+        if (!isScannable(relation)) {
             throw new UnsupportedTranslation(
-                "fromTupleRead: snowflake hierarchy / non-table relation "
+                "fromTupleRead: snowflake hierarchy / non-scannable relation "
                 + "not yet supported ("
                 + (relation == null ? "null" : relation.getClass().getName())
                 + ")");
         }
-        RolapSchema.PhysTable table = (RolapSchema.PhysTable) relation;
+        RolapSchema.PhysRelation table = relation;
         // Task L: if the level's key columns live on a snowflaked dim table
         // reached through intermediate dim tables (e.g. [Product Department]
         // keyed on product_class, reached via product → product_class), emit
@@ -2482,14 +2482,13 @@ public final class CalcitePlannerAdapters {
             if (a == null || joinedAliases.contains(a)) {
                 continue;
             }
-            if (!(kc.relation instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(kc.relation)) {
                 throw new UnsupportedTranslation(
-                    "fromTupleRead: ancestor key relation is not a "
-                    + "PhysTable (got "
+                    "fromTupleRead: ancestor key relation is not "
+                    + "scannable (got "
                     + kc.relation.getClass().getName() + ")");
             }
-            RolapSchema.PhysTable ancestor =
-                (RolapSchema.PhysTable) kc.relation;
+            RolapSchema.PhysRelation ancestor = kc.relation;
             PlannerRequest.Join up = buildUpwardJoin(
                 table, ancestor, joinedAliases, level, keyList);
             dimChain = new java.util.ArrayList<>(dimChain);
@@ -2507,8 +2506,8 @@ public final class CalcitePlannerAdapters {
      * exists or its arity is unsupported.
      */
     private static PlannerRequest.Join buildUpwardJoin(
-        RolapSchema.PhysTable leaf,
-        RolapSchema.PhysTable ancestor,
+        RolapSchema.PhysRelation leaf,
+        RolapSchema.PhysRelation ancestor,
         java.util.Set<String> joinedAliases,
         RolapCubeLevel level,
         java.util.List<RolapSchema.PhysColumn> keyList)
@@ -2524,21 +2523,20 @@ public final class CalcitePlannerAdapters {
                 continue;
             }
             boolean targetIsAncestor =
-                target instanceof RolapSchema.PhysTable
+                isScannable(target)
                 && target.getAlias().equals(ancestor.getAlias());
             boolean sourceIsAncestor =
-                source instanceof RolapSchema.PhysTable
+                isScannable(source)
                 && source.getAlias().equals(ancestor.getAlias());
             if (!targetIsAncestor && !sourceIsAncestor) {
                 continue;
             }
             RolapSchema.PhysRelation other =
                 targetIsAncestor ? source : target;
-            if (!(other instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(other)) {
                 continue;
             }
-            String otherAlias =
-                ((RolapSchema.PhysTable) other).getAlias();
+            String otherAlias = other.getAlias();
             if (!joinedAliases.contains(otherAlias)) {
                 continue;
             }
@@ -2571,7 +2569,7 @@ public final class CalcitePlannerAdapters {
                 otherKey = fkName;
             }
             return PlannerRequest.Join.chained(
-                otherAlias, otherKey, ancestor.getName(), ancestorKey);
+                otherAlias, otherKey, scanName(ancestor), ancestorKey);
         }
         StringBuilder keys = new StringBuilder();
         for (RolapSchema.PhysColumn k : keyList) {
@@ -2602,7 +2600,7 @@ public final class CalcitePlannerAdapters {
      * column names shared across the chain.
      */
     private static List<PlannerRequest.Join> computeTupleReadDimChain(
-        RolapCubeLevel level, RolapSchema.PhysTable keyTable)
+        RolapCubeLevel level, RolapSchema.PhysRelation keyTable)
     {
         return computeTupleReadDimChain(
             level, keyTable, level.getAttribute().getKeyList().get(0));
@@ -2610,7 +2608,7 @@ public final class CalcitePlannerAdapters {
 
     private static List<PlannerRequest.Join> computeTupleReadDimChain(
         RolapCubeLevel level,
-        RolapSchema.PhysTable keyTable,
+        RolapSchema.PhysRelation keyTable,
         RolapSchema.PhysColumn seedKey)
     {
         RolapCubeDimension dim = level.getDimension();
@@ -2657,9 +2655,9 @@ public final class CalcitePlannerAdapters {
         for (int i = hops.size() - 2; i >= 0; i--) {
             RolapSchema.PhysHop hop = hops.get(i);
             RolapSchema.PhysRelation ancestor = hop.relation;
-            if (!(ancestor instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(ancestor)) {
                 throw new UnsupportedTranslation(
-                    "fromTupleRead: non-table dim in chain: "
+                    "fromTupleRead: non-scannable dim in chain: "
                     + (ancestor == null
                         ? "null"
                         : ancestor.getClass().getName()));
@@ -5399,6 +5397,41 @@ public final class CalcitePlannerAdapters {
             return ((RolapSchema.PhysTable) rel).getName();
         }
         return null;
+    }
+
+    /**
+     * Whether {@link CalciteSqlPlanner} can scan {@code rel}.
+     *
+     * <p>A {@code PhysTable} is scanned by its database table name. An
+     * {@code <InlineTable>} or {@code <View>} does not exist in the database,
+     * so {@link mondrian.calcite.VirtualRelation} registers it in the Calcite
+     * schema under its Mondrian alias and it is scanned by that -- which is
+     * what {@link #realTableName} returning null already asks the renderer to
+     * do. There is no third kind of relation; naming them explicitly means a
+     * future one is declined rather than silently scanned as a table that is
+     * not there.
+     *
+     * @param rel Physical relation, may be null
+     * @return whether the relation can be scanned
+     */
+    private static boolean isScannable(RolapSchema.PhysRelation rel) {
+        return rel instanceof RolapSchema.PhysTable
+            || rel instanceof RolapSchema.PhysInlineTable
+            || rel instanceof RolapSchema.PhysView;
+    }
+
+    /**
+     * The name {@link CalciteSqlPlanner} scans {@code rel} by: the database
+     * table name for a {@code PhysTable}, the Mondrian alias for a relation
+     * that exists only in the schema. See {@link #isScannable}.
+     *
+     * @param rel Physical relation
+     * @return name to scan
+     */
+    private static String scanName(RolapSchema.PhysRelation rel) {
+        return rel instanceof RolapSchema.PhysTable
+            ? ((RolapSchema.PhysTable) rel).getName()
+            : rel.getAlias();
     }
 
     /** Pair: translated {@link PlannerRequest.AggFn} + DISTINCT flag. */

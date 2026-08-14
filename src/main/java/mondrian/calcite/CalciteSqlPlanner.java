@@ -760,7 +760,13 @@ public final class CalciteSqlPlanner {
         {
             b.scan(req.factPhysName).as(req.factTable);
         } else {
-            b.scan(req.factTable);
+            // Alias even when it matches the scanned name. RelBuilder derives
+            // a frame's alias from the RelNode, and only a TableScan carries
+            // one -- a relation that exists only in the Mondrian schema
+            // (<InlineTable>, <View>) expands to a Union or Project, so
+            // without an explicit as() every later field(2, alias, col)
+            // fails with "input fields are: []".
+            b.scan(req.factTable).as(req.factTable);
         }
 
         for (PlannerRequest.Join j : req.joins) {
@@ -773,7 +779,8 @@ public final class CalciteSqlPlanner {
             if (j.physName != null && !j.physName.equals(j.dimTable)) {
                 b.scan(j.physName).as(j.dimTable);
             } else {
-                b.scan(j.dimTable);
+                // Always alias; see the fact-table scan above.
+                b.scan(j.dimTable).as(j.dimTable);
             }
             if (j.kind == PlannerRequest.JoinKind.CROSS) {
                 // Unconditional cross-join: RelBuilder has no native

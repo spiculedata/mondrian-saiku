@@ -125,20 +125,6 @@ final class VirtualRelationTable extends AbstractTable
     }
 
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-        if (def.kind == VirtualRelation.Kind.INLINE) {
-            final RelDataTypeFactory.Builder builder =
-                typeFactory.builder();
-            for (Map.Entry<String, Dialect.Datatype> e
-                : def.columns.entrySet())
-            {
-                builder.add(
-                    e.getKey(),
-                    typeFactory.createTypeWithNullability(
-                        typeFactory.createSqlType(sqlTypeOf(e.getValue())),
-                        true));
-            }
-            return builder.build();
-        }
         final SqlValidator validator = viewValidator(typeFactory);
         return validator.getValidatedNodeType(validate(validator));
     }
@@ -147,10 +133,7 @@ final class VirtualRelationTable extends AbstractTable
         RelOptTable.ToRelContext context, RelOptTable relOptTable)
     {
         final RelOptCluster cluster = context.getCluster();
-        if (def.kind == VirtualRelation.Kind.INLINE) {
-            return inlineValues(cluster, relOptTable.getRowType());
-        }
-        // Expand the view in the caller's cluster. Calcite's own ViewTable
+        // Expand the relation in the caller's cluster. Calcite's own ViewTable
         // would delegate to ToRelContext.expandView, which RelBuilder's
         // context does not implement; converting here keeps every rel in the
         // one cluster the caller is building into.
@@ -223,97 +206,8 @@ final class VirtualRelationTable extends AbstractTable
             });
     }
 
-    private RelNode inlineValues(RelOptCluster cluster, RelDataType rowType) {
-        final RexBuilder rexBuilder = cluster.getRexBuilder();
-        final List<Dialect.Datatype> types =
-            new ArrayList<Dialect.Datatype>(def.columns.values());
-        final ImmutableList.Builder<ImmutableList<RexLiteral>> tuples =
-            ImmutableList.builder();
-        for (String[] row : def.rows) {
-            final ImmutableList.Builder<RexLiteral> tuple =
-                ImmutableList.builder();
-            for (int i = 0; i < rowType.getFieldCount(); i++) {
-                final RelDataType fieldType =
-                    rowType.getFieldList().get(i).getType();
-                final String raw = i < row.length ? row[i] : null;
-                tuple.add(
-                    literal(
-                        rexBuilder, raw, types.get(i),
-                        rexBuilder.getTypeFactory()
-                            .createTypeWithNullability(fieldType, false),
-                        fieldType));
-            }
-            tuples.add(tuple.build());
-        }
-        return LogicalValues.create(cluster, rowType, tuples.build());
-    }
 
-    private static RexLiteral literal(
-        RexBuilder rexBuilder,
-        String raw,
-        Dialect.Datatype datatype,
-        RelDataType literalType,
-        RelDataType nullableFieldType)
-    {
-        if (raw == null) {
-            return rexBuilder.makeNullLiteral(nullableFieldType);
-        }
-        final Object value;
-        switch (datatype) {
-        case Integer:
-            value = new BigDecimal(raw.trim());
-            break;
-        case Numeric:
-            value = Double.valueOf(raw.trim());
-            break;
-        case Boolean:
-            value = java.lang.Boolean.valueOf(raw.trim());
-            break;
-        case Date:
-            value = new DateString(raw.trim());
-            break;
-        case Time:
-            value = new TimeString(raw.trim());
-            break;
-        case Timestamp:
-            value = new TimestampString(normaliseTimestamp(raw.trim()));
-            break;
-        default:
-            value = raw;
-            break;
-        }
-        final RexNode node =
-            rexBuilder.makeLiteral(value, literalType, false);
-        if (node instanceof RexLiteral) {
-            return (RexLiteral) node;
-        }
-        // makeLiteral wrapped the literal in a cast, which VALUES cannot
-        // hold. Fall back to the string form so the row is still emitted
-        // rather than the whole query failing.
-        return (RexLiteral) rexBuilder.makeLiteral(raw);
-    }
 
-    /**
-     * {@link TimestampString} demands {@code yyyy-MM-dd HH:mm:ss[.SSS]}.
-     * Mondrian schemas commonly write the JDBC escape form with a {@code T}
-     * separator, or omit the seconds.
-     *
-     * @param raw Timestamp as written in the schema
-     * @return timestamp in the form TimestampString accepts
-     */
-    private static String normaliseTimestamp(String raw) {
-        String s = raw.replace('T', ' ');
-        final int space = s.indexOf(' ');
-        if (space < 0) {
-            return s + " 00:00:00";
-        }
-        final String time = s.substring(space + 1);
-        final int colons = time.length() - time.replace(":", "").length();
-        if (colons == 1) {
-            s = s + ":00";
-        }
-        return s;
-    }
 
     private SqlNode validate(SqlValidator validator) {
         final SqlNode parsed;
@@ -355,27 +249,6 @@ final class VirtualRelationTable extends AbstractTable
             SqlValidator.Config.DEFAULT.withIdentifierExpansion(true));
     }
 
-    private static SqlTypeName sqlTypeOf(Dialect.Datatype datatype) {
-        if (datatype == null) {
-            return SqlTypeName.VARCHAR;
-        }
-        switch (datatype) {
-        case Integer:
-            return SqlTypeName.INTEGER;
-        case Numeric:
-            return SqlTypeName.DOUBLE;
-        case Boolean:
-            return SqlTypeName.BOOLEAN;
-        case Date:
-            return SqlTypeName.DATE;
-        case Time:
-            return SqlTypeName.TIME;
-        case Timestamp:
-            return SqlTypeName.TIMESTAMP;
-        default:
-            return SqlTypeName.VARCHAR;
-        }
-    }
 }
 
 // End VirtualRelationTable.java
