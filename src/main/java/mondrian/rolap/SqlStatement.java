@@ -517,12 +517,20 @@ public class SqlStatement implements DBStatement {
     public List<Type> guessTypes() throws SQLException {
         final ResultSetMetaData metaData = resultSet.getMetaData();
         final int columnCount = metaData.getColumnCount();
-        assert this.types == null || this.types.size() == columnCount
-            : "types " + types + " cardinality != column count " + columnCount;
         List<Type> types = new ArrayList<Type>();
         for (int i = 0; i < columnCount; i++) {
+            // The caller's list is a set of HINTS, one per column, and a null
+            // entry already means "read the type from the result set". A list
+            // shorter than the projection is treated the same way rather than
+            // failing: the two SQL generators do not always agree on the
+            // projection -- the Calcite one includes a constraint column the
+            // legacy one drops -- and the hints come from whichever ran, so a
+            // mismatch must not take the query down when the answer is
+            // available from the result set anyway.
             final Type suggestedType =
-                this.types == null ? null : this.types.get(i);
+                this.types == null || i >= this.types.size()
+                    ? null
+                    : this.types.get(i);
             // There might not be a schema constructed yet,
             // so watch out here for NPEs.
             RolapSchema schema = locus.execution.getMondrianStatement()

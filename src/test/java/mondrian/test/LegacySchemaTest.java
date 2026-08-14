@@ -645,9 +645,11 @@ public class LegacySchemaTest extends FoodMartTestCase {
             + "   formatString='#,###.00'/>\n"
             + "</Cube>", null, null, null, null);
 
+        // The DimensionUsage renames the dimension, not the hierarchy inside
+        // it -- which is why the expected axis below reads [Time2].[Time].
         testContext.assertQueryReturns(
             "select\n"
-            + " {[Time2].[Time2].[1997]} on columns,\n"
+            + " {[Time2].[Time].[1997]} on columns,\n"
             + " {[Time].[Time].[1997].[Q3]} on rows\n"
             + "From [Sales Two Dimensions]",
             "Axis #0:\n"
