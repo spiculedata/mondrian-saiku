@@ -48,6 +48,7 @@ import static org.junit.Assert.assertNotNull;import static org.junit.Assert.asse
  *   <li>The four MvHit corpus shapes.</li>
  * </ol>
  */
+@org.junit.jupiter.api.extension.ExtendWith(AggregateTablesEnabled.class)
 public class MvRuleRewriteTest {
 
     private static Connection mondrianConn;

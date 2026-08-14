@@ -2911,7 +2911,7 @@ public final class CalcitePlannerAdapters {
      * sets the context on the builder itself).
      */
     static void attachParamContext(PlannerRequest.Builder b) {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4314,7 +4314,7 @@ public final class CalcitePlannerAdapters {
      * active Locus (e.g. a unit test driving the planner directly).
      */
     private static mondrian.olap.Role activeRole() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4331,7 +4331,7 @@ public final class CalcitePlannerAdapters {
      * {@code null} when there is no active Locus/connection.
      */
     private static mondrian.calcite.QueryParameterContext activeParamContext() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4349,7 +4349,7 @@ public final class CalcitePlannerAdapters {
      * Used to enumerate the role-visible members of a bridge dimension.
      */
     private static mondrian.olap.SchemaReader activeSchemaReader() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)

@@ -980,24 +980,8 @@ public class SqlTupleReader implements TupleReader {
      */
     private Execution getExecution() {
         assert targets.size() > 0;
-        if (Locus.peek().execution.getMondrianStatement()
-            .getMondrianConnection().getSchema() != null)
-        {
-            // the current locus has a statement that's associated with
-            // a schema.  Use it.
-            return Locus.peek().execution;
-        } else {
-            // no schema defined in the current locus.  This could
-            // happen during schema load.  Construct a new execution associated
-            // with the schema.
-            Statement statement = targets.get(0)
-                .getLevel()
-                .getHierarchy()
-                .getRolapSchema()
-                .getInternalConnection()
-                .getInternalStatement();
-            return new Execution(statement, 0);
-        }
+        return RolapUtil.executionFor(
+            targets.get(0).getLevel().getHierarchy().getRolapSchema());
     }
 
     public TupleList readMembers(

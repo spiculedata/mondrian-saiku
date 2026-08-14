@@ -128,14 +128,14 @@ public final class CalcPushdownRegistry {
         }
         // Fallback to the Execution-keyed map — the hot path for the
         // RolapResult hook, where segment loads run on pool workers.
-        try {
-            Object exec = mondrian.server.Locus.peek().execution;
-            List<Entry> fromExec = BY_EXECUTION.get(exec);
+        // No Locus on this thread (e.g. a direct unit-test call) — fall
+        // through to the empty list rather than throwing.
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
+        if (locus != null) {
+            List<Entry> fromExec = BY_EXECUTION.get(locus.execution);
             if (fromExec != null && !fromExec.isEmpty()) {
                 return java.util.Collections.unmodifiableList(fromExec);
             }
-        } catch (Throwable ignored) {
-            // No Locus on this thread — fall through.
         }
         return java.util.Collections.emptyList();
     }

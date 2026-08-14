@@ -555,8 +555,14 @@ public class SqlStatement implements DBStatement {
      * @return Wrapped result set
      */
     public ResultSet getWrappedResultSet() {
+        // Loader must be one that can see java.sql.ResultSet. Passing null
+        // (the bootstrap loader) worked pre-JDK 9 but throws
+        // IllegalArgumentException once java.sql moved into its own module:
+        // "java.sql.ResultSet referenced from a method is not visible from
+        // class loader: null". This class's own loader delegates to the
+        // platform loader, so it sees java.sql.
         return (ResultSet) Proxy.newProxyInstance(
-            null,
+            SqlStatement.class.getClassLoader(),
             new Class<?>[] {ResultSet.class},
             new MyDelegatingInvocationHandler(this));
     }

@@ -157,7 +157,7 @@ public class SegmentLoaderTest extends BatchTestCase {
             new MyDelegatingInvocationHandler(list);
         Object o =
             Proxy.newProxyInstance(
-                null,
+                SegmentLoaderTest.class.getClassLoader(),
                 new Class[] {ResultSet.class, ResultSetMetaData.class},
                 handler);
         handler.resultSetMetaData = (ResultSetMetaData) o;

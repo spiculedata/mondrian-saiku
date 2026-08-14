@@ -1575,7 +1575,7 @@ public class DialectTest extends TestCase {
 
         public ResultSetMetaData build() {
             return (ResultSetMetaData) Proxy.newProxyInstance(
-                null,
+                DialectTest.class.getClassLoader(),
                 new Class[] {ResultSetMetaData.class},
                 this);
         }
