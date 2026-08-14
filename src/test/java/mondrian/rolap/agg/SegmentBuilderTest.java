@@ -847,17 +847,19 @@ public class SegmentBuilderTest extends BatchTestCase {
     private TestContext loadCacheWithQueries(String [] queries) {
         getTestContext().flushSchemaCache();
         TestContext context = getTestContext().withFreshConnection();
-        // Flush the CELL cache too, not just the schema cache. Segments
-        // survive a schema flush, so without this a test sees whatever
-        // earlier tests in this class left behind and the segment it wants
-        // to roll up is no longer identifiable — the failure then depends on
-        // which tests ran before it.
-        final CacheControl cacheControl =
-            context.getConnection().getCacheControl(null);
-        cacheControl.flush(
-            cacheControl.createMeasuresRegion(
-                context.getConnection().getSchema().lookupCube(
-                    "Sales", true)));
+        // Empty the EXTERNAL segment cache — the one getReversibleTestMap
+        // reads. Segments survive a schema-cache flush, and CacheControl's
+        // cell flush clears the in-memory index without evicting the
+        // composite cache, so without this a test sees whatever earlier
+        // tests (in this class or any other in the same JVM) left behind:
+        // the segment it wants to roll up stops being identifiable, and
+        // whether it passes depends on what ran before it.
+        final SegmentCache cache = MondrianServer.forConnection(
+            context.getConnection()).getAggregationManager()
+            .cacheMgr.compositeCache;
+        for (SegmentHeader header : cache.getSegmentHeaders()) {
+            cache.remove(header);
+        }
         for (String query : queries) {
             context.executeQuery(query);
         }

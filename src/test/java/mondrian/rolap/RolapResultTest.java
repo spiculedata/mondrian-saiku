@@ -30,13 +30,13 @@ public class RolapResultTest extends AggTableTestCase {
         "Axis #0:\n"
         + "{}\n"
         + "Axis #1:\n"
-        + "{[D1].[a]}\n"
-        + "{[D1].[b]}\n"
-        + "{[D1].[c]}\n"
+        + "{[D1].[D1].[a]}\n"
+        + "{[D1].[D1].[b]}\n"
+        + "{[D1].[D1].[c]}\n"
         + "Axis #2:\n"
-        + "{[D2].[x]}\n"
-        + "{[D2].[y]}\n"
-        + "{[D2].[z]}\n"
+        + "{[D2].[D2].[x]}\n"
+        + "{[D2].[D2].[y]}\n"
+        + "{[D2].[D2].[z]}\n"
         + "Row #0: 5\n"
         + "Row #0: \n"
         + "Row #0: \n"
@@ -51,13 +51,13 @@ public class RolapResultTest extends AggTableTestCase {
         "Axis #0:\n"
         + "{}\n"
         + "Axis #1:\n"
-        + "{[D1].[a]}\n"
-        + "{[D1].[b]}\n"
-        + "{[D1].[c]}\n"
+        + "{[D1].[D1].[a]}\n"
+        + "{[D1].[D1].[b]}\n"
+        + "{[D1].[D1].[c]}\n"
         + "Axis #2:\n"
-        + "{[D2].[x]}\n"
-        + "{[D2].[y]}\n"
-        + "{[D2].[z]}\n"
+        + "{[D2].[D2].[x]}\n"
+        + "{[D2].[D2].[y]}\n"
+        + "{[D2].[D2].[z]}\n"
         + "Row #0: 5\n"
         + "Row #0: \n"
         + "Row #0: \n"
@@ -92,10 +92,10 @@ public class RolapResultTest extends AggTableTestCase {
 
         String mdx =
             "select "
-            + " filter({[D1].[a],[D1].[b],[D1].[c]}, "
+            + " filter({[D1].[D1].[a],[D1].[b],[D1].[c]}, "
             + "    [Measures].[Value] > 0) "
             + " ON COLUMNS, "
-            + " {[D2].[x],[D2].[y],[D2].[z]} "
+            + " {[D2].[D2].[x],[D2].[y],[D2].[z]} "
             + " ON ROWS "
             + "from FTAll";
 
@@ -115,10 +115,10 @@ public class RolapResultTest extends AggTableTestCase {
         }
         String mdx =
             "select "
-            + " filter({[D1].[a],[D1].[b],[D1].[c]}, "
+            + " filter({[D1].[D1].[a],[D1].[b],[D1].[c]}, "
             + "    [Measures].[Value] > 0) "
             + " ON COLUMNS, "
-            + " {[D2].[x],[D2].[y],[D2].[z]} "
+            + " {[D2].[D2].[x],[D2].[y],[D2].[z]} "
             + " ON ROWS "
             + "from FT1";
 
@@ -132,9 +132,9 @@ Axis #0:
 {}
 Axis #1:
 Axis #2:
-{[D2].[x]}
-{[D2].[y]}
-{[D2].[z]}
+{[D2].[D2].[x]}
+{[D2].[D2].[y]}
+{[D2].[D2].[z]}
 */
         assertEquals(resultString, RESULTS);
     }
@@ -145,10 +145,10 @@ Axis #2:
         }
         String mdx =
             "select "
-            + " NON EMPTY filter({[D1].[a],[D1].[b],[D1].[c]}, "
+            + " NON EMPTY filter({[D1].[D1].[a],[D1].[b],[D1].[c]}, "
             + "    [Measures].[Value] > 0) "
             + " ON COLUMNS, "
-            + " {[D2].[x],[D2].[y],[D2].[z]} "
+            + " {[D2].[D2].[x],[D2].[y],[D2].[z]} "
             + " ON ROWS "
             + "from FT2";
 
@@ -177,10 +177,10 @@ Axis #2:
 
         String mdx =
             "select "
-            + " NON EMPTY filter({[D1].[a],[D1].[b],[D1].[c]}, "
+            + " NON EMPTY filter({[D1].[D1].[a],[D1].[b],[D1].[c]}, "
             + "    [Measures].[Value] > 0) "
             + " ON COLUMNS, "
-            + " {[D2].[x],[D2].[y],[D2].[z]} "
+            + " {[D2].[D2].[x],[D2].[y],[D2].[z]} "
             + " ON ROWS "
             + "from FT2Extra";
 

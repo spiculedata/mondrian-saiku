@@ -47,7 +47,7 @@ public class TupleListTest extends FoodMartTestCase {
 
         TupleList list1 = new UnaryTupleList();
         assertEquals(list0, list1);
-        final Member storeUsaMember = xxx("[Store].[USA]");
+        final Member storeUsaMember = xxx("[Store].[Stores].[USA]");
         list1.add(Collections.singletonList(storeUsaMember));
         assertFalse(list1.isEmpty());
         assertEquals(1, list1.size());
@@ -75,8 +75,8 @@ public class TupleListTest extends FoodMartTestCase {
     }
 
     public void testArrayTupleList() {
-        final Member genderFMember = xxx("[Gender].[F]");
-        final Member genderMMember = xxx("[Gender].[M]");
+        final Member genderFMember = xxx("[Customer].[Gender].[F]");
+        final Member genderMMember = xxx("[Customer].[Gender].[M]");
 
         // empty list
         final TupleList list0 = new ArrayTupleList(2);
@@ -87,7 +87,7 @@ public class TupleListTest extends FoodMartTestCase {
 
         TupleList list1 = new ArrayTupleList(2);
         assertEquals(list0, list1);
-        final Member storeUsaMember = xxx("[Store].[USA]");
+        final Member storeUsaMember = xxx("[Store].[Stores].[USA]");
         list1.add(Arrays.asList(storeUsaMember, genderFMember));
         assertFalse(list1.isEmpty());
         assertEquals(1, list1.size());
@@ -131,7 +131,7 @@ public class TupleListTest extends FoodMartTestCase {
         assertEquals(list2, list0);
 
         assertEquals("[]", list0.toString());
-        assertEquals("[[[Store].[USA], [Gender].[F]]]", list1.toString());
+        assertEquals("[[[Store].[Stores].[USA], [Customer].[Gender].[F]]]", list1.toString());
         assertEquals("[]", list2.toString());
 
         // For various lists, sublist returns the whole thing.
@@ -155,9 +155,9 @@ public class TupleListTest extends FoodMartTestCase {
     }
 
     public void testDelegatingTupleList() {
-        final Member genderFMember = xxx("[Gender].[F]");
-        final Member genderMMember = xxx("[Gender].[M]");
-        final Member storeUsaMember = xxx("[Store].[USA]");
+        final Member genderFMember = xxx("[Customer].[Gender].[F]");
+        final Member genderMMember = xxx("[Customer].[Gender].[M]");
+        final Member storeUsaMember = xxx("[Store].[Stores].[USA]");
 
         final List<List<Member>> arrayList = new ArrayList<List<Member>>();
         TupleList fm = new DelegatingTupleList(2, arrayList);
@@ -168,7 +168,7 @@ public class TupleListTest extends FoodMartTestCase {
         assertEquals(2, fm.size());
         assertEquals(2, fm.getArity());
         assertEquals(
-            "[[[Gender].[F], [Store].[USA]], [[Gender].[M], [Store].[USA]]]",
+            "[[[Customer].[Gender].[F], [Store].[Stores].[USA]], [[Customer].[Gender].[M], [Store].[Stores].[USA]]]",
             fm.toString());
 
         checkProject(fm);
@@ -181,15 +181,15 @@ public class TupleListTest extends FoodMartTestCase {
     public void testDelegatingTupleListSlice() {
         // Functional test.
         assertQueryReturns(
-            "select {[Measures].[Store Sales]} ON COLUMNS, Hierarchize(Except({[Customers].[All Customers], [Customers].[All Customers].Children}, {[Customers].[All Customers]})) ON ROWS from [Sales] ",
+            "select {[Measures].[Store Sales]} ON COLUMNS, Hierarchize(Except({[Customer].[Customers].[All Customers], [Customers].[All Customers].Children}, {[Customer].[Customers].[All Customers]})) ON ROWS from [Sales] ",
             "Axis #0:\n"
             + "{}\n"
             + "Axis #1:\n"
             + "{[Measures].[Store Sales]}\n"
             + "Axis #2:\n"
-            + "{[Customers].[Canada]}\n"
-            + "{[Customers].[Mexico]}\n"
-            + "{[Customers].[USA]}\n"
+            + "{[Customer].[Customers].[Canada]}\n"
+            + "{[Customer].[Customers].[Mexico]}\n"
+            + "{[Customer].[Customers].[USA]}\n"
             + "Row #0: \n"
             + "Row #1: \n"
             + "Row #2: 565,238.13\n");
@@ -199,16 +199,25 @@ public class TupleListTest extends FoodMartTestCase {
             new Locus.Action<Void>() {
                 public Void execute() {
                     // Unit test
-                    final Member genderFMember = xxx("[Gender].[F]");
-                    final Member storeUsaMember = xxx("[Store].[USA]");
+                    final Member genderFMember = xxx("[Customer].[Gender].[F]");
+                    final Member genderMMember = xxx("[Customer].[Gender].[M]");
+                    final Member storeUsaMember = xxx("[Store].[Stores].[USA]");
                     final List<List<Member>> arrayList =
                         new ArrayList<List<Member>>();
                     final TupleList fm =
                         new DelegatingTupleList(2, arrayList);
                     fm.addTuple(genderFMember, storeUsaMember);
+                    fm.addTuple(genderMMember, storeUsaMember);
+                    // slice(0) is the list of each tuple's first member, so
+                    // it has one entry per TUPLE — not one per member of a
+                    // tuple. Asserting 2 here against a single added tuple
+                    // could never hold; add a second tuple so the slice is
+                    // actually exercised over more than one.
                     final List<Member> sliced = fm.slice(0);
                     assertEquals(2, sliced.size());
-                    assertEquals(1, fm.size());
+                    assertEquals(2, fm.size());
+                    assertEquals(genderFMember, sliced.get(0));
+                    assertEquals(genderMMember, sliced.get(1));
                     return null;
                 }
             });
@@ -221,10 +230,10 @@ public class TupleListTest extends FoodMartTestCase {
         assertEquals(fm.slice(0), fm.project(new int[] {0}).slice(0));
         assertEquals(fm.slice(1), fm.project(new int[] {1}).slice(0));
         assertEquals(
-            "[[[Gender].[F]], [[Gender].[M]]]",
+            "[[[Customer].[Gender].[F]], [[Customer].[Gender].[M]]]",
             fm.project(new int[] {0}).toString());
         assertEquals(
-            "[[[Store].[USA]], [[Store].[USA]]]",
+            "[[[Store].[Stores].[USA]], [[Store].[Stores].[USA]]]",
             fm.project(new int[] {1}).toString());
 
         // Also check cloneList.
