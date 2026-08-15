@@ -2376,9 +2376,17 @@ public class RolapSchemaLoader {
         try {
             graph.findPath(pathBuilder, expr.relation);
         } catch (RolapSchema.PhysSchemaException e) {
-            // TODO: user error
-            throw Util.newInternal(
-                e, "Could not find path to " + expr.relation);
+            // No path following links from foreign key to primary key. A
+            // self-join has none -- the alias is reached from the table, not
+            // the other way round -- so try walking the links backwards
+            // before giving up. See PhysSchemaGraph.findPath.
+            try {
+                graph.findPath(pathBuilder, expr.relation, false);
+            } catch (RolapSchema.PhysSchemaException e2) {
+                // TODO: user error
+                throw Util.newInternal(
+                    e, "Could not find path to " + expr.relation);
+            }
         }
         final RolapStar star = measureGroup.getStar();
         RolapStar.Table starTable = star.getTable(pathBuilder.done());
@@ -3250,6 +3258,19 @@ public class RolapSchemaLoader {
             }
         } else {
             // degenerate dim, should only be a single attribute
+            if (attributeList.isEmpty()) {
+                // No key and no attributes to infer one from. Report it as
+                // the schema error it is; reading attributeList.get(0) below
+                // would raise a bare IndexOutOfBoundsException naming
+                // nothing. Reached by a Mondrian 3 <Dimension> element in a
+                // Mondrian 4 schema, whose attributes live in <Attributes>.
+                getHandler().error(
+                    MondrianResource.instance()
+                    .DimensionKeyOmitted.ex(xmlDimension.name),
+                    validator.getXmls(dimension),
+                    null);
+                return null;
+            }
             if (attributeList.size() > 1) {
                 getHandler().error(
                     MondrianResource.instance()
@@ -3443,7 +3464,8 @@ public class RolapSchemaLoader {
                     .populate(dimension.getLarder())
                     .build());
         initCubeDimension(
-            cubeDimension, xmlCubeDimension.source, cubeHierarchyList);
+            cubeDimension, xmlCubeDimension.source, cubeHierarchyList,
+            xmlCubeDimension.caption);
         validator.putXml(cubeDimension, xmlCubeDimension);
 
         // Populate attribute map. (REVIEW: Should attributes go ONLY in the
@@ -3854,6 +3876,23 @@ public class RolapSchemaLoader {
         String dimSource,
         List<RolapCubeHierarchy> hierarchyList)
     {
+        initCubeDimension(cubeDimension, dimSource, hierarchyList, null);
+    }
+
+    /**
+     * As above, but takes the caption DECLARED on the dimension usage —
+     * null when the usage does not override it, which is exactly the
+     * distinction {@link Larders#prefix} needs: an uncaptioned usage must
+     * keep qualifying with its name.
+     *
+     * @param usageCaption Caption declared on the usage, or null
+     */
+    void initCubeDimension(
+        RolapCubeDimension cubeDimension,
+        String dimSource,
+        List<RolapCubeHierarchy> hierarchyList,
+        String usageCaption)
+    {
         final int originalSize = hierarchyList.size();
         for (RolapHierarchy hierarchy
             : cubeDimension.rolapDimension.getHierarchyList())
@@ -3880,7 +3919,8 @@ public class RolapSchemaLoader {
                             Larders.prefix(
                                 hierarchy.getLarder(),
                                 dimSource,
-                                cubeDimension.getName()))
+                                cubeDimension.getName(),
+                                usageCaption))
                         .build());
             final MondrianDef.Hierarchy xmlHierarchy =
                 validator.getXml(hierarchy, false);
@@ -6069,7 +6109,7 @@ public class RolapSchemaLoader {
             "String", SqlStatement.Type.STRING,
             "long", SqlStatement.Type.LONG);
 
-    private static SqlStatement.Type toInternalType(String internalTypeName) {
+    static SqlStatement.Type toInternalType(String internalTypeName) {
         SqlStatement.Type type = VALUES.get(internalTypeName);
         if (type == null && internalTypeName != null) {
             throw Util.newError(

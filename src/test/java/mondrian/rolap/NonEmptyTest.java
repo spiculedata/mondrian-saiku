@@ -2805,108 +2805,80 @@ public class NonEmptyTest extends BatchTestCase {
             + "[Store].[All Stores].children) on rows "
             + "from [Warehouse and Sales]";
 
-        final List<LoggingEvent> events = new ArrayList<LoggingEvent>();
-
-        // set up log4j listener to detect alerts
-        Appender alertListener = new AppenderSkeleton() {
-            protected void append(LoggingEvent event) {
-                events.add(event);
-            }
-
-            public void close() {
-            }
-
-            public boolean requiresLayout() {
-                return false;
-            }
-        };
-        final Logger rolapUtilLogger = Logger.getLogger(RolapUtil.class);
-        propSaver.setAtLeast(rolapUtilLogger, org.apache.log4j.Level.WARN);
-        rolapUtilLogger.addAppender(alertListener);
-        String expectedMessage =
+        // Mondrian logs through SLF4J to Log4j 2; a Log4j 1 appender on a
+        // Log4j 1 Logger captures nothing at all, which reads as "the alert
+        // was never raised". See LogCapture.
+        final mondrian.test.LogCapture capture =
+            mondrian.test.LogCapture.attach(RolapUtil.class.getName());
+        final String expectedMessage =
             "Unable to use native SQL evaluation for 'NonEmptyCrossJoin'";
-
-        // verify that exception is thrown if alerting is set to ERROR
-        propSaver.set(alertProperty, org.apache.log4j.Level.ERROR.toString());
         try {
-            checkNotNative(testContext, 3, mdx);
-            fail("Expected NativeEvaluationUnsupportedException");
-        } catch (Exception ex) {
-            Throwable t = ex;
-            while (t.getCause() != null && t != t.getCause()) {
-                t = t.getCause();
+            // verify that exception is thrown if alerting is set to ERROR
+            propSaver.set(
+                alertProperty,
+                org.apache.logging.log4j.Level.ERROR.toString());
+            try {
+                checkNotNative(testContext, 3, mdx);
+                fail("Expected NativeEvaluationUnsupportedException");
+            } catch (Exception ex) {
+                Throwable t = ex;
+                while (t.getCause() != null && t != t.getCause()) {
+                    t = t.getCause();
+                }
+                if (!(t instanceof NativeEvaluationUnsupportedException)) {
+                    fail();
+                }
+                // Expected
+            } finally {
+                propSaver.reset();
             }
-            if (!(t instanceof NativeEvaluationUnsupportedException)) {
-                fail();
+
+            // should have gotten one ERROR
+            assertEquals(
+                "logged error count check: " + capture.describe(),
+                1,
+                capture.count(
+                    org.apache.logging.log4j.Level.ERROR, expectedMessage));
+            capture.clear();
+
+            // verify that exactly one warning is posted but execution
+            // succeeds if alerting is set to WARN
+            propSaver.set(
+                alertProperty,
+                org.apache.logging.log4j.Level.WARN.toString());
+            try {
+                checkNotNative(testContext, 3, mdx);
+            } finally {
+                propSaver.reset();
             }
-            // Expected
+            assertEquals(
+                "logged warning count check: " + capture.describe(),
+                1,
+                capture.count(
+                    org.apache.logging.log4j.Level.WARN, expectedMessage));
+            capture.clear();
+
+            // verify that no warning is posted if native evaluation is
+            // explicitly disabled
+            propSaver.set(
+                alertProperty,
+                org.apache.logging.log4j.Level.WARN.toString());
+            propSaver.set(enableProperty, false);
+            try {
+                checkNotNative(testContext, 3, mdx);
+            } finally {
+                propSaver.reset();
+            }
+            assertEquals(
+                "logged warning count check: " + capture.describe(),
+                0,
+                capture.count(
+                    org.apache.logging.log4j.Level.WARN, expectedMessage));
         } finally {
-            propSaver.reset();
-            propSaver.setAtLeast(rolapUtilLogger, org.apache.log4j.Level.WARN);
+            capture.detach();
         }
-
-        // should have gotten one ERROR
-        int nEvents = countFilteredEvents(
-            events, org.apache.log4j.Level.ERROR, expectedMessage);
-        assertEquals("logged error count check", 1, nEvents);
-        events.clear();
-
-        // verify that exactly one warning is posted but execution succeeds
-        // if alerting is set to WARN
-        propSaver.set(
-            alertProperty, org.apache.log4j.Level.WARN.toString());
-        try {
-            checkNotNative(testContext, 3, mdx);
-        } finally {
-            propSaver.reset();
-            propSaver.setAtLeast(rolapUtilLogger, org.apache.log4j.Level.WARN);
-        }
-        // should have gotten one WARN
-        nEvents = countFilteredEvents(
-            events, org.apache.log4j.Level.WARN, expectedMessage);
-        assertEquals("logged warning count check", 1, nEvents);
-        events.clear();
-
-        // verify that no warning is posted if native evaluation is
-        // explicitly disabled
-        propSaver.set(
-            alertProperty, org.apache.log4j.Level.WARN.toString());
-        propSaver.set(enableProperty, false);
-        try {
-            checkNotNative(testContext, 3, mdx);
-        } finally {
-            propSaver.reset();
-            propSaver.setAtLeast(rolapUtilLogger, org.apache.log4j.Level.WARN);
-        }
-
-        // should have gotten no WARN
-        nEvents = countFilteredEvents(
-            events, org.apache.log4j.Level.WARN, expectedMessage);
-        assertEquals("logged warning count check", 0, nEvents);
-        events.clear();
-
-        // no biggie if we don't get here for some reason; just being
-        // half-heartedly clean
-        rolapUtilLogger.removeAppender(alertListener);
     }
 
-    private int countFilteredEvents(
-        List<LoggingEvent> events,
-        org.apache.log4j.Level level,
-        String pattern)
-    {
-        int filteredEventCount = 0;
-        for (LoggingEvent event : events) {
-            if (!event.getLevel().equals(level)) {
-                continue;
-            }
-            if (event.getMessage().toString().indexOf(pattern) == -1) {
-                continue;
-            }
-            filteredEventCount++;
-        }
-        return filteredEventCount;
-    }
 
     public void testVirtualCubeCrossJoinCalculatedMember1() {
         // calculated member appears in query

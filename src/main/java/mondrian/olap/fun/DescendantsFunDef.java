@@ -199,6 +199,10 @@ class DescendantsFunDef extends FunDefBase {
         final boolean after,
         Evaluator context)
     {
+        if (member.isNull()) {
+            // See descendantsByLevel: the null member has no descendants.
+            return;
+        }
         if (!context.isNonEmpty()) {
             context = null;
         }
@@ -300,6 +304,15 @@ class DescendantsFunDef extends FunDefBase {
         boolean leaves,
         Evaluator context)
     {
+        if (ancestor.isNull()) {
+            // The null member has no descendants. It reaches here when
+            // IgnoreInvalidMembersDuringQuery substitutes it for a member
+            // the query names but the schema does not have (MONDRIAN-977);
+            // without this, getMemberChildren walks the hierarchy from the
+            // null member and the query silently answers as though the
+            // caller had asked for the whole level.
+            return;
+        }
         // We find the descendants of a member by making breadth-first passes
         // down the hierarchy. Initially the list just contains the ancestor.
         // Then we find its children. We add those children to the result if

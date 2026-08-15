@@ -64,6 +64,7 @@ import java.util.List;
  *
  * <p>Output goes to {@code System.out} during test execution.
  */
+@org.junit.jupiter.api.extension.ExtendWith(AggregateTablesEnabled.class)
 public class MvRuleDiagnosticTest {
 
     private static Connection mondrianConn;

@@ -57,6 +57,13 @@ public class CacheTest extends FoodMartTestCase {
         String iteration)
         throws InterruptedException, ExecutionException
     {
+        // Drop the schema pool first. The segment cache is JVM-wide, and the
+        // measures-region flush below can only reach this schema's cubes, so
+        // a segment left by another test's substituted schema could still
+        // answer the queries -- no segment would be created and the "exactly
+        // one segment" assertion would compare identical counters.
+        getTestContext().flushSchemaCache();
+
         final MondrianServer server =
             MondrianServer.forConnection(getConnection());
         final CacheControl cacheControl =
@@ -80,12 +87,12 @@ public class CacheTest extends FoodMartTestCase {
                         "Axis #0:\n"
                         + "{}\n"
                         + "Axis #1:\n"
-                        + "{[Gender].[F], [Product].[Drink]}\n"
-                        + "{[Gender].[F], [Product].[Food]}\n"
-                        + "{[Gender].[F], [Product].[Non-Consumable]}\n"
-                        + "{[Gender].[M], [Product].[Drink]}\n"
-                        + "{[Gender].[M], [Product].[Food]}\n"
-                        + "{[Gender].[M], [Product].[Non-Consumable]}\n"
+                        + "{[Customer].[Gender].[F], [Product].[Products].[Drink]}\n"
+                        + "{[Customer].[Gender].[F], [Product].[Products].[Food]}\n"
+                        + "{[Customer].[Gender].[F], [Product].[Products].[Non-Consumable]}\n"
+                        + "{[Customer].[Gender].[M], [Product].[Products].[Drink]}\n"
+                        + "{[Customer].[Gender].[M], [Product].[Products].[Food]}\n"
+                        + "{[Customer].[Gender].[M], [Product].[Products].[Non-Consumable]}\n"
                         + "Row #0: 12,202\n"
                         + "Row #0: 94,814\n"
                         + "Row #0: 24,542\n"

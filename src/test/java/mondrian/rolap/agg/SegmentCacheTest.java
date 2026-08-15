@@ -16,8 +16,6 @@ import mondrian.spi.SegmentCache;
 import mondrian.spi.SegmentHeader;
 import mondrian.test.BasicQueryTest;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -48,104 +46,11 @@ import java.util.List;
  * @author LBoudreau
  */
 public class SegmentCacheTest extends BasicQueryTest {
-    private static final Logger LOGGER =
-        LoggerFactory.getLogger(SegmentCacheTest.class);
-
     @Override
     protected void setUp() throws Exception {
         super.setUp();
         getTestContext().getConnection().getCacheControl(null)
             .flushSchemaCache();
-    }
-
-    /**
-     * Documents that an inherited query test is intentionally not exercised in
-     * the segment-cache suite, logging why it is not a segment-cache concern.
-     *
-     * <p>These methods are JUnit-3 {@code TestCase} methods; JUnit 3 has no
-     * skip/assume mechanism (an {@code AssumptionViolatedException} surfaces as
-     * an <em>error</em> under the vintage runner, not a skip), so the
-     * JUnit-idiomatic way to declare "this inherited case does not apply to
-     * this subclass" is to override it as a no-op. The override is explicit and
-     * self-documenting (root cause in the method body + class javadoc) and logs
-     * a WARN at run time, so this is a <em>documented, justified exclusion</em>
-     * rather than a silent pass. The excluded cases are pre-existing
-     * BasicQueryTest engine failures unrelated to the segment cache; see the
-     * class javadoc.</p>
-     *
-     * @param testName the inherited test being excluded
-     * @param reason   human-readable root cause / justification
-     */
-    private void documentNonCacheSkip(String testName, String reason) {
-        LOGGER.warn(
-            "SegmentCacheTest: skipping inherited {} (#121, not a "
-            + "segment-cache concern): {}", testName, reason);
-    }
-
-    // --- Inherited BasicQueryTest failures that are NOT segment-cache bugs ---
-    // All six fail identically in BasicQueryTest itself (verified with and
-    // without MockSegmentCache). Five pass under -Dmondrian.backend=legacy and
-    // fail only under the default calcite translator (engine-level semantic
-    // gaps); testDifferentCalcsForDifferentTimePeriods fails under both
-    // backends (a deeper pre-existing data/engine discrepancy). None touches
-    // the segment cache code path or the RLS cache key.
-
-    @Override
-    public void testCompoundSlicerNonEmpty() {
-        documentNonCacheSkip(
-            "testCompoundSlicerNonEmpty",
-            "compound-slicer NON EMPTY row count differs under the default "
-            + "calcite backend (1047 vs 1477); passes under "
-            + "-Dmondrian.backend=legacy. Pre-existing engine semantics, "
-            + "reproduces with no segment cache present.");
-    }
-
-    @Override
-    public void testTaglib4() {
-        documentNonCacheSkip(
-            "testTaglib4",
-            "result-cell discrepancy under the default calcite backend; "
-            + "passes under -Dmondrian.backend=legacy. Pre-existing engine "
-            + "semantics, reproduces with no segment cache present.");
-    }
-
-    @Override
-    public void testNonEmptyNonEmptyCrossJoin3() {
-        documentNonCacheSkip(
-            "testNonEmptyNonEmptyCrossJoin3",
-            "NON EMPTY crossjoin tuple count differs under the default "
-            + "calcite backend (0 vs 1); passes under "
-            + "-Dmondrian.backend=legacy. Pre-existing engine semantics, "
-            + "reproduces with no segment cache present.");
-    }
-
-    @Override
-    public void testNonEmpty1() {
-        documentNonCacheSkip(
-            "testNonEmpty1",
-            "NON EMPTY assertion differs under the default calcite backend; "
-            + "passes under -Dmondrian.backend=legacy. Pre-existing engine "
-            + "semantics, reproduces with no segment cache present.");
-    }
-
-    @Override
-    public void testCrossjoinWithDescendantsAndUnknownMember() {
-        documentNonCacheSkip(
-            "testCrossjoinWithDescendantsAndUnknownMember",
-            "crossjoin-with-descendants result differs under the default "
-            + "calcite backend; passes under -Dmondrian.backend=legacy. "
-            + "Pre-existing engine semantics, reproduces with no segment "
-            + "cache present.");
-    }
-
-    @Override
-    public void testDifferentCalcsForDifferentTimePeriods() {
-        documentNonCacheSkip(
-            "testDifferentCalcsForDifferentTimePeriods",
-            "calculated-member-over-time result differs from the expected "
-            + "string under BOTH calcite and legacy backends; a deeper "
-            + "pre-existing engine/data discrepancy, not a cache bug. "
-            + "Reproduces with no segment cache present.");
     }
 
     public void testCompoundPredicatesCollision() {

@@ -11359,10 +11359,12 @@ public class FunctionTest extends FoodMartTestCase {
             "select filter([Stores].MEMBERS,"
             + "Left([Stores].CURRENTMEMBER.Name, -20)=\"Bellingham\") "
             + "on 0 from sales",
-            Util.IBM_JVM
-                ? "StringIndexOutOfBoundsException: null"
-                : "StringIndexOutOfBoundsException: String index out of range: "
-                  + "-20");
+            // Match the exception type only: JDK 21 words this
+            // "begin 0, end -20, length 10" where JDK 8 said "String index
+            // out of range: -20", and IBM's JVM said "null". What the test
+            // is about is that a negative length is rejected rather than
+            // silently treated as zero.
+            "StringIndexOutOfBoundsException");
     }
 
     public void testMidFunctionWithValidArguments() {
@@ -11691,10 +11693,8 @@ public class FunctionTest extends FoodMartTestCase {
     public void testVbaExceptions() {
         assertExprThrows(
             "right(\"abc\", -4)",
-            Util.IBM_JVM
-                ? "StringIndexOutOfBoundsException: null"
-                : "StringIndexOutOfBoundsException: "
-                  + "String index out of range: -4");
+            // Exception type only; see testLeftFunctionWithNegativeLength.
+            "StringIndexOutOfBoundsException");
     }
 
     public void testVbaDateTime() {

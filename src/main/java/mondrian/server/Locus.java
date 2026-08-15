@@ -63,6 +63,22 @@ public class Locus {
         return THREAD_LOCAL.get().peek();
     }
 
+    /**
+     * Like {@link #peek()}, but returns {@code null} when no Locus is
+     * active on this thread instead of throwing
+     * {@link java.util.EmptyStackException}.
+     *
+     * <p>Use this from code that is reachable outside a query execution —
+     * a planner or SQL-generation helper invoked directly by a unit test,
+     * for instance — and whose contract is to degrade to a default rather
+     * than fail. {@link #peek()} remains the right call where an absent
+     * Locus is a programming error.
+     */
+    public static Locus peekOrNull() {
+        final ArrayStack<Locus> stack = THREAD_LOCAL.get();
+        return stack.isEmpty() ? null : stack.peek();
+    }
+
     public static <T> T execute(
         RolapConnection connection,
         String component,

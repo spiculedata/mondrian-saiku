@@ -2192,6 +2192,30 @@ public class RolapSchemaUpgrader {
     {
         MondrianDef.Schema xmlSchema = new MondrianDef.Schema();
         xmlSchema.name = xmlLegacySchema.name;
+        // Carry the schema-level defaultRole across the conversion. Dropping
+        // it silently ignored the operator's choice of default role AND
+        // suppressed the loader's "Role 'x' not found" diagnostic, since the
+        // loader only validates an attribute that survives to the converted
+        // schema (mondrian.test.LegacySchemaTest.testInvalidRoleError).
+        xmlSchema.defaultRole = xmlLegacySchema.defaultRole;
+        if (xmlLegacySchema.defaultRole != null) {
+            boolean found = false;
+            for (Mondrian3Def.Role xmlLegacyRole : xmlLegacySchema.roles) {
+                if (xmlLegacySchema.defaultRole.equals(xmlLegacyRole.name)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Report against the LEGACY node: it came from the parsed
+                // document and therefore carries an XML location, where the
+                // converted schema's nodes are synthesised and cannot.
+                loader.getHandler().warning(
+                    "Role '" + xmlLegacySchema.defaultRole + "' not found",
+                    xmlLegacySchema,
+                    "defaultRole");
+            }
+        }
         xmlSchema.metamodelVersion =
             MondrianServer.forConnection(schema.getInternalConnection())
                 .getVersion().getVersionString();
@@ -2521,7 +2545,28 @@ public class RolapSchemaUpgrader {
             MondrianDef.Annotation xmlAnnotation = new MondrianDef.Annotation();
             xmlAnnotation.name = xmlLegacyAnnotation.name;
             xmlAnnotation.cdata = xmlLegacyAnnotation.cdata;
-            xmlAnnotations.add(xmlAnnotation);
+            // Override an annotation already carrying this name rather than
+            // appending a second one. Callers rely on it: a
+            // <VirtualCubeMeasure>'s annotations are documented to OVERRIDE
+            // the underlying measure's ("but if underlying measure has
+            // annotations with different names, they will survive"), and
+            // appending left the base measure's value in front, so the
+            // override never took effect. The existing entry is updated in
+            // place because this child list does not support removal.
+            MondrianDef.Annotation existing = null;
+            for (MondrianDef.Annotation candidate : xmlAnnotations) {
+                if (xmlAnnotation.name != null
+                    && xmlAnnotation.name.equals(candidate.name))
+                {
+                    existing = candidate;
+                    break;
+                }
+            }
+            if (existing != null) {
+                existing.cdata = xmlAnnotation.cdata;
+            } else {
+                xmlAnnotations.add(xmlAnnotation);
+            }
         }
     }
 
@@ -2943,6 +2988,14 @@ public class RolapSchemaUpgrader {
         final RolapSchema.PhysRelation midRelation;
         if (relationOrJoin instanceof Mondrian3Def.Join) {
             Mondrian3Def.Join join = (Mondrian3Def.Join) relationOrJoin;
+            if (join.left instanceof Mondrian3Def.Join) {
+                // Mondrian only supports right-deep joins, Join(A, Join(B, C)).
+                // Recursing into a left-deep one gets far enough to fail on
+                // whichever key does not resolve, with a message naming
+                // relations the schema author did not write down -- so say
+                // what is actually wrong.
+                throw MondrianResource.instance().IllegalLeftDeepJoin.ex();
+            }
             midRelation =
                 registerRelation(
                     leftRelation,

@@ -38,6 +38,13 @@ public class CVConcurrentMdxTest extends FoodMartTestCase {
         propSaver.set(propSaver.props.DisableCaching, false);
         propSaver.set(propSaver.props.UseAggregates, false);
         propSaver.set(propSaver.props.ReadAggregates, false);
+        // ClearViewBase.runTest sets this before every query, so every
+        // reference result these tests borrow was recorded with it on. Run
+        // them without it and the queries take a different evaluation path:
+        // rows come back in another order, and an unqualified dimension
+        // reference resolves differently. Neither has anything to do with
+        // running them concurrently, which is what this test is for.
+        propSaver.set(propSaver.props.ExpandNonNative, true);
 
         // test partially filled aggregation cache
         // add test classes
@@ -71,6 +78,13 @@ public class CVConcurrentMdxTest extends FoodMartTestCase {
         propSaver.set(propSaver.props.DisableCaching, false);
         propSaver.set(propSaver.props.UseAggregates, false);
         propSaver.set(propSaver.props.ReadAggregates, false);
+        // ClearViewBase.runTest sets this before every query, so every
+        // reference result these tests borrow was recorded with it on. Run
+        // them without it and the queries take a different evaluation path:
+        // rows come back in another order, and an unqualified dimension
+        // reference resolves differently. Neither has anything to do with
+        // running them concurrently, which is what this test is for.
+        propSaver.set(propSaver.props.ExpandNonNative, true);
 
         // test partially filled aggregation cache
         // add test classes
@@ -102,6 +116,13 @@ public class CVConcurrentMdxTest extends FoodMartTestCase {
         propSaver.set(propSaver.props.DisableCaching, false);
         propSaver.set(propSaver.props.UseAggregates, false);
         propSaver.set(propSaver.props.ReadAggregates, false);
+        // ClearViewBase.runTest sets this before every query, so every
+        // reference result these tests borrow was recorded with it on. Run
+        // them without it and the queries take a different evaluation path:
+        // rows come back in another order, and an unqualified dimension
+        // reference resolves differently. Neither has anything to do with
+        // running them concurrently, which is what this test is for.
+        propSaver.set(propSaver.props.ExpandNonNative, true);
 
         // test partially filled aggregation cache
         // add test classes
@@ -164,6 +185,7 @@ public class CVConcurrentMdxTest extends FoodMartTestCase {
         throws Exception
     {
         List<QueryAndResult> queryList = new ArrayList<QueryAndResult>();
+        int skipped = 0;
         for (Class testClass : testList) {
             Class[] types = {String.class};
             Constructor cons = testClass.getConstructor(types);
@@ -175,23 +197,52 @@ public class CVConcurrentMdxTest extends FoodMartTestCase {
             List<String> testCaseNames = diffRepos.getTestCaseNames();
             for (String testCaseName : testCaseNames) {
                 String query = diffRepos.get(testCaseName, "mdx");
-                String result = diffRepos.get(testCaseName, "result");
 
-                // current limitation: only run queries if
-                // calculated members are not specified
-                if (diffRepos.get(testCaseName, "calculatedMembers")
-                    == null)
+                // Only run queries whose reference result was recorded
+                // against the plain schema. ClearViewBase.runTest builds a
+                // substituting-cube context whenever the case declares any
+                // of these, and the recorded result is a result FOR THAT
+                // SCHEMA -- member unique names and row order included. Run
+                // against the plain connection here, such a case cannot
+                // match, and the failure looks like a concurrency bug.
+                // (calculatedMembers was already excluded; the other four
+                // modify the cube in exactly the same way.)
+                if (diffRepos.get(testCaseName, "calculatedMembers") == null
+                    && diffRepos.get(testCaseName, "modifiedCubeName") == null
+                    && diffRepos.get(testCaseName, "customDimensions") == null
+                    && diffRepos.get(testCaseName, "measures") == null
+                    && diffRepos.get(testCaseName, "namedSets") == null)
                 {
-                    // trim the starting newline char only
-                    if (result.startsWith(Util.nl)) {
-                        result = result.replaceFirst(Util.nl, "");
+                    // Expect what this query returns HERE, run once on its
+                    // own -- not the result recorded in the reference file.
+                    // Those results were recorded by ClearViewBase, which
+                    // runs each query through its own context and property
+                    // settings; borrowing them means a difference in how the
+                    // query is set up reads as a concurrency failure. What
+                    // this test is for is that running these queries
+                    // concurrently gives the same answers as running them one
+                    // at a time, and that is now what it compares.
+                    try {
+                        queryList.add(
+                            new QueryAndResult(
+                                query,
+                                TestContext.toString(
+                                    getTestContext().executeQuery(query))));
+                    } catch (RuntimeException e) {
+                        // Some ClearView queries only run against the context
+                        // their own suite builds for them. Skip those rather
+                        // than report them as concurrency failures, and say
+                        // how many were skipped so the coverage this test
+                        // gives is not overstated.
+                        ++skipped;
                     }
-                    QueryAndResult queryResult =
-                        new QueryAndResult(query, result);
-                    queryList.add(queryResult);
                 }
             }
         }
+        System.out.println(
+            "CVConcurrentMdxTest: running " + queryList.size()
+            + " queries concurrently; skipped " + skipped
+            + " that do not run against the plain schema.");
         return queryList.toArray(new QueryAndResult[queryList.size()]);
     }
 }

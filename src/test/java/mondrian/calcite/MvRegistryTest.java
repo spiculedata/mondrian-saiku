@@ -38,6 +38,7 @@ import static org.junit.Assert.assertEquals;import static org.junit.Assert.asser
  * an unreachable agg — that stage doesn't exist yet (see class
  * Javadoc for the HepPlanner vs Volcano gap).
  */
+@org.junit.jupiter.api.extension.ExtendWith(AggregateTablesEnabled.class)
 public class MvRegistryTest {
 
     @BeforeAll

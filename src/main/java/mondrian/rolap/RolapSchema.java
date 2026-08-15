@@ -921,6 +921,19 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public final PhysStatistic statistic;
 
         /**
+         * Returns every relation declared in this physical schema, keyed by
+         * the alias each is referenced by. Read by the Calcite backend, which
+         * has to register the relations that do not exist in the database --
+         * {@link PhysInlineTable} and {@link PhysView} -- as Calcite tables
+         * before it can plan against them.
+         *
+         * @return relations, in declaration order
+         */
+        public Collection<PhysRelation> getRelations() {
+            return Collections.unmodifiableCollection(tablesByName.values());
+        }
+
+        /**
          * Creates a physical schema.
          *
          * @param dialect Dialect
@@ -1380,11 +1393,38 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysRelation relation)
             throws PhysSchemaException
         {
+            findPath(pathBuilder, relation, true);
+        }
+
+        /**
+         * As {@link #findPath(PhysPathBuilder, PhysRelation)}, but able to
+         * walk a link against its direction.
+         *
+         * <p>Links point from the table holding the foreign key to the table
+         * holding the primary key, and a directed search can only follow them
+         * that way. A self-join reverses that: an {@code employee} table
+         * aliased as {@code employee_manager} is reached from {@code employee}
+         * by {@code employee.supervisor_id = employee_manager.employee_id}, so
+         * getting back from the alias to the table means walking the one link
+         * backwards. There is no other route, and refusing to take it fails
+         * schema load outright.
+         *
+         * @param pathBuilder Path builder to extend
+         * @param relation Relation to reach
+         * @param directed Whether links may only be followed forwards
+         * @throws PhysSchemaException if there is no unique path
+         */
+        public void findPath(
+            PhysPathBuilder pathBuilder,
+            PhysRelation relation,
+            boolean directed)
+            throws PhysSchemaException
+        {
             addHopsBetween(
                 pathBuilder,
                 pathBuilder.hopList.get(
                     pathBuilder.hopList.size() - 1).relation,
-                Collections.<PhysRelation>singleton(relation), true);
+                Collections.<PhysRelation>singleton(relation), directed);
         }
     }
 
@@ -1451,6 +1491,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         void addColumn(PhysColumn column);
 
+        /**
+         * Returns the columns of this relation, in declaration order.
+         *
+         * @return columns
+         */
+        Collection<PhysColumn> getColumns();
+
         PhysRelation cloneWithAlias(String newAlias);
     }
 
@@ -1475,6 +1522,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         LinkedHashMap<String, PhysColumn> getColumnsByName() {
             return columnsByName;
+        }
+
+        public Collection<PhysColumn> getColumns() {
+            return Collections.unmodifiableCollection(columnsByName.values());
         }
 
         void setPopulated(boolean populated) {
@@ -1780,6 +1831,17 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         private void setRowList(List<String[]> rowList) {
             this.rowList.addAll(rowList);
+        }
+
+        /**
+         * Returns the literal rows of this inline table. Each row has one
+         * entry per column of {@link #getColumns()}, in the same order; a
+         * null entry is a SQL NULL.
+         *
+         * @return rows
+         */
+        public List<String[]> getRowList() {
+            return Collections.unmodifiableList(rowList);
         }
 
         @Override

@@ -346,9 +346,9 @@ and
 and
     `customer`.`state_province` = 'OR'
 and
-    `customer`.`gender` = 'F'
-and
     `customer`.`city` = 'Albany'
+and
+    `customer`.`gender` = 'F'
 and
     `sales_fact_1997`.`customer_id` = `customer`.`customer_id`
 and

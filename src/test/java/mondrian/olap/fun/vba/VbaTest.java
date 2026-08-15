@@ -219,6 +219,20 @@ public class VbaTest extends TestCase {
         assertEquals(668.0, Vba.val("&O1234"));
     }
 
+    /**
+     * Builds a {@link Date} with the given fields in the default time zone,
+     * with a zero millisecond field so it compares equal to a value that
+     * {@link DateFormat#parse} produced.
+     */
+    private static Date makeDate(
+        int year, int month, int day, int hour, int minute, int second)
+    {
+        final Calendar calendar = Calendar.getInstance();
+        calendar.clear();
+        calendar.set(year, month, day, hour, minute, second);
+        return calendar.getTime();
+    }
+
     public void testCDate() throws ParseException {
         Date date = new Date();
         assertEquals(date, Vba.cDate(date));
@@ -231,17 +245,26 @@ public class VbaTest extends TestCase {
             assertEquals(
                 DateFormat.getDateInstance().parse("October 19, 1962"),
                 Vba.cDate("October 19, 1962"));
-            assertEquals(
-                DateFormat.getTimeInstance().parse("4:35:47 PM"),
-                Vba.cDate("4:35:47 PM"));
-            assertEquals(
-                DateFormat.getDateTimeInstance().parse(
-                    "October 19, 1962 4:35:47 PM"),
-                Vba.cDate("October 19, 1962 4:35:47 PM"));
         } catch (ParseException e) {
             e.printStackTrace();
             fail();
         }
+
+        // Times. The reference values are built rather than parsed from a
+        // hand-written string: since JDK 20 the CLDR locale data puts a
+        // NARROW NO-BREAK SPACE (U+202F) before the AM/PM marker, so
+        // DateFormat.parse rejects the plain ASCII space this test used to
+        // hand it. CDate accepts BOTH spellings, which is what the two
+        // assertions in each pair check.
+        final Date timeOnly = makeDate(1970, 0, 1, 16, 35, 47);
+        assertEquals(timeOnly, Vba.cDate("4:35:47 PM"));
+        assertEquals(timeOnly, Vba.cDate("4:35:47\u202FPM"));
+
+        final Date dateAndTime = makeDate(1962, 9, 19, 16, 35, 47);
+        assertEquals(
+            dateAndTime, Vba.cDate("October 19, 1962 4:35:47 PM"));
+        assertEquals(
+            dateAndTime, Vba.cDate("October 19, 1962 4:35:47\u202FPM"));
 
         try {
             Vba.cDate("Jan, 1952");
@@ -411,24 +434,40 @@ public class VbaTest extends TestCase {
     }
 
     public void testFormatDateTime() {
-        try {
-            Date date = DateFormat.getDateTimeInstance().parse(
-                "October 19, 1962 4:35:47 PM");
-            assertEquals("Oct 19, 1962 4:35:47 PM", Vba.formatDateTime(date));
-            assertEquals(
-                "Oct 19, 1962 4:35:47 PM", Vba.formatDateTime(date, 0));
-            assertEquals("October 19, 1962", Vba.formatDateTime(date, 1));
-            assertEquals("10/19/62", Vba.formatDateTime(date, 2));
-            String datestr = Vba.formatDateTime(date, 3);
-            assertNotNull(datestr);
-            // skip the timezone so this test runs everywhere
-            // in EST, this string is "4:35:47 PM EST"
-            assertTrue(datestr.startsWith("4:35:47 PM"));
-            assertEquals("4:35 PM", Vba.formatDateTime(date, 4));
-        } catch (ParseException e) {
-            e.printStackTrace();
-            fail();
-        }
+        final Date date = makeDate(1962, 9, 19, 16, 35, 47);
+        // Expected strings are written with plain ASCII spaces and compared
+        // through normalizeSpaces: modern CLDR data separates the AM/PM
+        // marker with U+202F, which is invisible in a diff and not what
+        // this test is about. The visible ", " between date and time IS
+        // asserted — that is a real formatting change.
+        assertFormatEquals(
+            "Oct 19, 1962, 4:35:47 PM", Vba.formatDateTime(date));
+        assertFormatEquals(
+            "Oct 19, 1962, 4:35:47 PM", Vba.formatDateTime(date, 0));
+        assertFormatEquals("October 19, 1962", Vba.formatDateTime(date, 1));
+        assertFormatEquals("10/19/62", Vba.formatDateTime(date, 2));
+        String datestr = Vba.formatDateTime(date, 3);
+        assertNotNull(datestr);
+        // skip the timezone so this test runs everywhere
+        // in EST, this string is "4:35:47 PM EST"
+        assertTrue(
+            normalizeSpaces(datestr).startsWith("4:35:47 PM"));
+        assertFormatEquals("4:35 PM", Vba.formatDateTime(date, 4));
+    }
+
+    /**
+     * Asserts equality after {@link #normalizeSpaces}, so a test does not
+     * fail over which flavour of no-break space the JDK's locale data uses.
+     */
+    private static void assertFormatEquals(String expected, String actual) {
+        assertEquals(expected, normalizeSpaces(actual));
+    }
+
+    /** Replaces NO-BREAK SPACE and NARROW NO-BREAK SPACE with a space. */
+    private static String normalizeSpaces(String s) {
+        return s == null
+            ? null
+            : s.replace('\u00A0', ' ').replace('\u202F', ' ');
     }
 
     public void testDateValue() {
@@ -574,7 +613,11 @@ public class VbaTest extends TestCase {
         assertEquals("$0.10", Vba.formatCurrency(0.10, -1, -1));
         // todo: still need to implement parens customization
         // assertEquals("-$0.10", Vba.formatCurrency(-0.10, -1, -1, -1));
-        assertEquals("($0.10)", Vba.formatCurrency(-0.10, -1, -1, 0));
+        // The parens flag is not implemented, so this follows the locale.
+        // en_US CLDR renders negative currency with a minus sign, where it
+        // once used parentheses — which is also what VBA produces for
+        // useParensForNegativeNumbers = vbFalse (0), as passed here.
+        assertEquals("-$0.10", Vba.formatCurrency(-0.10, -1, -1, 0));
 
         assertEquals("$1,000.00", Vba.formatCurrency(1000.0, -1, -1, 0, 0));
         assertEquals("$1000.00", Vba.formatCurrency(1000.0, -1, -1, 0, -1));

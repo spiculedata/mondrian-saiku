@@ -31,3 +31,32 @@ jobs:
           path: target/*.jar
           if-no-files-found: error
           retention-days: 14
+
+  # The merge gate for the unit suite. Surefire no longer ignores test
+  # failures, so a red test fails this job and therefore the build. The
+  # expensive Calcite equivalence harness stays opt-in (-Pcalcite-harness)
+  # and is gated separately by cross-backend-equivalence.yml.
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn -B -ntp test
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 14

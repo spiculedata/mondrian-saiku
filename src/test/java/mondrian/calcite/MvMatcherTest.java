@@ -40,6 +40,7 @@ import static org.junit.Assert.assertEquals;import static org.junit.Assert.asser
  *       leaves the request untouched.</li>
  * </ul>
  */
+@org.junit.jupiter.api.extension.ExtendWith(AggregateTablesEnabled.class)
 public class MvMatcherTest {
 
     private static Connection mondrianConn;

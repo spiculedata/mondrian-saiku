@@ -781,15 +781,22 @@ public class ParentChildHierarchyTest extends FoodMartTestCase {
             extendedContext,
             "[Employee].[Employees].[All Employees]",
             "$39,431.67",
+            // Mondrian 4 drill-through AGGREGATES by the context columns
+            // and does not order: DrillThroughQuerySpec.isAggregate()
+            // returns true ("As per SSAS 2005, the query must include a
+            // Group By clause so that each row returned contains the
+            // aggregated value of the measures for all rows with similar
+            // key values") and isOrdered() returns false. The expectation
+            // below was the Mondrian-3 detail-row form.
             "select"
-            + " `time_by_day`.`the_year` as `Year (Key)`,"
-            + " `salary`.`salary_paid` as `Org Salary` "
-            + "from `time_by_day` =as= `time_by_day`,"
-            + " `salary` =as= `salary` "
-            + "where `salary`.`pay_date` = `time_by_day`.`the_date`"
-            + " and `time_by_day`.`the_year` = 1997 "
-            + "order by `time_by_day`.`the_year` ASC",
-            7392);
+            + " `time_by_day`.`the_year` as `Year`,"
+            + " sum(`salary`.`salary_paid`) as `Org Salary` "
+            + "from `salary` =as= `salary`,"
+            + " `time_by_day` =as= `time_by_day` "
+            + "where `time_by_day`.`the_year` = 1997"
+            + " and `salary`.`pay_date` = `time_by_day`.`the_date` "
+            + "group by `time_by_day`.`the_year`",
+            1);
 
         // Drill-through for row #1, [Employees].[All].[Sheri Nowmer]
         // Note that the SQL does not contain the employee_closure table.
@@ -801,15 +808,16 @@ public class ParentChildHierarchyTest extends FoodMartTestCase {
             extendedContext,
             "[Employee].[Employees].[Sheri Nowmer]",
             "$39,431.67",
-            "select employee.employee_id as Employee Id (Key),"
-            + " time_by_day.the_year as Year (Key), salary.salary_paid as"
-            + " Org Salary from employee as employee, salary as salary,"
-            + " time_by_day as time_by_day where salary.employee_id ="
-            + " employee.employee_id and employee.employee_id = 1"
-            + " and salary.pay_date = time_by_day.the_date"
+            "select employee.employee_id as Employee Id,"
+            + " time_by_day.the_year as Year,"
+            + " sum(salary.salary_paid) as Org Salary"
+            + " from salary as salary, employee as employee,"
+            + " time_by_day as time_by_day where employee.employee_id = 1"
             + " and time_by_day.the_year = 1997"
-            + " order by employee.employee_id ASC, time_by_day.the_year ASC",
-            12);
+            + " and salary.employee_id = employee.employee_id"
+            + " and salary.pay_date = time_by_day.the_date"
+            + " group by employee.employee_id, time_by_day.the_year",
+            1);
 
         // Drill-through for row #2, [Employees].[All].[Sheri Nowmer].
         // Note that the SQL does not contain the employee_closure table.
@@ -819,18 +827,17 @@ public class ParentChildHierarchyTest extends FoodMartTestCase {
             extendedContext,
             "[Employee].[Employees].[Sheri Nowmer].[Derrick Whelply]",
             "$36,494.07",
-            "select employee.employee_id as Employee Id (Key),"
-            + " time_by_day.the_year as Year (Key),"
-            + " salary.salary_paid as Org Salary"
-            + " from employee as employee,"
-            + " salary as salary, time_by_day as time_by_day"
-            + " where salary.employee_id = employee.employee_id"
-            + " and employee.employee_id = 2"
-            + " and salary.pay_date = time_by_day.the_date"
+            "select employee.employee_id as Employee Id,"
+            + " time_by_day.the_year as Year,"
+            + " sum(salary.salary_paid) as Org Salary"
+            + " from salary as salary, employee as employee,"
+            + " time_by_day as time_by_day"
+            + " where employee.employee_id = 2"
             + " and time_by_day.the_year = 1997"
-            + " order by employee.employee_id ASC,"
-            + " time_by_day.the_year ASC",
-            12);
+            + " and salary.employee_id = employee.employee_id"
+            + " and salary.pay_date = time_by_day.the_date"
+            + " group by employee.employee_id, time_by_day.the_year",
+            1);
     }
 
     public void testParentChildDrillThroughWithContext() {
@@ -840,6 +847,19 @@ public class ParentChildHierarchyTest extends FoodMartTestCase {
             + "from [HR]");
 
         // Now with full context.
+        //
+        // Mondrian 4 extended context expands the hierarchies that are
+        // actually in the cell's context down to their full level path
+        // (here [Time] -> year/quarter/month and [Employees] -> employee_id);
+        // it does NOT add every other dimension of the cube. See the
+        // extended-context reference SQL in DrillThroughTest, which has the
+        // same shape. The expectation below used to list Store, Position and
+        // Department columns, which is the Mondrian 3 behaviour.
+        //
+        // Drill-through also aggregates rather than returning detail rows --
+        // DrillThroughQuerySpec.isAggregate() returns true ("As per SSAS
+        // 2005, the query must include a Group By clause") and isOrdered()
+        // returns false.
         final boolean extendedContext = true;
         checkDrillThroughSql(
             result,
@@ -848,53 +868,25 @@ public class ParentChildHierarchyTest extends FoodMartTestCase {
             "[Employee].[Employees].[Sheri Nowmer].[Derrick Whelply]",
             "$36,494.07",
             "select"
+            + " `employee`.`employee_id` as `Employee Id`,"
             + " `time_by_day`.`the_year` as `Year`,"
             + " `time_by_day`.`quarter` as `Quarter`,"
-            + " `time_by_day`.`month_of_year` as `Month (Key)`,"
-            + " `time_by_day`.`the_month` as `Month`,"
-            + " `store`.`store_country` as `Store Country`,"
-            + " `store`.`store_state` as `Store State`,"
-            + " `store`.`store_city` as `Store City`,"
-            + " `store`.`store_name` as `Store Name`,"
-            + " `store`.`store_type` as `Store Name (Store Type)`,"
-            + " `position`.`pay_type` as `Pay Type`,"
-            + " `employee`.`management_role` as `Management Role`,"
-            + " `employee`.`position_title` as `Position Title`,"
-            + " `department`.`department_id` as `Department Description`,"
-            + " `employee`.`employee_id` as `Employee Id (Key)`,"
-            + " `employee`.`full_name` as `Employee Id`,"
-            + " `salary`.`salary_paid` as `Org Salary` "
+            + " `time_by_day`.`month_of_year` as `Month`,"
+            + " sum(`salary`.`salary_paid`) as `Org Salary` "
             + "from"
-            + " `time_by_day` =as= `time_by_day`,"
             + " `salary` =as= `salary`,"
-            + " `store` =as= `store`,"
             + " `employee` =as= `employee`,"
-            + " `position` =as= `position`,"
-            + " `department` =as= `department` "
+            + " `time_by_day` =as= `time_by_day` "
             + "where"
-            + " `salary`.`pay_date` = `time_by_day`.`the_date`"
+            + " `employee`.`employee_id` = 2"
             + " and `time_by_day`.`the_year` = 1997"
             + " and `salary`.`employee_id` = `employee`.`employee_id`"
-            + " and `employee`.`store_id` = `store`.`store_id`"
-            + " and `employee`.`position_id` = `position`.`position_id`"
-            + " and `salary`.`department_id` = `department`.`department_id`"
-            + " and `employee`.`employee_id` = 2 "
-            + "order by"
-            + " `time_by_day`.`the_year` ASC,"
-            + " `time_by_day`.`quarter` ASC,"
-            + " `time_by_day`.`month_of_year` ASC,"
-            + " `time_by_day`.`the_month` ASC,"
-            + " `store`.`store_country` ASC,"
-            + " `store`.`store_state` ASC,"
-            + " `store`.`store_city` ASC,"
-            + " `store`.`store_name` ASC,"
-            + " `store`.`store_type` ASC,"
-            + " `position`.`pay_type` ASC,"
-            + " `employee`.`management_role` ASC,"
-            + " `employee`.`position_title` ASC,"
-            + " `department`.`department_id` ASC,"
-            + " `employee`.`employee_id` ASC,"
-            + " `employee`.`full_name` ASC",
+            + " and `salary`.`pay_date` = `time_by_day`.`the_date` "
+            + "group by"
+            + " `employee`.`employee_id`,"
+            + " `time_by_day`.`the_year`,"
+            + " `time_by_day`.`quarter`,"
+            + " `time_by_day`.`month_of_year`",
             12);
     }
 

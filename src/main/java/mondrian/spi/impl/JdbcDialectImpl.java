@@ -503,6 +503,43 @@ public class JdbcDialectImpl implements Dialect {
             }
         }
 
+        // The same first-row typing problem the String branch above guards
+        // against also bites INTEGER columns, on every database — not just
+        // the ones needing `cast`. A UNION ALL takes each column's type from
+        // the FIRST branch, so an inline table whose first row holds a small
+        // number and a later row a large one overflows:
+        //
+        //   select 1234 as "big_num" ... union all
+        //   select 1234567890123 as "big_num" ...   -> "Numeric value out of
+        //                                              range" on HSQLDB
+        //
+        // That is exactly what a level declared internalType='long' produces
+        // (mondrian.test.SchemaTest.testLevelInternalType). Widen such a
+        // column explicitly so the first branch establishes the wide type.
+        final boolean[] wideInteger = new boolean[columnCount];
+        for (int i = 0; i < columnTypes.size(); i++) {
+            if (Datatype.valueOf(columnTypes.get(i)) != Datatype.Integer) {
+                continue;
+            }
+            for (String[] values : valueList) {
+                final String v = values[i];
+                if (v == null) {
+                    continue;
+                }
+                try {
+                    final long asLong = Long.parseLong(v.trim());
+                    if (asLong > Integer.MAX_VALUE
+                        || asLong < Integer.MIN_VALUE)
+                    {
+                        wideInteger[i] = true;
+                        break;
+                    }
+                } catch (NumberFormatException e) {
+                    // Not an integer literal after all — leave it alone.
+                }
+            }
+        }
+
         if (valueList.isEmpty()) {
             return generateInlineEmpty(
                 columnNames, columnTypes, fromClause, cast);
@@ -527,6 +564,10 @@ public class JdbcDialectImpl implements Dialect {
                     buf.append("CAST(");
                     quote(buf, value, datatype);
                     buf.append(" AS VARCHAR(").append(maxLength).append("))");
+                } else if (wideInteger[j] && value != null) {
+                    buf.append("CAST(");
+                    quote(buf, value, datatype);
+                    buf.append(" AS ").append(bigIntegerTypeName()).append(')');
                 } else {
                     quote(buf, value, datatype);
                 }
@@ -542,6 +583,17 @@ public class JdbcDialectImpl implements Dialect {
             }
         }
         return buf.toString();
+    }
+
+    /**
+     * Name of the widest integer type for CASTs in generated SQL. Standard
+     * SQL spells it {@code BIGINT}; dialects without it (Oracle's
+     * {@code NUMBER(19)}) override.
+     *
+     * @return type name usable in a CAST
+     */
+    protected String bigIntegerTypeName() {
+        return "BIGINT";
     }
 
     private String falseLiteral() {
@@ -1140,7 +1192,18 @@ public class JdbcDialectImpl implements Dialect {
             return Datatype.Numeric;
         case Types.CHAR:
         case Types.VARCHAR:
+        case Types.LONGVARCHAR:
+        case Types.NCHAR:
+        case Types.NVARCHAR:
+        case Types.LONGNVARCHAR:
+            // LONGVARCHAR and the national-character types are strings as far
+            // as Mondrian is concerned. HSQLDB types a CASE expression over a
+            // VARCHAR column as LONGVARCHAR, so leaving it out made an
+            // <OrdinalExpression> fail to load with "mondrian is probably not
+            // familiar with this database's type system".
             return Datatype.String;
+        case Types.REAL:
+            return Datatype.Numeric;
         case Types.TIME:
             return Datatype.Time;
         case Types.TIMESTAMP:

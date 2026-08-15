@@ -398,7 +398,7 @@ where [Measures].[Unit Sales]
                                     <Grocery_x0020_Sqft name="[Store].[Stores].[Grocery Sqft]" type="xsd:unsignedInt"/>
                                     <Frozen_x0020_Sqft name="[Store].[Stores].[Frozen Sqft]" type="xsd:unsignedInt"/>
                                     <Meat_x0020_Sqft name="[Store].[Stores].[Meat Sqft]" type="xsd:unsignedInt"/>
-                                    <Has_x0020_coffee_x0020_bar name="[Store].[Stores].[Has coffee bar]" type="xsd:string"/>
+                                    <Has_x0020_coffee_x0020_bar name="[Store].[Stores].[Has coffee bar]" type="xsd:boolean"/>
                                     <Street_x0020_address name="[Store].[Stores].[Street address]" type="xsd:string"/>
                                 </HierarchyInfo>
                             </AxisInfo>
@@ -479,7 +479,7 @@ where [Measures].[Unit Sales]
                                         <Grocery_x0020_Sqft>15337</Grocery_x0020_Sqft>
                                         <Frozen_x0020_Sqft>5011</Frozen_x0020_Sqft>
                                         <Meat_x0020_Sqft>3340</Meat_x0020_Sqft>
-                                        <Has_x0020_coffee_x0020_bar>true</Has_x0020_coffee_x0020_bar>
+                                        <Has_x0020_coffee_x0020_bar>1</Has_x0020_coffee_x0020_bar>
                                         <Street_x0020_address>5495 Mitchell Canyon Road</Street_x0020_address>
                                     </Member>
                                 </Tuple>
@@ -507,7 +507,7 @@ where [Measures].[Unit Sales]
                                         <Grocery_x0020_Sqft>14210</Grocery_x0020_Sqft>
                                         <Frozen_x0020_Sqft>5633</Frozen_x0020_Sqft>
                                         <Meat_x0020_Sqft>3755</Meat_x0020_Sqft>
-                                        <Has_x0020_coffee_x0020_bar>false</Has_x0020_coffee_x0020_bar>
+                                        <Has_x0020_coffee_x0020_bar>0</Has_x0020_coffee_x0020_bar>
                                         <Street_x0020_address>1077 Wharf Drive</Street_x0020_address>
                                     </Member>
                                 </Tuple>
@@ -783,7 +783,7 @@ where [Measures].[Unit Sales]
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>HR Cube - Store.Stores Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -895,7 +895,7 @@ where [Measures].[Unit Sales]
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Sales Cube - Store.Stores Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -1007,7 +1007,7 @@ where [Measures].[Unit Sales]
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Store Cube - Store.Stores Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -1119,7 +1119,7 @@ where [Measures].[Unit Sales]
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Warehouse Cube - Store.Stores Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -1231,7 +1231,7 @@ where [Measures].[Unit Sales]
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Warehouse and Sales Cube - Store.Stores Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -1744,7 +1744,7 @@ WITH  SET [XL_Row_Dim_0] AS 'VisualTotals(Distinct(Hierarchize(
                                     <Grocery_x0020_Sqft name="[Store].[Stores].[Grocery Sqft]" type="xsd:unsignedInt"/>
                                     <Frozen_x0020_Sqft name="[Store].[Stores].[Frozen Sqft]" type="xsd:unsignedInt"/>
                                     <Meat_x0020_Sqft name="[Store].[Stores].[Meat Sqft]" type="xsd:unsignedInt"/>
-                                    <Has_x0020_coffee_x0020_bar name="[Store].[Stores].[Has coffee bar]" type="xsd:string"/>
+                                    <Has_x0020_coffee_x0020_bar name="[Store].[Stores].[Has coffee bar]" type="xsd:boolean"/>
                                     <Street_x0020_address name="[Store].[Stores].[Street address]" type="xsd:string"/>
                                 </HierarchyInfo>
                             </AxisInfo>

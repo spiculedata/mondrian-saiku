@@ -671,6 +671,37 @@ public final class CalciteSqlPlanner {
         return out.toString();
     }
 
+    /**
+     * Type system that widens a UNION of unequal-length {@code CHAR} types to
+     * {@code VARCHAR} instead of blank-padding the shorter branches.
+     *
+     * <p>Standard SQL pads: {@code SELECT 'USA' UNION ALL SELECT 'Mexico'}
+     * types as {@code CHAR(6)} and turns {@code 'USA'} into {@code 'USA   '}.
+     * That is fatal for an {@code <InlineTable>}, whose values are joined to
+     * real dimension columns -- {@code store.store_country = 'USA   '} matches
+     * nothing. Every database Mondrian supports treats these as varying-length
+     * strings, and the legacy SQL generator has always relied on that. Making
+     * it explicit keeps the Calcite backend's SQL semantically identical.
+     */
+    public static final class RaggedUnionTypeSystem
+        extends org.apache.calcite.rel.type.DelegatingTypeSystem
+    {
+        /** Public no-arg constructor: Calcite instantiates the type system
+         *  reflectively from its class name when it round-trips the config
+         *  through connection properties. */
+        public RaggedUnionTypeSystem() {
+            super(org.apache.calcite.rel.type.RelDataTypeSystem.DEFAULT);
+        }
+
+        @Override
+        public boolean shouldConvertRaggedUnionTypesToVarying() {
+            return true;
+        }
+    }
+
+    private static final org.apache.calcite.rel.type.RelDataTypeSystem
+        RAGGED_UNION_TYPE_SYSTEM = new RaggedUnionTypeSystem();
+
     /** Build the Calcite {@link RelNode} (used by plan-snapshot tests). */
     public RelNode planRel(PlannerRequest req) {
         if (req == null) {
@@ -679,6 +710,7 @@ public final class CalciteSqlPlanner {
         long tCfg = PROFILE ? System.nanoTime() : 0L;
         FrameworkConfig cfg = Frameworks.newConfigBuilder()
             .defaultSchema(schema.schema())
+            .typeSystem(RAGGED_UNION_TYPE_SYSTEM)
             .build();
         RelBuilder b = RelBuilder.create(cfg);
         long tBuild = PROFILE ? System.nanoTime() : 0L;
@@ -691,6 +723,37 @@ public final class CalciteSqlPlanner {
                 "CalciteSqlPlanner.build", now - tBuild);
         }
         return out;
+    }
+
+    /**
+     * Scans a table under a different name, and under that name only.
+     *
+     * <p>{@code RelBuilder.as} <em>adds</em> an alias rather than replacing
+     * the one a table scan already carries, so {@code scan("employee")
+     * .as("employee_manager")} leaves both names matching the same input.
+     * A self-join has the real table on the other side of the join carrying
+     * the same name, so {@code field(2, "employee", "supervisor_id")} can
+     * resolve against the alias instead -- turning the join condition into a
+     * comparison of two columns of one table, which Calcite renders as a
+     * filter inside that scan plus a CROSS JOIN, and the query returns
+     * nothing. Projecting first gives the frame a clean slate, because a
+     * Project carries no alias of its own.
+     *
+     * @param b Builder to push the scan onto
+     * @param physName Table name in the database
+     * @param alias Name the request refers to this scan by
+     */
+    private static void scanAs(RelBuilder b, String physName, String alias) {
+        b.scan(physName);
+        // Wrap in a Project, then pop and re-push it. RelBuilder derives a
+        // frame's alias from the RelNode, and only a TableScan has one -- so
+        // re-pushing a Project gives fields with no alias at all, and the as()
+        // below is then the only name they answer to. Projecting alone is not
+        // enough: RelBuilder carries the input frame's aliases through a
+        // projection.
+        b.project(b.fields(), b.peek().getRowType().getFieldNames(), true);
+        b.push(b.build());
+        b.as(alias);
     }
 
     private RelNode build(RelBuilder b, PlannerRequest req) {
@@ -726,9 +789,15 @@ public final class CalciteSqlPlanner {
         if (req.factPhysName != null
             && !req.factPhysName.equals(req.factTable))
         {
-            b.scan(req.factPhysName).as(req.factTable);
+            scanAs(b, req.factPhysName, req.factTable);
         } else {
-            b.scan(req.factTable);
+            // Alias even when it matches the scanned name. RelBuilder derives
+            // a frame's alias from the RelNode, and only a TableScan carries
+            // one -- a relation that exists only in the Mondrian schema
+            // (<InlineTable>, <View>) expands to a Union or Project, so
+            // without an explicit as() every later field(2, alias, col)
+            // fails with "input fields are: []".
+            b.scan(req.factTable).as(req.factTable);
         }
 
         for (PlannerRequest.Join j : req.joins) {
@@ -739,9 +808,10 @@ public final class CalciteSqlPlanner {
             // alias so b.field(2, dimAlias, ...) below resolves against
             // the correct LHS slot.
             if (j.physName != null && !j.physName.equals(j.dimTable)) {
-                b.scan(j.physName).as(j.dimTable);
+                scanAs(b, j.physName, j.dimTable);
             } else {
-                b.scan(j.dimTable);
+                // Always alias; see the fact-table scan above.
+                b.scan(j.dimTable).as(j.dimTable);
             }
             if (j.kind == PlannerRequest.JoinKind.CROSS) {
                 // Unconditional cross-join: RelBuilder has no native
@@ -1007,7 +1077,14 @@ public final class CalciteSqlPlanner {
         if (!req.orderBy.isEmpty()) {
             List<RexNode> exprs = new ArrayList<>();
             for (PlannerRequest.OrderBy o : req.orderBy) {
-                RexNode ref = b.field(o.column.name);
+                // TABLE-QUALIFIED, like the projections above. An
+                // unqualified b.field(name) resolves both entries of
+                // "customer.yearly_income" and "customerx.yearly_income" to
+                // the same input field, so Calcite collapsed them into ONE
+                // sort key: a dimension used twice off aliased copies of a
+                // table came back with its second copy in arbitrary order —
+                // right values, wrong sequence, no error.
+                RexNode ref = fieldRef(b, o.column);
                 exprs.add(
                     o.direction == PlannerRequest.Order.DESC
                         ? b.desc(ref)
@@ -1174,6 +1251,79 @@ public final class CalciteSqlPlanner {
     }
 
     private static RexNode tupleFilterRex(
+        RelBuilder b, PlannerRequest.TupleFilter tf)
+    {
+        if (tf.negated) {
+            return negatedTupleFilterRex(b, tf);
+        }
+        return positiveTupleFilterRex(b, tf);
+    }
+
+    /**
+     * MDX exclusion ({@code Not In} / {@code Except}): keep the rows that
+     * match NONE of the filter's rows.
+     *
+     * <p>Built as {@code AND over rows of (OR over columns of "column does
+     * not equal this row's value")} rather than by wrapping the positive
+     * predicate in {@code NOT}. That matters for NULLs, in both directions:
+     *
+     * <ul>
+     *   <li>{@code NOT (col = 'CA')} is UNKNOWN when col is NULL, so SQL
+     *       would drop a row that plainly is not 'CA'. Here the disjunct is
+     *       {@code col IS NULL OR col <> 'CA'}, which keeps it.</li>
+     *   <li>Excluding the NULL member itself must DROP null rows, so a null
+     *       row value becomes {@code col IS NOT NULL} — not a licence to
+     *       keep every null (mondrian.rolap.FilterTest
+     *       .testNotInFilterExcludeNullMember).</li>
+     * </ul>
+     *
+     * <p>It also emits only IS NULL / IS NOT NULL / {@code <>}, which every
+     * dialect supports, rather than relying on a NOT over a SEARCH/SARG or
+     * on IS [NOT] DISTINCT FROM.
+     */
+    private static RexNode negatedTupleFilterRex(
+        RelBuilder b, PlannerRequest.TupleFilter tf)
+    {
+        List<RexNode> ands = new ArrayList<>(tf.rows.size());
+        for (List<Object> row : tf.rows) {
+            List<RexNode> ors = new ArrayList<>(tf.columns.size());
+            for (int i = 0; i < tf.columns.size(); i++) {
+                Object v = row.get(i);
+                if (v
+                    == mondrian.calcite.CalcitePlannerAdapters.WILDCARD_VALUE)
+                {
+                    // Unconstrained in this row: it cannot make the row
+                    // differ, so it contributes no disjunct.
+                    continue;
+                }
+                RexNode col = b.field(tf.columns.get(i).name);
+                ors.add(notEqualNullSafe(b, col, v));
+            }
+            if (ors.isEmpty()) {
+                // A row with no constraints matches everything, so excluding
+                // it excludes everything.
+                return b.literal(false);
+            }
+            ands.add(ors.size() == 1 ? ors.get(0) : b.or(ors));
+        }
+        return ands.size() == 1 ? ands.get(0) : b.and(ands);
+    }
+
+    /**
+     * "{@code col} is not {@code literal}", with SQL NULLs treated as a
+     * value rather than as unknown: a NULL column differs from any non-null
+     * literal, and matches a null literal.
+     */
+    private static RexNode notEqualNullSafe(
+        RelBuilder b, RexNode col, Object literal)
+    {
+        if (literal == null) {
+            return b.isNotNull(col);
+        }
+        return b.or(b.isNull(col), b.notEquals(col, b.literal(literal)));
+    }
+
+    private static RexNode positiveTupleFilterRex(
         RelBuilder b, PlannerRequest.TupleFilter tf)
     {
         // Single-column tuple filter collapses to an OR-chain of equalities

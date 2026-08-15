@@ -2328,9 +2328,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Sum.aggregate(
                 Arrays.asList(dblSet3),
                 Dialect.Datatype.Numeric);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             4.6,
@@ -2353,9 +2359,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Sum.aggregate(
                 Arrays.asList(intSet3),
                 Dialect.Datatype.Integer);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             10,
@@ -2400,9 +2412,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Min.aggregate(
                 Arrays.asList(dblSet3),
                 Dialect.Datatype.Numeric);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             1.9,
@@ -2425,9 +2443,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Min.aggregate(
                 Arrays.asList(intSet3),
                 Dialect.Datatype.Integer);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             3,
@@ -2472,9 +2496,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Max.aggregate(
                 Arrays.asList(dblSet3),
                 Dialect.Datatype.Numeric);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             2.7,
@@ -2497,9 +2527,15 @@ public class FastBatchingCellReaderTest extends BatchTestCase {
             RolapAggregator.Max.aggregate(
                 Arrays.asList(intSet3),
                 Dialect.Datatype.Integer);
-            fail();
+            fail("expected the aggregator to reject a mixed-type list");
+        } catch (junit.framework.AssertionFailedError e) {
+            // Our own fail() above. AssertionFailedError extends
+            // AssertionError, so the catch below would swallow it and the
+            // test would pass whether or not the aggregator rejected the
+            // list. Let it out.
+            throw e;
         } catch (AssertionError e) {
-            // ok.
+            // ok: the aggregator's own assert fired, which is the point.
         }
         Assert.assertEquals(
             7,

@@ -140,7 +140,7 @@ public class SqlMemberSource
                 dataSource,
                 sql,
                 new Locus(
-                    Locus.peek().execution,
+                    RolapUtil.executionFor(hierarchy.getRolapSchema()),
                     "SqlMemberSource.getLevelMemberCount",
                     "while counting members of level '" + level));
         try {
@@ -1086,7 +1086,7 @@ public class SqlMemberSource
             RolapUtil.executeQuery(
                 dataSource, sql, types, 0, 0,
                 new SqlStatement.StatementLocus(
-                    Locus.peek().execution,
+                    RolapUtil.executionFor(hierarchy.getRolapSchema()),
                     "SqlMemberSource.getMemberChildren",
                     "while building member cache",
                     SqlStatementEvent.Purpose.TUPLES, 0),

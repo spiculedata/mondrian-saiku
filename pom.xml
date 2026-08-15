@@ -18,6 +18,9 @@
   </licenses>
 
   <properties>
+    <!-- Phase of the isolated-cache-tests surefire execution; set to 'none'
+         by profiles that run only their own tests. -->
+    <isolatedCacheTestsPhase>test</isolatedCacheTestsPhase>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
@@ -534,7 +537,22 @@ class MondrianServerVersion {
                javaagent flag, and surefire concatenates that with our
                add-opens. Without @{argLine} JaCoCo's coverage agent
                wouldn't load and the report would be empty. -->
-          <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED</argLine>
+          <!-- Locale and time zone are pinned so results do not depend on
+               the developer's machine. Mondrian formats numbers, currency
+               and dates through the JDK's locale data, so a UK box turned
+               `$1.00` into `£1.00` and shifted week-of-year by one — tests
+               that passed in CI failed locally, and vice versa. en_US/UTC
+               is what the expected strings in FormatTest / VbaTest /
+               I18nTest are written against. Tests that need another locale
+               set it explicitly. -->
+          <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Duser.language=en -Duser.country=US -Duser.timezone=UTC</argLine>
+          <!-- Deterministic, and the SAME order everywhere. Surefire's
+               default is 'filesystem', which differs between macOS and the
+               Linux CI runner: a suite that shares a JVM-wide cache then
+               passes on one and fails on the other, and the failure cannot
+               be reproduced locally. Alphabetical costs nothing and makes a
+               red CI run something a developer can reproduce. -->
+          <runOrder>alphabetical</runOrder>
           <!-- Exclude tests that depend on olap4j-tck (not in deps), or legacy JUnit 3 loader. -->
           <excludes>
             <exclude>**/AbstractMondrianOlap4jTester.java</exclude>
@@ -551,9 +569,43 @@ class MondrianServerVersion {
             <exclude>**/mondrian/test/calcite/SqlDiffReportTest.java</exclude>
             <exclude>**/mondrian/test/calcite/SqlDiffMatrixReportTest.java</exclude>
             <exclude>**/mondrian/test/calcite/PerfBenchmarkTest.java</exclude>
+            <!-- Run in their own JVM by the isolated-cache-tests execution
+                 below. See that execution for why. -->
+            <exclude>**/mondrian/test/CacheTest.java</exclude>
+            <exclude>**/mondrian/rolap/CacheControlTest.java</exclude>
           </excludes>
-          <testFailureIgnore>true</testFailureIgnore>
         </configuration>
+        <executions>
+          <!--
+            These two assert on PROCESS-GLOBAL state: the segment cache is
+            shared across every schema in the JVM, and the counters
+            CacheTest reads (segmentCreateCount) are cumulative for the
+            server. Their preconditions are "nothing is cached" and "this
+            query must cause exactly one load", neither of which any earlier
+            test class can be asked to leave true.
+
+            They cannot restore those preconditions themselves either: a
+            CellRegion is built from a cube's DECLARED measures, so flushing
+            one never reaches the implicit Fact Count measure, and
+            printCacheState reports a whole star rather than the region it
+            is handed. So they get a fresh JVM instead of a contrived flush.
+          -->
+          <execution>
+            <id>isolated-cache-tests</id>
+            <!-- A profile that runs only its own tests switches this off by
+                 setting the phase to none; see calcite-harness. -->
+            <phase>${isolatedCacheTestsPhase}</phase>
+            <goals><goal>test</goal></goals>
+            <configuration>
+              <reuseForks>false</reuseForks>
+              <includes combine.children="override">
+                <include>**/mondrian/test/CacheTest.java</include>
+                <include>**/mondrian/rolap/CacheControlTest.java</include>
+              </includes>
+              <excludes combine.self="override"/>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- #23: JaCoCo coverage. prepare-agent injects -javaagent into
@@ -588,6 +640,9 @@ class MondrianServerVersion {
     -->
     <profile>
       <id>calcite-harness</id>
+      <properties>
+        <isolatedCacheTestsPhase>none</isolatedCacheTestsPhase>
+      </properties>
       <build>
         <plugins>
           <plugin>

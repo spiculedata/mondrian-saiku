@@ -200,6 +200,19 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
             headerMap.put(header, headerInfo);
         }
 
+        indexLists(header, converter);
+    }
+
+    /**
+     * Adds a header to the three lookup lists, under that header's own keys.
+     *
+     * @param header Header to index
+     * @param converter Converter to remember for the fact table, or null
+     */
+    private void indexLists(
+        SegmentHeader header,
+        SegmentBuilder.SegmentConverter converter)
+    {
         final List bitkeyKey = makeBitkeyKey(header);
         List<SegmentHeader> headerList = bitkeyMap.get(bitkeyKey);
         if (headerList == null) {
@@ -239,6 +252,42 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
         }
     }
 
+    /**
+     * Removes a header from the three lookup lists, under that header's own
+     * keys, dropping any list that becomes empty.
+     *
+     * @param header Header to un-index
+     */
+    private void unindexLists(SegmentHeader header) {
+        final List factKey = makeFactKey(header);
+        final FactInfo factInfo = factMap.get(factKey);
+        if (factInfo != null) {
+            factInfo.headerList.remove(header);
+            factInfo.bitkeyPoset.remove(header.getConstrainedColumnsBitKey());
+            if (factInfo.headerList.isEmpty()) {
+                factMap.remove(factKey);
+            }
+        }
+
+        final List fuzzyFactKey = makeFuzzyFactKey(header);
+        final FuzzyFactInfo fuzzyFactInfo = fuzzyFactMap.get(fuzzyFactKey);
+        if (fuzzyFactInfo != null) {
+            fuzzyFactInfo.headerList.remove(header);
+            if (fuzzyFactInfo.headerList.isEmpty()) {
+                fuzzyFactMap.remove(fuzzyFactKey);
+            }
+        }
+
+        final List bitkeyKey = makeBitkeyKey(header);
+        final List<SegmentHeader> headerList = bitkeyMap.get(bitkeyKey);
+        if (headerList != null) {
+            headerList.remove(header);
+            if (headerList.isEmpty()) {
+                bitkeyMap.remove(bitkeyKey);
+            }
+        }
+    }
+
     public void update(
         SegmentHeader oldHeader,
         SegmentHeader newHeader)
@@ -251,23 +300,29 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
             + "\n\nto\n\n"
             + newHeader.toString());
         final HeaderInfo headerInfo = headerMap.get(oldHeader);
+        if (headerInfo == null) {
+            // The old header is not in the index: it was removed while its
+            // load was still in flight. Carrying on would put a NULL VALUE
+            // into headerMap under the new header, and every later read of
+            // that entry then fails with "Cannot read field ... because x0 is
+            // null" -- a corrupt index reported as a mystery NPE from
+            // whichever query happened to touch it next.
+            LOGGER.debug(
+                "SegmentCacheIndexImpl.update: old header is not in the "
+                + "index; nothing to update");
+            return;
+        }
+        // Un-index the old header under ITS keys and index the new one under
+        // ITS OWN. The two headers do not necessarily key alike -- the lookup
+        // keys include the measure and the compound predicates, not just the
+        // constrained-column bit key -- and removing the old while adding the
+        // new under the old's keys leaves the new header in a list that
+        // headerMap knows nothing about. locate() then hands that header to
+        // getFuture(), which dereferences the missing entry.
         headerMap.remove(oldHeader);
+        unindexLists(oldHeader);
         headerMap.put(newHeader, headerInfo);
-
-        final List oldBitkeyKey = makeBitkeyKey(oldHeader);
-        List<SegmentHeader> headerList = bitkeyMap.get(oldBitkeyKey);
-        headerList.remove(oldHeader);
-        headerList.add(newHeader);
-
-        final List oldFactKey = makeFactKey(oldHeader);
-        final FactInfo factInfo = factMap.get(oldFactKey);
-        factInfo.headerList.remove(oldHeader);
-        factInfo.headerList.add(newHeader);
-
-        final List oldFuzzyFactKey = makeFuzzyFactKey(oldHeader);
-        final FuzzyFactInfo fuzzyFactInfo = fuzzyFactMap.get(oldFuzzyFactKey);
-        fuzzyFactInfo.headerList.remove(oldHeader);
-        fuzzyFactInfo.headerList.add(newHeader);
+        indexLists(newHeader, null);
     }
 
     public void loadSucceeded(SegmentHeader header, SegmentBody body) {
@@ -339,32 +394,7 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
         }
 
         headerMap.remove(header);
-
-        final List factKey = makeFactKey(header);
-        final FactInfo factInfo = factMap.get(factKey);
-        if (factInfo != null) {
-            factInfo.headerList.remove(header);
-            factInfo.bitkeyPoset.remove(header.getConstrainedColumnsBitKey());
-            if (factInfo.headerList.size() == 0) {
-                factMap.remove(factKey);
-            }
-        }
-
-        final List fuzzyFactKey = makeFuzzyFactKey(header);
-        final FuzzyFactInfo fuzzyFactInfo = fuzzyFactMap.get(fuzzyFactKey);
-        if (fuzzyFactInfo != null) {
-            fuzzyFactInfo.headerList.remove(header);
-            if (fuzzyFactInfo.headerList.size() == 0) {
-                fuzzyFactMap.remove(fuzzyFactKey);
-            }
-        }
-
-        final List bitkeyKey = makeBitkeyKey(header);
-        final List<SegmentHeader> headerList = bitkeyMap.get(bitkeyKey);
-        headerList.remove(header);
-        if (headerList.size() == 0) {
-            bitkeyMap.remove(bitkeyKey);
-        }
+        unindexLists(header);
     }
 
     private void checkThread() {
@@ -436,7 +466,10 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
         }
         for (SegmentHeader header : factInfo.headerList) {
             // Don't return stale segments.
-            if (headerMap.get(header).removeAfterLoad) {
+            final HeaderInfo headerInfo = headerMap.get(header);
+            if (headerInfo == null || headerInfo.removeAfterLoad) {
+                // Absent, or flagged stale while its load finishes. Either
+                // way it is not a segment to answer from.
                 continue;
             }
             if (intersects(header, region)) {
@@ -526,6 +559,12 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
     public Future<SegmentBody> getFuture(Execution exec, SegmentHeader header) {
         checkThread();
         HeaderInfo hi = headerMap.get(header);
+        if (hi == null) {
+            // The header was flushed after locate() handed it back. There is
+            // no load to wait for; answering null is what the caller already
+            // handles for "not currently loading".
+            return null;
+        }
         if (!hi.clients.contains(exec)) {
             hi.clients.add(exec);
         }
@@ -534,7 +573,13 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
 
     public void linkSqlStatement(SegmentHeader header, Statement stmt) {
         checkThread();
-        headerMap.get(header).stmt = stmt;
+        final HeaderInfo headerInfo = headerMap.get(header);
+        if (headerInfo == null) {
+            // Flushed while the statement was being prepared: nothing to
+            // link it to.
+            return;
+        }
+        headerInfo.stmt = stmt;
     }
 
     public boolean contains(SegmentHeader header) {
@@ -556,7 +601,11 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
         }
         // Make sure to cleanup the orphaned segments.
         for (SegmentHeader header : toRemove) {
-            final Statement stmt = headerMap.get(header).stmt;
+            final HeaderInfo cancelled = headerMap.get(header);
+            if (cancelled == null) {
+                continue;
+            }
+            final Statement stmt = cancelled.stmt;
             loadFailed(
                 header,
                 new QueryCanceledException(
@@ -748,7 +797,18 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
                 measureName,
                 compoundPredicates);
             final List<SegmentHeader> headers = bitkeyMap.get(bitkeyKey);
-            assert headers != null : "bitkeyPoset / bitkeyMap inconsistency";
+            if (headers == null) {
+                // Not an inconsistency. bitkeyPoset holds bit keys alone,
+                // shared by every measure and predicate set of this fact
+                // table, whereas bitkeyMap is keyed by bit key AND measure
+                // AND compound predicates. A dimensionality reached through
+                // one measure therefore has no bitkeyMap entry under
+                // another, which simply means there is nothing to roll up
+                // from here. Asserting instead took the query down outright
+                // whenever assertions were on -- which is to say, in every
+                // test run.
+                continue;
+            }
 
             // For columns that are still present after roll up, make sure that
             // the required value is in the range covered by the segment.

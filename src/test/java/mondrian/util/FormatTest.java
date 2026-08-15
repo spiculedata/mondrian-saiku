@@ -458,13 +458,13 @@ public class FormatTest extends TestCase {
     }
 
     public void testDates() {
-        checkDate("dd-mmm-yy",     "29-Apr-69",  "29-Avr-69",  "29-Apr-69");
+        checkDate("dd-mmm-yy",     "29-Apr-69",  "29-Avr-69",  "29-Apr.-69");
         checkDate("h:mm:ss AM/PM", "8:09:06 PM", "8#09#06 PM", "8:09:06 PM");
         checkDate("hh:mm",         "20:09",      "20#09",      "20:09");
         checkDate(
             "Long Date",     "Tuesday, April 29, 1969",
             "Mardi, Avril 29, 1969", "Dienstag, April 29, 1969");
-        checkDate("Medium Date",   "29-Apr-69",  "29-Avr-69",  "29-Apr-69");
+        checkDate("Medium Date",   "29-Apr-69",  "29-Avr-69",  "29-Apr.-69");
         checkDate("Short Date",    "4/29/69",    "4-29-69",    "4.29.69");
         checkDate("Long Time",     "8:09:06 PM", "8#09#06 PM", "8:09:06 PM");
         checkDate("Medium Time",   "8:09 PM",    "8#09 PM",    "8:09 PM");
@@ -553,7 +553,8 @@ public class FormatTest extends TestCase {
 
     public void testFrenchLocale() {
         Format.FormatLocale fr = Format.createLocale(Locale.FRANCE);
-        assertEquals("#,##0.00 " + I18nTest.Euro, fr.currencyFormat);
+        assertEquals(
+            "#,##0.00\u00A0" + I18nTest.Euro, fr.currencyFormat);
         assertEquals(I18nTest.Euro + "", fr.currencySymbol);
         assertEquals("/", fr.dateSeparator);
         assertEquals(
@@ -574,7 +575,7 @@ public class FormatTest extends TestCase {
             + I18nTest.EA + "c., ]",
             Arrays.toString(fr.monthsShort));
         assertEquals(',', fr.decimalPlaceholder);
-        assertEquals(I18nTest.Nbsp, fr.thousandSeparator);
+        assertEquals(I18nTest.Nnbsp, fr.thousandSeparator);
         assertEquals(":", fr.timeSeparator);
     }
 
@@ -701,8 +702,8 @@ public class FormatTest extends TestCase {
         checkFormat(null, date2, "#;[#];NULL", "40428");
 
         // date value with string format gives long date string
-        checkFormat(null, date2, "<", "9/7/10 6:05:04 am");
-        checkFormat(null, date2, ">", "9/7/10 6:05:04 AM");
+        checkFormat(null, date2, "<", "9/7/10, 6:05:04\u202Fam");
+        checkFormat(null, date2, ">", "9/7/10, 6:05:04\u202FAM");
 
         // numeric value and string format
         checkFormat(null, 123.45E6, "<", "123,450,000"); // Excel gives 12345600
@@ -821,7 +822,7 @@ public class FormatTest extends TestCase {
             localeDe,
             123456,
             "Currency",
-            "123.456,00 \u20AC");
+            "123.456,00\u00A0\u20AC");
         checkFormat(
             localeDe,
             123456,
@@ -844,7 +845,7 @@ public class FormatTest extends TestCase {
             Format.createLocale(Locale.JAPANESE),
             123456,
             "Currency",
-            "$ 123,456.00");
+            "$123,456.00");
 
         // international currency symbol
         checkFormat(

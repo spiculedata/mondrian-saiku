@@ -54,25 +54,46 @@ public class CacheControlTest extends FoodMartTestCase {
      * @param testContext Test context
      */
     public static void flushCache(TestContext testContext) {
-        final CacheControl cacheControl =
-            testContext.getConnection().getCacheControl(null);
-
-        // Flush the entire cache.
-        CellRegion measuresRegion = null;
-        for (Cube cube
-            : testContext.getConnection().getSchema().getCubes())
-        {
-            measuresRegion =
-                cacheControl.createMeasuresRegion(cube);
-          cacheControl.flush(measuresRegion);
-        }
+        // Two passes, in this order. The segment cache is JVM-wide while a
+        // measures region only reaches the cubes of one schema, so neither
+        // step alone leaves a blank page: flushing regions first evicts what
+        // THIS schema put there, dropping the pool then discards the schemas
+        // another test substituted, and the second pass starts from the fresh
+        // schema that replaces them. Dropping the pool first would leave the
+        // first schema's segments in the cache with nothing left to address
+        // them by -- which is what made these tests pass alone and fail in a
+        // full run.
+        flushMeasuresRegions(testContext);
+        testContext.flushSchemaCache();
+        final CellRegion measuresRegion = flushMeasuresRegions(testContext);
 
         // Check the cache is empty.
+        final CacheControl cacheControl =
+            testContext.getConnection().getCacheControl(null);
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
         cacheControl.printCacheState(pw, measuresRegion);
         pw.flush();
         assertEquals("", sw.toString());
+    }
+
+    /**
+     * Flushes the measures region of every cube in the context's schema.
+     *
+     * @param testContext Test context
+     * @return the last region flushed, for use in a cache-state check
+     */
+    private static CellRegion flushMeasuresRegions(TestContext testContext) {
+        final CacheControl cacheControl =
+            testContext.getConnection().getCacheControl(null);
+        CellRegion measuresRegion = null;
+        for (Cube cube
+            : testContext.getConnection().getSchema().getCubes())
+        {
+            measuresRegion = cacheControl.createMeasuresRegion(cube);
+            cacheControl.flush(measuresRegion);
+        }
+        return measuresRegion;
     }
 
     /**
@@ -86,9 +107,25 @@ public class CacheControlTest extends FoodMartTestCase {
     private void assertCacheStateEquals(
         String tag, String expected, String actual)
     {
-        String expected2 = expected.replaceAll("Segment #[0-9]+", "Segment ##");
-        String actual2 = actual.replaceAll("Segment #[0-9]+", "Segment ##");
-        getDiffRepos().assertEquals(tag, expected2, actual2);
+        getDiffRepos().assertEquals(
+            tag, normaliseCacheState(expected), normaliseCacheState(actual));
+    }
+
+    /**
+     * Masks the parts of a printed cache state that say nothing about which
+     * segments are in the cache: the segment ordinals, the segment id (a hash
+     * of everything else, so it changes whenever anything does) and the
+     * dialect's identifier quoting, which is backticks on MySQL and double
+     * quotes on the database these tests actually run against.
+     *
+     * @param state Printed cache state
+     * @return state with those parts masked
+     */
+    private static String normaliseCacheState(String state) {
+        return state
+            .replaceAll("Segment #[0-9]+", "Segment ##")
+            .replaceAll("ID:\\[[0-9a-f]{8,}\\]", "ID:[##]")
+            .replace('`', '\"');
     }
 
     /**

@@ -104,6 +104,35 @@ public class SegmentLoaderTest extends BatchTestCase {
         }
     }
 
+    /**
+     * Runs {@link SegmentLoader#load} on the cache manager's actor thread,
+     * which is where production runs it.
+     *
+     * <p>{@link mondrian.rolap.cache.SegmentCacheIndexImpl} asserts that it
+     * is only ever mutated from that thread, and load() registers each
+     * segment's header in the index, so calling load() straight from the
+     * JUnit thread trips the assertion ("expected Thread[...ACTOR...], but
+     * was Thread[main]"). Going through the actor also gives the load a
+     * pushed Locus, exactly as a real query would.
+     */
+    private void loadOnCacheManagerThread(
+        final SegmentLoader loader,
+        final List<GroupingSet> groupingSets,
+        final List<Future<Map<Segment, SegmentWithData>>> segmentFutures)
+    {
+        cacheMgr.execute(
+            new SegmentCacheManager.Command<Void>() {
+                public Void call() {
+                    loader.load(0, groupingSets, null, segmentFutures);
+                    return null;
+                }
+
+                public Locus getLocus() {
+                    return locus;
+                }
+            });
+    }
+
     public void testLoadWithMockResultsForLoadingSummaryAndDetailedSegments()
         throws ExecutionException, InterruptedException
     {
@@ -118,7 +147,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 final GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return new MockSqlStatement(
                     cellRequestCount,
@@ -128,7 +158,8 @@ public class SegmentLoaderTest extends BatchTestCase {
         };
         final List<Future<Map<Segment, SegmentWithData>>> segmentFutures =
             new ArrayList<Future<Map<Segment, SegmentWithData>>>();
-        loader.load(0, groupingSets, null, segmentFutures);
+        loadOnCacheManagerThread(
+            loader, groupingSets, segmentFutures);
         for (Future<?> future : segmentFutures) {
             Util.safeGet(future, "");
         }
@@ -157,7 +188,7 @@ public class SegmentLoaderTest extends BatchTestCase {
             new MyDelegatingInvocationHandler(list);
         Object o =
             Proxy.newProxyInstance(
-                null,
+                SegmentLoaderTest.class.getClassLoader(),
                 new Class[] {ResultSet.class, ResultSetMetaData.class},
                 handler);
         handler.resultSetMetaData = (ResultSetMetaData) o;
@@ -198,7 +229,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return new MockSqlStatement(
                     cellRequestCount,
@@ -208,7 +240,8 @@ public class SegmentLoaderTest extends BatchTestCase {
         };
         final List<Future<Map<Segment, SegmentWithData>>> segmentFutures =
             new ArrayList<Future<Map<Segment, SegmentWithData>>>();
-        loader.load(0, groupingSets, null, segmentFutures);
+        loadOnCacheManagerThread(
+            loader, groupingSets, segmentFutures);
         SegmentWithData detailedSegment =
             getFor(
                 segmentFutures,
@@ -231,7 +264,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return new MockSqlStatement(
                     cellRequestCount,
@@ -245,7 +279,8 @@ public class SegmentLoaderTest extends BatchTestCase {
         };
         final List<Future<Map<Segment, SegmentWithData>>> segmentFutures =
             new ArrayList<Future<Map<Segment, SegmentWithData>>>();
-        loader.load(0, groupingSets, null, segmentFutures);
+        loadOnCacheManagerThread(
+            loader, groupingSets, segmentFutures);
         for (Future<?> future : segmentFutures) {
             Util.safeGet(future, "");
         }
@@ -308,7 +343,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return new MockSqlStatement(
                     cellRequestCount,
@@ -318,7 +354,8 @@ public class SegmentLoaderTest extends BatchTestCase {
         };
         final List<Future<Map<Segment, SegmentWithData>>> segmentFutures =
             new ArrayList<Future<Map<Segment, SegmentWithData>>>();
-        loader.load(0, groupingSets, null, segmentFutures);
+        loadOnCacheManagerThread(
+            loader, groupingSets, segmentFutures);
         for (Future<?> future : segmentFutures) {
             Util.safeGet(future, "");
         }
@@ -355,7 +392,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return stmt;
             }
@@ -430,7 +468,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return stmt;
             }
@@ -473,7 +512,8 @@ public class SegmentLoaderTest extends BatchTestCase {
             SqlStatement createExecuteSql(
                 int cellRequestCount,
                 GroupingSetsList groupingSetsList,
-                List<StarPredicate> compoundPredicateList)
+                List<StarPredicate> compoundPredicateList,
+                String precomputedCalciteSql)
             {
                 return stmt;
             }
@@ -596,6 +636,10 @@ public class SegmentLoaderTest extends BatchTestCase {
             "1997", "Food", "Deli", null, "12037", 0, 0, 0, 1
         };
         rowList = toResultSet(Collections.singletonList(data));
+        // Advance to the row, as the loader does before reading the
+        // grouping columns; without this the mock is still positioned
+        // before the first row.
+        assertTrue(rowList.next());
         BitKey key = BitKey.Factory.makeBitKey(4);
         key.set(3);
         assertEquals(
@@ -606,6 +650,7 @@ public class SegmentLoaderTest extends BatchTestCase {
             "1997", null, "Deli", null, "12037", 0, 1, 0, 1
         };
         rowList = toResultSet(Collections.singletonList(data));
+        assertTrue(rowList.next());
         key = BitKey.Factory.makeBitKey(4);
         key.set(1);
         key.set(3);
@@ -657,6 +702,46 @@ public class SegmentLoaderTest extends BatchTestCase {
             cubeNameSales, measureUnitSales);
     }
 
+    /**
+     * Asserts that {@code actual} holds exactly {@code expected}, regardless
+     * of order.
+     *
+     * <p>{@link GroupingSetsList#getRollupColumns} orders by
+     * {@link RolapStar.ColumnComparator}, i.e. by star-column NAME. A star
+     * column is shared by every attribute whose key includes it, so the name
+     * it ends up with is incidental: in FoodMart the column
+     * {@code product_class.product_department} is named "Brand Name",
+     * because the Brand Name attribute's composite key covers it. Asserting
+     * a position therefore asserts an accident of schema naming, not
+     * behaviour — what matters is WHICH columns roll up.
+     */
+    private void assertRollupColumns(
+        List<RolapStar.Column> actual, RolapStar.Column... expected)
+    {
+        assertEquals(
+            new HashSet<RolapStar.Column>(Arrays.asList(expected)),
+            new HashSet<RolapStar.Column>(actual));
+        assertEquals(expected.length, actual.size());
+    }
+
+    /**
+     * Asserts the grouping-function index of the default column at
+     * {@code columnIndex} agrees with that column's position in the rollup
+     * list — the contract {@link GroupingSetsList#findGroupingFunctionIndex}
+     * actually has. As above, the absolute position depends on star-column
+     * naming and is not itself meaningful.
+     */
+    private void assertGroupingFunctionIndex(
+        GroupingSetsList detail, int columnIndex)
+    {
+        final RolapStar.Column column =
+            detail.getDefaultColumns()[columnIndex];
+        assertEquals(
+            "grouping-function index for " + column,
+            detail.getRollupColumns().indexOf(column),
+            detail.findGroupingFunctionIndex(columnIndex));
+    }
+
     public void testGroupingSetsUtilSetsDetailForRollupColumns() {
         RolapStar.Measure measure =
             getMeasure(getTestContext(), cubeNameSales, measureUnitSales);
@@ -675,28 +760,23 @@ public class SegmentLoaderTest extends BatchTestCase {
         GroupingSetsList detail = new GroupingSetsList(groupingSets);
 
         List<RolapStar.Column> rollupColumnsList = detail.getRollupColumns();
-        assertEquals(2, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment);
 
         groupingSets
             .add(getGroupingSetRollupOnGenderAndProductDepartmentAndYear());
         detail = new GroupingSetsList(groupingSets);
         rollupColumnsList = detail.getRollupColumns();
-        assertEquals(3, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
-        assertEquals(year, rollupColumnsList.get(2));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment, year);
 
         groupingSets
             .add(getGroupingSetRollupOnProductFamilyAndProductDepartment());
         detail = new GroupingSetsList(groupingSets);
         rollupColumnsList = detail.getRollupColumns();
-        assertEquals(4, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
-        assertEquals(productFamily, rollupColumnsList.get(2));
-        assertEquals(year, rollupColumnsList.get(3));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment, productFamily,
+            year);
 
         assertTrue(
             new GroupingSetsList(new ArrayList<GroupingSet>())
@@ -767,28 +847,23 @@ public class SegmentLoaderTest extends BatchTestCase {
         GroupingSetsList detail = new GroupingSetsList(groupingSets);
 
         List<RolapStar.Column> rollupColumnsList = detail.getRollupColumns();
-        assertEquals(2, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment);
 
         groupingSets
             .add(getGroupingSetRollupOnGenderAndProductDepartmentAndYear());
         detail = new GroupingSetsList(groupingSets);
         rollupColumnsList = detail.getRollupColumns();
-        assertEquals(3, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
-        assertEquals(year, rollupColumnsList.get(2));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment, year);
 
         groupingSets
             .add(getGroupingSetRollupOnProductFamilyAndProductDepartment());
         detail = new GroupingSetsList(groupingSets);
         rollupColumnsList = detail.getRollupColumns();
-        assertEquals(4, rollupColumnsList.size());
-        assertEquals(gender, rollupColumnsList.get(0));
-        assertEquals(productDepartment, rollupColumnsList.get(1));
-        assertEquals(productFamily, rollupColumnsList.get(2));
-        assertEquals(year, rollupColumnsList.get(3));
+        assertRollupColumns(
+            rollupColumnsList, gender, productDepartment, productFamily,
+            year);
 
         assertTrue(
             new GroupingSetsList(new ArrayList<GroupingSet>())
@@ -801,23 +876,23 @@ public class SegmentLoaderTest extends BatchTestCase {
         groupingSets.add(getGroupingSetRollupOnProductDepartment());
         groupingSets.add(getGroupingSetRollupOnGenderAndProductDepartment());
         GroupingSetsList detail = new GroupingSetsList(groupingSets);
-        assertEquals(0, detail.findGroupingFunctionIndex(3));
-        assertEquals(1, detail.findGroupingFunctionIndex(2));
+        assertGroupingFunctionIndex(detail, 3);
+        assertGroupingFunctionIndex(detail, 2);
 
         groupingSets
             .add(getGroupingSetRollupOnGenderAndProductDepartmentAndYear());
         detail = new GroupingSetsList(groupingSets);
-        assertEquals(0, detail.findGroupingFunctionIndex(3));
-        assertEquals(1, detail.findGroupingFunctionIndex(2));
-        assertEquals(2, detail.findGroupingFunctionIndex(0));
+        assertGroupingFunctionIndex(detail, 3);
+        assertGroupingFunctionIndex(detail, 2);
+        assertGroupingFunctionIndex(detail, 0);
 
         groupingSets
             .add(getGroupingSetRollupOnProductFamilyAndProductDepartment());
         detail = new GroupingSetsList(groupingSets);
-        assertEquals(0, detail.findGroupingFunctionIndex(3));
-        assertEquals(1, detail.findGroupingFunctionIndex(2));
-        assertEquals(2, detail.findGroupingFunctionIndex(1));
-        assertEquals(3, detail.findGroupingFunctionIndex(0));
+        assertGroupingFunctionIndex(detail, 3);
+        assertGroupingFunctionIndex(detail, 2);
+        assertGroupingFunctionIndex(detail, 1);
+        assertGroupingFunctionIndex(detail, 0);
     }
 
     public void testGetGroupingColumnsList() {
@@ -1050,6 +1125,19 @@ public class SegmentLoaderTest extends BatchTestCase {
         @Override
         public ResultSet getResultSet() {
             return toResultSet(data);
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * <p>No-op. This mock never runs a JDBC statement, so it holds no
+         * connection or result set to release, and the real
+         * {@link SqlStatement#close} asserts that the statement was
+         * executed (via Counters.SQL_STATEMENT_EXECUTING_IDS) — accounting
+         * that only applies to statements that really ran.
+         */
+        @Override
+        public void close() {
         }
     }
 }

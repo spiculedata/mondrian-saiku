@@ -26,6 +26,11 @@ public class AdventureWorksTest extends FoodMartTestCase {
 
     /** Simple query. */
     public void testFoo() {
+        // The AdventureWorks DW database is not required to be present, in
+        // the same way the Steel Wheels one is not (see SteelWheelsTestCase).
+        if (!getTestContext().databaseIsValid()) {
+            return;
+        }
         assertQueryReturns(
             "select from [Internet Sales]",
             "Axis #0:\n"

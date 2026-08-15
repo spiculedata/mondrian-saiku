@@ -10,10 +10,11 @@ on:
 permissions:
   contents: read
 
-# JaCoCo coverage baseline. Runs the default surefire test suite —
-# which already has `testFailureIgnore=true` so a flaky test doesn't
-# kill the coverage upload — generates the HTML + XML report via the
-# jacoco-maven-plugin, and uploads both as a workflow artefact.
+# JaCoCo coverage baseline. Runs the default surefire test suite,
+# generates the HTML + XML report via the jacoco-maven-plugin, and
+# uploads both as a workflow artefact. Test failures are ignored HERE
+# so a red test does not cost us the coverage report — the `tests` job
+# in build.yml is what fails the build on a red test.
 #
 # Per #23: baseline-only. No coverage threshold gate. Once we have a
 # few PRs of data we can pick per-package thresholds for the
@@ -36,7 +37,7 @@ jobs:
           cache: maven
       - name: Run default test suite with JaCoCo agent
         run: |
-          mvn -B -ntp test
+          mvn -B -ntp -Dmaven.test.failure.ignore=true test
       - name: Upload JaCoCo report (HTML + XML + CSV)
         if: always()
         uses: actions/upload-artifact@v4

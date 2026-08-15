@@ -404,6 +404,25 @@ public class RolapResult extends ResultBase {
                     Member placeholder = setPlaceholderSlicerAxis(
                         tupleList, calc);
                     evaluator.setContext(placeholder);
+                    // A named set is evaluated against the
+                    // result.slicerEvaluator FIELD, which was last set
+                    // before the slicer ran -- so it saw only the last
+                    // slicer member (a range of ten months looked like
+                    // October) while every other expression saw the
+                    // aggregate the placeholder rolls up. The two disagreed
+                    // silently: TopCount inside a named set ranked on one
+                    // month while the cells beside it displayed ten.
+                    RolapResult.this.slicerEvaluator = evaluator.push();
+                    // Any named set evaluated by the member-discovery pass
+                    // above was evaluated against that stale context and its
+                    // value cached for the rest of the query. Throw those
+                    // values away so they are recomputed against the
+                    // aggregate.
+                    final RolapEvaluatorRoot root =
+                        RolapResult.this.evaluator.root;
+                    if (root instanceof RolapResultEvaluatorRoot) {
+                        ((RolapResultEvaluatorRoot) root).invalidateNamedSets();
+                    }
                 }
             } while (phase());
 
@@ -1484,6 +1503,20 @@ public class RolapResult extends ResultBase {
                 namedSetEvaluators.put(name, value);
             }
             return value;
+        }
+
+        /**
+         * Discards the cached value of every named set, so the next use
+         * re-evaluates it.
+         *
+         * <p>Named-set values are cached for the life of the query, and the
+         * pass that discovers which members the axes reference evaluates them
+         * before the slicer's own context is final. Under a compound slicer
+         * that is the difference between seeing the whole slicer set and
+         * seeing only its last member.
+         */
+        void invalidateNamedSets() {
+            namedSetEvaluators.clear();
         }
 
         public Object getParameterValue(ParameterSlot slot) {

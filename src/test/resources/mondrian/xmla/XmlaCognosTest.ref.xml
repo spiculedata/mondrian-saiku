@@ -86470,23 +86470,23 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="1">
-                            <Value xsi:type="xsd:double">108</Value>
+                            <Value xsi:type="xsd:int">108</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="2">
-                            <Value xsi:type="xsd:double">24</Value>
+                            <Value xsi:type="xsd:int">24</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="3">
-                            <Value xsi:type="xsd:double">24</Value>
+                            <Value xsi:type="xsd:int">24</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="4">
-                            <Value xsi:type="xsd:double">12</Value>
+                            <Value xsi:type="xsd:int">12</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="5">
-                            <Value xsi:type="xsd:double">48</Value>
+                            <Value xsi:type="xsd:int">48</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="6">
@@ -86494,7 +86494,7 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="7">
-                            <Value xsi:type="xsd:double">108</Value>
+                            <Value xsi:type="xsd:int">108</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="8">
@@ -86502,27 +86502,27 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="9">
-                            <Value xsi:type="xsd:double">96</Value>
+                            <Value xsi:type="xsd:int">96</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="10">
-                            <Value xsi:type="xsd:double">12</Value>
+                            <Value xsi:type="xsd:int">12</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="11">
-                            <Value xsi:type="xsd:double">48</Value>
+                            <Value xsi:type="xsd:int">48</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="12">
-                            <Value xsi:type="xsd:double">12</Value>
+                            <Value xsi:type="xsd:int">12</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="13">
-                            <Value xsi:type="xsd:double">12</Value>
+                            <Value xsi:type="xsd:int">12</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="14">
-                            <Value xsi:type="xsd:double">12</Value>
+                            <Value xsi:type="xsd:int">12</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="15">
@@ -86530,7 +86530,7 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="16">
-                            <Value xsi:type="xsd:double">96</Value>
+                            <Value xsi:type="xsd:int">96</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="17">
@@ -86538,27 +86538,27 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="18">
-                            <Value xsi:type="xsd:double">4860</Value>
+                            <Value xsi:type="xsd:int">4860</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="19">
-                            <Value xsi:type="xsd:double">108</Value>
+                            <Value xsi:type="xsd:int">108</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="20">
-                            <Value xsi:type="xsd:double">1428</Value>
+                            <Value xsi:type="xsd:int">1428</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="21">
-                            <Value xsi:type="xsd:double">1716</Value>
+                            <Value xsi:type="xsd:int">1716</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="22">
-                            <Value xsi:type="xsd:double">1392</Value>
+                            <Value xsi:type="xsd:int">1392</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="23">
-                            <Value xsi:type="xsd:double">216</Value>
+                            <Value xsi:type="xsd:int">216</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="24">
@@ -86566,7 +86566,7 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="25">
-                            <Value xsi:type="xsd:double">4860</Value>
+                            <Value xsi:type="xsd:int">4860</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="26">
@@ -86574,19 +86574,19 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="27">
-                            <Value xsi:type="xsd:double">648</Value>
+                            <Value xsi:type="xsd:int">648</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="28">
-                            <Value xsi:type="xsd:double">156</Value>
+                            <Value xsi:type="xsd:int">156</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="29">
-                            <Value xsi:type="xsd:double">156</Value>
+                            <Value xsi:type="xsd:int">156</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="30">
-                            <Value xsi:type="xsd:double">336</Value>
+                            <Value xsi:type="xsd:int">336</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="31">
@@ -86594,7 +86594,7 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="32">
-                            <Value xsi:type="xsd:double">648</Value>
+                            <Value xsi:type="xsd:int">648</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="33">
@@ -86602,11 +86602,11 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="34">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="35">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="36">
@@ -86614,7 +86614,7 @@
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="37">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="38">
@@ -87385,27 +87385,27 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="5">
-                            <Value xsi:type="xsd:double">4860</Value>
+                            <Value xsi:type="xsd:int">4860</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="6">
-                            <Value xsi:type="xsd:double">108</Value>
+                            <Value xsi:type="xsd:int">108</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="7">
-                            <Value xsi:type="xsd:double">1428</Value>
+                            <Value xsi:type="xsd:int">1428</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="8">
-                            <Value xsi:type="xsd:double">1716</Value>
+                            <Value xsi:type="xsd:int">1716</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="9">
-                            <Value xsi:type="xsd:double">1392</Value>
+                            <Value xsi:type="xsd:int">1392</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="10">
-                            <Value xsi:type="xsd:double">216</Value>
+                            <Value xsi:type="xsd:int">216</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="11">
@@ -87413,7 +87413,7 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="12">
-                            <Value xsi:type="xsd:double">4860</Value>
+                            <Value xsi:type="xsd:int">4860</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="13">
@@ -87421,19 +87421,19 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="14">
-                            <Value xsi:type="xsd:double">648</Value>
+                            <Value xsi:type="xsd:int">648</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="15">
-                            <Value xsi:type="xsd:double">156</Value>
+                            <Value xsi:type="xsd:int">156</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="16">
-                            <Value xsi:type="xsd:double">156</Value>
+                            <Value xsi:type="xsd:int">156</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="17">
-                            <Value xsi:type="xsd:double">336</Value>
+                            <Value xsi:type="xsd:int">336</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="18">
@@ -87441,7 +87441,7 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="19">
-                            <Value xsi:type="xsd:double">648</Value>
+                            <Value xsi:type="xsd:int">648</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="20">
@@ -87449,11 +87449,11 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="21">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="22">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="23">
@@ -87461,7 +87461,7 @@ WITH MEMBER [Employee].[Position].[COG_OQP_USR_aggregate(Management Role)] AS ' 
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="24">
-                            <Value xsi:type="xsd:double">1680</Value>
+                            <Value xsi:type="xsd:int">1680</Value>
                             <FormatString>#,#</FormatString>
                         </Cell>
                         <Cell CellOrdinal="25">
@@ -112666,11 +112666,11 @@ FROM [Sales]  CELL PROPERTIES VALUE, FORMAT_STRING         </Statement>
                     </Axes>
                     <CellData>
                         <Cell CellOrdinal="0">
-                            <Value xsi:type="xsd:double">1390</Value>
+                            <Value xsi:type="xsd:int">1390</Value>
                             <FormatString>#,###</FormatString>
                         </Cell>
                         <Cell CellOrdinal="1">
-                            <Value xsi:type="xsd:double">1450</Value>
+                            <Value xsi:type="xsd:int">1450</Value>
                             <FormatString>#,###</FormatString>
                         </Cell>
                     </CellData>

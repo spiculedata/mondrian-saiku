@@ -421,13 +421,25 @@ public class DrillThroughTest extends FoodMartTestCase {
             } else {
                 assertEquals(6, columnCount);
             }
+            // The alias must be no longer than the dialect says the database
+            // can handle, and must still identify the level it came from.
+            // (Asserting a hard-coded 63-char prefix only worked while the
+            // test database reported a 63-char limit; a database that reports
+            // "no limit" legitimately keeps the whole name.)
             final String columnName =
                 resultSet.getMetaData().getColumnLabel(5);
+            final int maxColumnNameLength = dialect.getMaxColumnNameLength();
+            if (maxColumnNameLength > 0) {
+                assertTrue(
+                    columnName + " (max " + maxColumnNameLength + ")",
+                    columnName.length() <= maxColumnNameLength);
+            }
+            final String levelName =
+                "Education Level but with a very long name that will be too"
+                + " long if converted directly into a column";
             assertTrue(
                 columnName,
-                columnName.equals(
-                    "Education Level but with a very long name that will be too"
-                    + " long "));
+                levelName.startsWith(columnName));
             int n = 0;
             while (resultSet.next()) {
                 ++n;

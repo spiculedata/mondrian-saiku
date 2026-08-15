@@ -10,9 +10,11 @@
 package mondrian.calcite;
 
 import mondrian.olap.Evaluator;
+import mondrian.olap.Hierarchy;
 import mondrian.olap.Member;
 import mondrian.rolap.DefaultTupleConstraint;
 import mondrian.rolap.DescendantsConstraint;
+import mondrian.rolap.SqlConstraintUtils;
 import mondrian.rolap.SqlContextConstraint;
 import mondrian.rolap.RolapAggregator;
 import mondrian.rolap.RolapAttribute;
@@ -620,7 +622,16 @@ public final class CalcitePlannerAdapters {
                 if (seen.add(kcAlias + "." + kp.name)) {
                     b.addProjection(kp);
                 }
-                if (orderedKeys.add(kp.name)) {
+                // Dedup the ORDER BY by TABLE-QUALIFIED name, as the
+                // projection above does. Two targets can legitimately
+                // project the same column name from different relations —
+                // a dimension used twice off aliased copies of one table
+                // ("customer" and "customer0" both contributing
+                // yearly_income). Keying on the bare name dropped the
+                // second target's ORDER BY, so its members came back in
+                // whatever order the database felt like: the values were
+                // right, the sequence was not.
+                if (orderedKeys.add(kp.table + "." + kp.name)) {
                     b.addOrderBy(
                         new PlannerRequest.OrderBy(
                             kp, PlannerRequest.Order.ASC));
@@ -2002,8 +2013,23 @@ public final class CalcitePlannerAdapters {
             return;
         }
         if (arg instanceof MemberListCrossJoinArg) {
+            // The arg may EXCLUDE its members (MDX `Not In`, `Except`)
+            // rather than select them. Emitting the member list as a plain
+            // IN-list in that case returns precisely the rows the query
+            // asked to leave out — the complement of the right answer,
+            // silently — so the predicate is negated instead. This is
+            // translated here rather than declined: an UnsupportedTranslation
+            // falls back to the legacy SQL generator, which is exactly what
+            // the Calcite path exists to avoid (a dialect legacy cannot
+            // generate for would simply fail).
+            final boolean exclude =
+                ((MemberListCrossJoinArg) arg).isExclude();
             List<RolapMember> members = arg.getMembers();
             if (members == null || members.isEmpty()) {
+                if (exclude) {
+                    // Excluding nothing excludes nothing — no restriction.
+                    return;
+                }
                 // Mondrian treats this as a hard-coded FALSE predicate.
                 b.universalFalse(true);
                 return;
@@ -2040,7 +2066,12 @@ public final class CalcitePlannerAdapters {
                 for (RolapMember m : members) {
                     values.add(memberKeyLiteral(m));
                 }
-                if (values.size() == 1) {
+                if (exclude) {
+                    b.addTupleFilter(
+                        negatedTupleFilter(
+                            java.util.Collections.singletonList(col),
+                            values));
+                } else if (values.size() == 1) {
                     b.addFilter(
                         new PlannerRequest.Filter(col, values.get(0)));
                 } else {
@@ -2096,7 +2127,8 @@ public final class CalcitePlannerAdapters {
                         rows.add(row);
                     }
                     b.addTupleFilter(
-                        new PlannerRequest.TupleFilter(cols, rows));
+                        new PlannerRequest.TupleFilter(
+                            cols, rows, exclude));
                 }
                 if (!leafOnlyMembers.isEmpty()) {
                     RolapSchema.PhysColumn leaf =
@@ -2111,7 +2143,12 @@ public final class CalcitePlannerAdapters {
                     for (RolapMember m : leafOnlyMembers) {
                         values.add(unwrapSqlNull(m.getKey()));
                     }
-                    if (values.size() == 1) {
+                    if (exclude) {
+                        b.addTupleFilter(
+                            negatedTupleFilter(
+                                java.util.Collections.singletonList(col),
+                                values));
+                    } else if (values.size() == 1) {
                         b.addFilter(
                             new PlannerRequest.Filter(col, values.get(0)));
                     } else {
@@ -2126,6 +2163,23 @@ public final class CalcitePlannerAdapters {
         throw new UnsupportedTranslation(
             "fromTupleRead: unsupported CrossJoinArg subclass "
             + arg.getClass().getName());
+    }
+
+    /**
+     * A single-column NEGATED {@link PlannerRequest.TupleFilter} — "keep the
+     * rows whose {@code col} is none of {@code values}". Single-column
+     * exclusion goes through TupleFilter rather than
+     * {@link PlannerRequest.Filter} because Filter has no negated form and
+     * the renderer already handles a one-column TupleFilter.
+     */
+    private static PlannerRequest.TupleFilter negatedTupleFilter(
+        List<PlannerRequest.Column> cols, List<Object> values)
+    {
+        List<List<Object>> rows = new java.util.ArrayList<>(values.size());
+        for (Object v : values) {
+            rows.add(java.util.Collections.singletonList(v));
+        }
+        return new PlannerRequest.TupleFilter(cols, rows, true);
     }
 
     /** Extract a member's leaf key as a filter literal. Rejects composite
@@ -2171,12 +2225,28 @@ public final class CalcitePlannerAdapters {
                 argHierarchies.add(a.getLevel().getHierarchy());
             }
         }
+        // saiku#1665: hierarchies carrying a compound (multi-position)
+        // slicer contribute NO filter, exactly as legacy
+        // SqlConstraintUtils.removeMultiPositionSlicerMembers does. The
+        // evaluator context holds only the last member of the slicer set
+        // ([Time].[1998] for WHERE {[Time].[1997],[Time].[1998]}), so
+        // pinning it would restrict the read to one position of the
+        // slicer — and where that position has no fact rows, a NON EMPTY
+        // axis came back empty. The fact join still filters the read; the
+        // rolled-up cells then drive NON EMPTY pruning. Note the read's
+        // cache key (SqlContextConstraint's ctor) is likewise built with
+        // these members removed, so emitting a narrower filter here would
+        // also bleed across slicer sets that share a key.
+        Set<Hierarchy> multiPositionSlicer =
+            SqlConstraintUtils.multiPositionSlicerHierarchies(evaluator);
         RolapMember[] members = evaluator.getNonAllMembers();
         for (RolapMember m : members) {
             if (m.isMeasure() || m.isAll() || m.isCalculated()) {
                 continue;
             }
-            if (argHierarchies.contains(m.getHierarchy())) {
+            if (argHierarchies.contains(m.getHierarchy())
+                || multiPositionSlicer.contains(m.getHierarchy()))
+            {
                 continue;
             }
             // Mirror legacy removeCalculatedAndDefaultMembers: a member
@@ -2282,7 +2352,7 @@ public final class CalcitePlannerAdapters {
     private static final class TargetShape {
         final RolapCubeLevel level;
         final RolapAttribute attribute;
-        final RolapSchema.PhysTable table;
+        final RolapSchema.PhysRelation table;
         final String tableName;
         final String tableAlias;
         /**
@@ -2300,13 +2370,13 @@ public final class CalcitePlannerAdapters {
         TargetShape(
             RolapCubeLevel level,
             RolapAttribute attribute,
-            RolapSchema.PhysTable table,
+            RolapSchema.PhysRelation table,
             List<PlannerRequest.Join> dimChain)
         {
             this.level = level;
             this.attribute = attribute;
             this.table = table;
-            this.tableName = table.getName();
+            this.tableName = scanName(table);
             this.tableAlias = table.getAlias();
             this.dimChain = dimChain;
         }
@@ -2352,14 +2422,14 @@ public final class CalcitePlannerAdapters {
         }
         RolapSchema.PhysColumn leafKey = keyList.get(keyList.size() - 1);
         RolapSchema.PhysRelation relation = leafKey.relation;
-        if (!(relation instanceof RolapSchema.PhysTable)) {
+        if (!isScannable(relation)) {
             throw new UnsupportedTranslation(
-                "fromTupleRead: snowflake hierarchy / non-table relation "
+                "fromTupleRead: snowflake hierarchy / non-scannable relation "
                 + "not yet supported ("
                 + (relation == null ? "null" : relation.getClass().getName())
                 + ")");
         }
-        RolapSchema.PhysTable table = (RolapSchema.PhysTable) relation;
+        RolapSchema.PhysRelation table = relation;
         // Task L: if the level's key columns live on a snowflaked dim table
         // reached through intermediate dim tables (e.g. [Product Department]
         // keyed on product_class, reached via product → product_class), emit
@@ -2412,14 +2482,13 @@ public final class CalcitePlannerAdapters {
             if (a == null || joinedAliases.contains(a)) {
                 continue;
             }
-            if (!(kc.relation instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(kc.relation)) {
                 throw new UnsupportedTranslation(
-                    "fromTupleRead: ancestor key relation is not a "
-                    + "PhysTable (got "
+                    "fromTupleRead: ancestor key relation is not "
+                    + "scannable (got "
                     + kc.relation.getClass().getName() + ")");
             }
-            RolapSchema.PhysTable ancestor =
-                (RolapSchema.PhysTable) kc.relation;
+            RolapSchema.PhysRelation ancestor = kc.relation;
             PlannerRequest.Join up = buildUpwardJoin(
                 table, ancestor, joinedAliases, level, keyList);
             dimChain = new java.util.ArrayList<>(dimChain);
@@ -2437,8 +2506,8 @@ public final class CalcitePlannerAdapters {
      * exists or its arity is unsupported.
      */
     private static PlannerRequest.Join buildUpwardJoin(
-        RolapSchema.PhysTable leaf,
-        RolapSchema.PhysTable ancestor,
+        RolapSchema.PhysRelation leaf,
+        RolapSchema.PhysRelation ancestor,
         java.util.Set<String> joinedAliases,
         RolapCubeLevel level,
         java.util.List<RolapSchema.PhysColumn> keyList)
@@ -2454,21 +2523,20 @@ public final class CalcitePlannerAdapters {
                 continue;
             }
             boolean targetIsAncestor =
-                target instanceof RolapSchema.PhysTable
+                isScannable(target)
                 && target.getAlias().equals(ancestor.getAlias());
             boolean sourceIsAncestor =
-                source instanceof RolapSchema.PhysTable
+                isScannable(source)
                 && source.getAlias().equals(ancestor.getAlias());
             if (!targetIsAncestor && !sourceIsAncestor) {
                 continue;
             }
             RolapSchema.PhysRelation other =
                 targetIsAncestor ? source : target;
-            if (!(other instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(other)) {
                 continue;
             }
-            String otherAlias =
-                ((RolapSchema.PhysTable) other).getAlias();
+            String otherAlias = other.getAlias();
             if (!joinedAliases.contains(otherAlias)) {
                 continue;
             }
@@ -2501,7 +2569,7 @@ public final class CalcitePlannerAdapters {
                 otherKey = fkName;
             }
             return PlannerRequest.Join.chained(
-                otherAlias, otherKey, ancestor.getName(), ancestorKey);
+                otherAlias, otherKey, scanName(ancestor), ancestorKey);
         }
         StringBuilder keys = new StringBuilder();
         for (RolapSchema.PhysColumn k : keyList) {
@@ -2532,7 +2600,7 @@ public final class CalcitePlannerAdapters {
      * column names shared across the chain.
      */
     private static List<PlannerRequest.Join> computeTupleReadDimChain(
-        RolapCubeLevel level, RolapSchema.PhysTable keyTable)
+        RolapCubeLevel level, RolapSchema.PhysRelation keyTable)
     {
         return computeTupleReadDimChain(
             level, keyTable, level.getAttribute().getKeyList().get(0));
@@ -2540,7 +2608,7 @@ public final class CalcitePlannerAdapters {
 
     private static List<PlannerRequest.Join> computeTupleReadDimChain(
         RolapCubeLevel level,
-        RolapSchema.PhysTable keyTable,
+        RolapSchema.PhysRelation keyTable,
         RolapSchema.PhysColumn seedKey)
     {
         RolapCubeDimension dim = level.getDimension();
@@ -2587,9 +2655,9 @@ public final class CalcitePlannerAdapters {
         for (int i = hops.size() - 2; i >= 0; i--) {
             RolapSchema.PhysHop hop = hops.get(i);
             RolapSchema.PhysRelation ancestor = hop.relation;
-            if (!(ancestor instanceof RolapSchema.PhysTable)) {
+            if (!isScannable(ancestor)) {
                 throw new UnsupportedTranslation(
-                    "fromTupleRead: non-table dim in chain: "
+                    "fromTupleRead: non-scannable dim in chain: "
                     + (ancestor == null
                         ? "null"
                         : ancestor.getClass().getName()));
@@ -2893,7 +2961,7 @@ public final class CalcitePlannerAdapters {
      * sets the context on the builder itself).
      */
     static void attachParamContext(PlannerRequest.Builder b) {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -3611,11 +3679,27 @@ public final class CalcitePlannerAdapters {
             // weight just like plain ones.
             PlannerRequest.Measure base;
             if (rawExpr == null) {
-                // Synthetic/null-expression measure → SUM(NULL).
+                // Synthetic/null-expression measure. SUM(NULL) is NULL,
+                // which is the right "no value" answer for SUM/MIN/MAX.
+                //
+                // COUNT is different, and getting it wrong is silent: a
+                // column-less <Measure aggregator='count'/> is a FACT COUNT
+                // — count the rows — but COUNT(NULL) is 0, not the row
+                // count. The measure came back as 0 for every cell while
+                // legacy answered 86,837. Aggregate a non-null literal
+                // instead, which is COUNT(*) by another spelling.
+                //
+                // A DISTINCT count always carries a column (you cannot
+                // distinct-count "the rows"), so it keeps the NULL operand
+                // rather than silently counting 1.
+                final Object nullExprOperand =
+                    op.fn == PlannerRequest.AggFn.COUNT && !op.distinct
+                        ? Integer.valueOf(1)
+                        : PlannerRequest.Measure.NULL_LITERAL;
                 base = new PlannerRequest.Measure(
                     op.fn,
                     new PlannerRequest.Column(factTable.getAlias(), alias),
-                    alias, op.distinct, PlannerRequest.Measure.NULL_LITERAL);
+                    alias, op.distinct, nullExprOperand);
             } else if (mexpr instanceof RolapSchema.PhysRealColumn) {
                 String mcol = ((RolapSchema.PhysRealColumn) mexpr).name;
                 if (op.fn == PlannerRequest.AggFn.PERCENTILE_CONT) {
@@ -3808,6 +3892,13 @@ public final class CalcitePlannerAdapters {
         List<Segment> segments,
         RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            throw new mondrian.olap.MondrianException(
+                "Row-security: cannot determine the active role (no Locus on "
+                + "this thread), so a <PredicateGrant> filter cannot be "
+                + "injected; refusing to build an unrestricted fact "
+                + "aggregation.");
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null || !role.hasPredicateGrants()) {
             return;
@@ -4041,6 +4132,12 @@ public final class CalcitePlannerAdapters {
     public static boolean isPredicateSecuredLoad(
         List<Segment> segments, RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            // Identity unknown: report SECURED so every caller refuses to
+            // serve this load through a generator that cannot enforce the
+            // grant, rather than concluding it is unrestricted.
+            return true;
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null || !role.hasPredicateGrants()) {
             return false;
@@ -4109,6 +4206,10 @@ public final class CalcitePlannerAdapters {
     public static boolean isBridgeMemberSecuredLoad(
         List<Segment> segments, RolapStar star)
     {
+        if (roleContextUnavailable()) {
+            // Identity unknown — fail closed, as isPredicateSecuredLoad does.
+            return true;
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null) {
             return false;
@@ -4291,12 +4392,36 @@ public final class CalcitePlannerAdapters {
     }
 
     /**
+     * #106 SECURITY: whether the caller's role cannot be determined AT ALL,
+     * because no {@link mondrian.server.Locus} is active on this thread.
+     *
+     * <p>This is deliberately distinct from {@link #activeRole} returning
+     * {@code null}. "There is a Locus and its connection carries no role" is
+     * a legitimately unsecured read. "There is no Locus" is UNKNOWN — and a
+     * row-security decision taken on unknown identity must fail closed, never
+     * fall through to "not secured".
+     *
+     * <p>Before {@code Locus.peekOrNull} existed, {@code Locus.peek()} threw
+     * on an empty stack, so these paths failed loudly by accident. Making the
+     * lookup null-safe turned that into a silent "no role" — i.e. no filter
+     * injected and no gate raised. Hence this explicit check.
+     */
+    private static boolean roleContextUnavailable() {
+        return mondrian.server.Locus.peekOrNull() == null;
+    }
+
+    /**
      * #106: the active query role off the current {@link mondrian.server.Locus}
      * (execution → statement → connection), or {@code null} when there is no
      * active Locus (e.g. a unit test driving the planner directly).
+     *
+     * <p>Callers making a SECURITY decision must consult
+     * {@link #roleContextUnavailable} first: a {@code null} return conflates
+     * "no role" with "no Locus", and only the former is safe to treat as
+     * unsecured.
      */
     private static mondrian.olap.Role activeRole() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4313,7 +4438,7 @@ public final class CalcitePlannerAdapters {
      * {@code null} when there is no active Locus/connection.
      */
     private static mondrian.calcite.QueryParameterContext activeParamContext() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4331,7 +4456,7 @@ public final class CalcitePlannerAdapters {
      * Used to enumerate the role-visible members of a bridge dimension.
      */
     private static mondrian.olap.SchemaReader activeSchemaReader() {
-        mondrian.server.Locus locus = mondrian.server.Locus.peek();
+        mondrian.server.Locus locus = mondrian.server.Locus.peekOrNull();
         if (locus == null
             || locus.execution == null
             || locus.execution.getMondrianStatement() == null)
@@ -4370,6 +4495,13 @@ public final class CalcitePlannerAdapters {
         RolapStar.Table factTable,
         java.util.Set<String> joinedAliases)
     {
+        if (roleContextUnavailable()) {
+            throw new mondrian.olap.MondrianException(
+                "Row-security: cannot determine the active role (no Locus on "
+                + "this thread), so a bridge <MemberGrant> filter cannot be "
+                + "injected; refusing to build an unrestricted bridge "
+                + "fan-out.");
+        }
         mondrian.olap.Role role = activeRole();
         if (role == null) {
             return;
@@ -5265,6 +5397,41 @@ public final class CalcitePlannerAdapters {
             return ((RolapSchema.PhysTable) rel).getName();
         }
         return null;
+    }
+
+    /**
+     * Whether {@link CalciteSqlPlanner} can scan {@code rel}.
+     *
+     * <p>A {@code PhysTable} is scanned by its database table name. An
+     * {@code <InlineTable>} or {@code <View>} does not exist in the database,
+     * so {@link mondrian.calcite.VirtualRelation} registers it in the Calcite
+     * schema under its Mondrian alias and it is scanned by that -- which is
+     * what {@link #realTableName} returning null already asks the renderer to
+     * do. There is no third kind of relation; naming them explicitly means a
+     * future one is declined rather than silently scanned as a table that is
+     * not there.
+     *
+     * @param rel Physical relation, may be null
+     * @return whether the relation can be scanned
+     */
+    private static boolean isScannable(RolapSchema.PhysRelation rel) {
+        return rel instanceof RolapSchema.PhysTable
+            || rel instanceof RolapSchema.PhysInlineTable
+            || rel instanceof RolapSchema.PhysView;
+    }
+
+    /**
+     * The name {@link CalciteSqlPlanner} scans {@code rel} by: the database
+     * table name for a {@code PhysTable}, the Mondrian alias for a relation
+     * that exists only in the schema. See {@link #isScannable}.
+     *
+     * @param rel Physical relation
+     * @return name to scan
+     */
+    private static String scanName(RolapSchema.PhysRelation rel) {
+        return rel instanceof RolapSchema.PhysTable
+            ? ((RolapSchema.PhysTable) rel).getName()
+            : rel.getAlias();
     }
 
     /** Pair: translated {@link PlannerRequest.AggFn} + DISTINCT flag. */

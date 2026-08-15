@@ -758,7 +758,11 @@ public class SqlQueryTest extends BatchTestCase {
             + "{[Time].[Time].[1997].[Q2].[4]}\n"
             + "Axis #1:\n"
             + "{[Measures].[Avg Sales]}\n"
-            + "Row #0: 3.069\n");
+            // Fixture arithmetic, not the true average: HSQLDB 1.8 keeps the
+            // scale a DECIMAL was inserted with, and FoodMart was loaded with
+            // scale-1 values, so avg (= sum/count) truncates. See
+            // CompoundSlicerTest.testRollupAvg for the full explanation.
+            + "Row #0: 3.1\n");
         String sql =
             "select\n"
             + "    avg(`sales_fact_1997`.`unit_sales`) as `m0`\n"

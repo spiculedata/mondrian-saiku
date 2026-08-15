@@ -9854,7 +9854,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <HIERARCHY_UNIQUE_NAME>[Customers].[Customers]</HIERARCHY_UNIQUE_NAME>
                         <LEVEL_UNIQUE_NAME>[Customers].[Customers].[City]</LEVEL_UNIQUE_NAME>
                         <LEVEL_NUMBER>3</LEVEL_NUMBER>
-                        <MEMBER_ORDINAL>98</MEMBER_ORDINAL>
+                        <MEMBER_ORDINAL>84</MEMBER_ORDINAL>
                         <MEMBER_NAME>Portland</MEMBER_NAME>
                         <MEMBER_UNIQUE_NAME>[Customers].[Customers].[USA].[OR].[Portland]</MEMBER_UNIQUE_NAME>
                         <MEMBER_TYPE>1</MEMBER_TYPE>
@@ -10032,7 +10032,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <HIERARCHY_UNIQUE_NAME>[Customers].[Customers]</HIERARCHY_UNIQUE_NAME>
                         <LEVEL_UNIQUE_NAME>[Customers].[Customers].[State Province]</LEVEL_UNIQUE_NAME>
                         <LEVEL_NUMBER>2</LEVEL_NUMBER>
-                        <MEMBER_ORDINAL>102</MEMBER_ORDINAL>
+                        <MEMBER_ORDINAL>16</MEMBER_ORDINAL>
                         <MEMBER_NAME>WA</MEMBER_NAME>
                         <MEMBER_UNIQUE_NAME>[Customers].[Customers].[USA].[WA]</MEMBER_UNIQUE_NAME>
                         <MEMBER_TYPE>1</MEMBER_TYPE>
@@ -10215,7 +10215,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>HR Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -10411,7 +10411,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Sales Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -10579,7 +10579,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Sales Ragged Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -10747,7 +10747,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Store Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -10859,7 +10859,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Warehouse Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -11027,7 +11027,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <PROPERTY_NAME>Has coffee bar</PROPERTY_NAME>
                         <PROPERTY_CAPTION>Has coffee bar</PROPERTY_CAPTION>
                         <PROPERTY_TYPE>1</PROPERTY_TYPE>
-                        <DATA_TYPE>130</DATA_TYPE>
+                        <DATA_TYPE>11</DATA_TYPE>
                         <PROPERTY_CONTENT_TYPE>0</PROPERTY_CONTENT_TYPE>
                         <DESCRIPTION>Warehouse and Sales Cube - Store Hierarchy - Store Name Level - Has coffee bar Property</DESCRIPTION>
                     </row>
@@ -12436,7 +12436,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                     </row>
                     <row>
                         <PropertyName>LocaleIdentifier</PropertyName>
-                        <PropertyDescription>Use this to read or set the numeric locale identifier for this request. The default is provider-specific. For the complete hexadecimal list of language identifiers, search on "Language Identifiers" in the MSDN Library at http://www.msdn.microsoft.com. As an extension to the XMLA standard, Mondrian also allows locale codes as specified by ISO-639 and ISO-3166 and as used by Java; for example 'en-US'.</PropertyDescription>
+                        <PropertyDescription>Use this to read or set the numeric locale identifier for this request. The default is provider-specific. For the complete hexadecimal list of language identifiers, search on "Language Identifiers" in the MSDN Library at http://www.msdn.microsoft.com. As an extension to the XMLA standard, Mondrian also allows locale codes as specified by ISO-639 and ISO-3166 and as used by Java; for example 'en-US'. </PropertyDescription>
                         <PropertyType>UnsignedInteger</PropertyType>
                         <PropertyAccessType>ReadWrite</PropertyAccessType>
                         <IsRequired>false</IsRequired>
@@ -13477,7 +13477,7 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                                 <xsd:element minOccurs="0" name="City" sql:field="City" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="City_0" sql:field="City_0" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="Name" sql:field="Name" type="xsd:int"/>
-                                <xsd:element minOccurs="0" name="Unit_x0020_Sales" sql:field="Unit Sales" type="xsd:decimal"/>
+                                <xsd:element minOccurs="0" name="Unit_x0020_Sales" sql:field="Unit Sales" type="xsd:int"/>
                             </xsd:sequence>
                         </xsd:complexType>
                     </xsd:schema>
@@ -13496,17 +13496,8 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <Month xsi:type="xsd:int">3</Month>
                         <City xsi:type="xsd:string">CA</City>
                         <City_0 xsi:type="xsd:string">Berkeley</City_0>
-                        <Name xsi:type="xsd:int">1066</Name>
-                        <Unit_x0020_Sales xsi:type="xsd:decimal">9</Unit_x0020_Sales>
-                    </row>
-                    <row>
-                        <Year xsi:type="xsd:int">1997</Year>
-                        <Quarter xsi:type="xsd:string">Q1</Quarter>
-                        <Month xsi:type="xsd:int">3</Month>
-                        <City xsi:type="xsd:string">CA</City>
-                        <City_0 xsi:type="xsd:string">Berkeley</City_0>
                         <Name xsi:type="xsd:int">3944</Name>
-                        <Unit_x0020_Sales xsi:type="xsd:decimal">8</Unit_x0020_Sales>
+                        <Unit_x0020_Sales xsi:type="xsd:int">8</Unit_x0020_Sales>
                     </row>
                     <row>
                         <Year xsi:type="xsd:int">1997</Year>
@@ -13514,8 +13505,17 @@ xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
                         <Month xsi:type="xsd:int">3</Month>
                         <City xsi:type="xsd:string">CA</City>
                         <City_0 xsi:type="xsd:string">Berkeley</City_0>
-                        <Name xsi:type="xsd:int">4241</Name>
-                        <Unit_x0020_Sales xsi:type="xsd:decimal">3</Unit_x0020_Sales>
+                        <Name xsi:type="xsd:int">1066</Name>
+                        <Unit_x0020_Sales xsi:type="xsd:int">9</Unit_x0020_Sales>
+                    </row>
+                    <row>
+                        <Year xsi:type="xsd:int">1997</Year>
+                        <Quarter xsi:type="xsd:string">Q1</Quarter>
+                        <Month xsi:type="xsd:int">3</Month>
+                        <City xsi:type="xsd:string">CA</City>
+                        <City_0 xsi:type="xsd:string">Berkeley</City_0>
+                        <Name xsi:type="xsd:int">8808</Name>
+                        <Unit_x0020_Sales xsi:type="xsd:int">1</Unit_x0020_Sales>
                     </row>
                 </root>
             </cxmla:return>
@@ -13590,7 +13590,7 @@ FROM Sales
                                 <xsd:element minOccurs="0" name="City" sql:field="City" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="City_0" sql:field="City_0" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="Name" sql:field="Name" type="xsd:int"/>
-                                <xsd:element minOccurs="0" name="Sales_x0020_Count" sql:field="Sales Count" type="xsd:integer"/>
+                                <xsd:element minOccurs="0" name="Sales_x0020_Count" sql:field="Sales Count" type="xsd:int"/>
                             </xsd:sequence>
                         </xsd:complexType>
                     </xsd:schema>
@@ -13622,7 +13622,7 @@ FROM Sales
                         <City xsi:type="xsd:string">CA</City>
                         <City_0 xsi:type="xsd:string">Concord</City_0>
                         <Name xsi:type="xsd:int">2948</Name>
-                        <Sales_x0020_Count xsi:type="xsd:integer">1</Sales_x0020_Count>
+                        <Sales_x0020_Count xsi:type="xsd:int">1</Sales_x0020_Count>
                     </row>
                     <row>
                         <Year xsi:type="xsd:int">1997</Year>
@@ -13637,7 +13637,7 @@ FROM Sales
                         <City xsi:type="xsd:string">CA</City>
                         <City_0 xsi:type="xsd:string">Concord</City_0>
                         <Name xsi:type="xsd:int">3956</Name>
-                        <Sales_x0020_Count xsi:type="xsd:integer">1</Sales_x0020_Count>
+                        <Sales_x0020_Count xsi:type="xsd:int">1</Sales_x0020_Count>
                     </row>
                 </root>
             </cxmla:return>
@@ -13715,7 +13715,7 @@ FROM Sales
                                 <xsd:element minOccurs="0" name="City" sql:field="City" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="City_0" sql:field="City_0" type="xsd:string"/>
                                 <xsd:element minOccurs="0" name="Name" sql:field="Name" type="xsd:int"/>
-                                <xsd:element minOccurs="0" name="Sales_x0020_Count" sql:field="Sales Count" type="xsd:integer"/>
+                                <xsd:element minOccurs="0" name="Sales_x0020_Count" sql:field="Sales Count" type="xsd:int"/>
                             </xsd:sequence>
                         </xsd:complexType>
                     </xsd:schema>
@@ -13747,7 +13747,7 @@ FROM Sales
                         <City xsi:type="xsd:string">CA</City>
                         <City_0 xsi:type="xsd:string">Concord</City_0>
                         <Name xsi:type="xsd:int">3956</Name>
-                        <Sales_x0020_Count xsi:type="xsd:integer">1</Sales_x0020_Count>
+                        <Sales_x0020_Count xsi:type="xsd:int">1</Sales_x0020_Count>
                     </row>
                 </root>
             </cxmla:return>

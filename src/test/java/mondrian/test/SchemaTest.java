@@ -1736,10 +1736,10 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 "<Query name='FACT' alias='FACT'>\n"
                 + "  <ExpressionView>\n"
                 + "    <SQL dialect='generic'>\n"
-                + "     <![CDATA[select * from 'inventory_fact_1997' as 'FOOBAR']]>\n"
+                + "     <![CDATA[select * from \"inventory_fact_1997\" as \"FOOBAR\"]]>\n"
                 + "    </SQL>\n"
                 + "    <SQL dialect='oracle'>\n"
-                + "     <![CDATA[select * from 'inventory_fact_1997' 'FOOBAR']]>\n"
+                + "     <![CDATA[select * from \"inventory_fact_1997\" \"FOOBAR\"]]>\n"
                 + "    </SQL>\n"
                 + "    <SQL dialect='mysql'>\n"
                 + "     <![CDATA[select * from `inventory_fact_1997` as `FOOBAR`]]>\n"
@@ -1765,7 +1765,7 @@ Test that get error if a dimension has more than one hierarchy with same name.
             + "{[Store].[Stores].[USA].[CA]}\n"
             + "{[Store].[Stores].[USA].[OR]}\n"
             + "{[Store].[Stores].[USA].[WA]}\n"
-            + "Row #0: 25,789.086\n"
+            + "Row #0: 25,789.087\n"
             + "Row #0: 8,624.791\n"
             + "Row #1: 17,606.904\n"
             + "Row #1: 3,812.023\n"
@@ -1808,10 +1808,10 @@ Test that get error if a dimension has more than one hierarchy with same name.
             "<Query name='FACT' alias='FACT'>\n"
             + "  <ExpressionView>\n"
             + "    <SQL dialect='generic'>\n"
-            + "     <![CDATA[select * from 'store' as 'FOOBAR']]>\n"
+            + "     <![CDATA[select * from \"store\" as \"FOOBAR\"]]>\n"
             + "    </SQL>\n"
             + "    <SQL dialect='oracle'>\n"
-            + "     <![CDATA[select * from 'store' 'FOOBAR']]>\n"
+            + "     <![CDATA[select * from \"store\" \"FOOBAR\"]]>\n"
             + "    </SQL>\n"
             + "    <SQL dialect='mysql'>\n"
             + "     <![CDATA[select * from `store` as `FOOBAR`]]>\n"
@@ -2841,25 +2841,25 @@ Test that get error if a dimension has more than one hierarchy with same name.
             + "        <![CDATA[SELECT * FROM customer]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='oracle'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='derby'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='hsqldb'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='luciddb'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='neoview'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='netezza'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "      <SQL dialect='db2'>\n"
-            + "        <![CDATA[SELECT * FROM 'customer']]>\n"
+            + "        <![CDATA[SELECT * FROM \"customer\"]]>\n"
             + "      </SQL>\n"
             + "  </ExpressionView>\n"
             + "</Query>";
@@ -4336,7 +4336,10 @@ Test that get error if a dimension has more than one hierarchy with same name.
         // The hierarchy caption is prefixed by the caption of the dimension
         // usage.
         assertEquals(
-            "Time1.Time shared hierarchy caption",
+            // The CAPTION is qualified by the usage's caption, not its name
+            // (Larders.prefix): a caption is what an end user reads. The
+            // description below keeps the name, which identifies the usage.
+            "Time usage caption.Time shared hierarchy caption",
             timeHierarchy.getCaption());
         // No annotations.
         checkAnnotations(timeHierarchy.getAnnotationMap());
@@ -5874,6 +5877,9 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 + "  <Table name='sales_fact_1997' />\n"
                 + "  <Query alias='customer'>\n"
                 + "    <ExpressionView>\n"
+                + "    <SQL dialect='generic'>\n"
+                + "      SELECT * FROM \"customer\"\n"
+                + "    </SQL>\n"
                 + "    <SQL dialect='mysql'>\n"
                 + "      SELECT * FROM `customer`\n"
                 + "    </SQL>\n"
@@ -5890,6 +5896,9 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 "<Table name='product_class' keyColumn='product_class_id'/>",
                 "<Query alias='product_class' keyColumn='product_class_id'>\n"
                 + "  <ExpressionView>\n"
+                + "    <SQL dialect='generic'>\n"
+                + "      SELECT * FROM \"product_class\"\n"
+                + "    </SQL>\n"
                 + "    <SQL dialect='mysql'>\n"
                 + "      SELECT * FROM `product_class`\n"
                 + "    </SQL>\n"
@@ -5905,6 +5914,9 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 "<Query alias='product_class'>\n"
                 + "  <Key><Column name='product_class_id'/></Key>\n"
                 + "  <ExpressionView>\n"
+                + "    <SQL dialect='generic'>\n"
+                + "      SELECT * FROM \"product_class\"\n"
+                + "    </SQL>\n"
                 + "    <SQL dialect='mysql'>\n"
                 + "      SELECT * FROM `product_class`\n"
                 + "    </SQL>\n"
@@ -5919,6 +5931,9 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 "<Table name='product_class' keyColumn='product_class_id'/>",
                 "<Query alias='product_class'>\n"
                 + "  <ExpressionView>\n"
+                + "    <SQL dialect='generic'>\n"
+                + "      SELECT * FROM \"product_class\"\n"
+                + "    </SQL>\n"
                 + "    <SQL dialect='mysql'>\n"
                 + "      SELECT * FROM `product_class`\n"
                 + "    </SQL>\n"
@@ -6410,6 +6425,7 @@ Test that get error if a dimension has more than one hierarchy with same name.
                 + "  <ColumnDefs>\n"
                 + "    <CalculatedColumnDef name='product_name_exp' type='String'>\n"
                 + "      <ExpressionView>\n"
+                + "        <SQL dialect='generic'><Column name='product_name'/> || '_bar'</SQL>"
                 + "        <SQL dialect='oracle'><Column name='product_name'/>  || '_bar'</SQL>"
                 + "        <SQL dialect='mysql'>CONCAT(<Column name='product_name'/>, '_bar')</SQL>"
                 + "      </ExpressionView>\n"
@@ -7270,8 +7286,19 @@ Test that get error if a dimension has more than one hierarchy with same name.
 
     private TestContext genTableSchema(String physSchema) throws SQLException {
         TestContext testContext = getTestContext();
-        doSql(testContext, "drop table time_by_day_generated");
+        // Quoted: the table is created with a quoted, lower-case name, and
+        // a case-folding database resolves the unquoted form to
+        // TIME_BY_DAY_GENERATED and fails to find it. doSql swallows that,
+        // so the table survived from one test -- or one build -- to the next
+        // and the following test read its columns instead of generating them.
+        doSql(testContext, "drop table \"time_by_day_generated\"");
         JdbcSchema.clearAllDBs();
+        // The Calcite backend reflects the database once per planner and
+        // caches that. This fixture drops a table and has the schema loader
+        // recreate it, so any planner built earlier in this JVM holds a
+        // reflection from before it existed and cannot scan it. Drop the
+        // cached planners along with the table.
+        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         return testContext.withSchema(
             "<Schema name='FoodMart' metamodelVersion='4.0'>\n"
             + physSchema
