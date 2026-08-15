@@ -7293,6 +7293,12 @@ Test that get error if a dimension has more than one hierarchy with same name.
         // and the following test read its columns instead of generating them.
         doSql(testContext, "drop table \"time_by_day_generated\"");
         JdbcSchema.clearAllDBs();
+        // The Calcite backend reflects the database once per planner and
+        // caches that. This fixture drops a table and has the schema loader
+        // recreate it, so any planner built earlier in this JVM holds a
+        // reflection from before it existed and cannot scan it. Drop the
+        // cached planners along with the table.
+        mondrian.rolap.agg.SegmentLoader.clearCalcitePlannerCache();
         return testContext.withSchema(
             "<Schema name='FoodMart' metamodelVersion='4.0'>\n"
             + physSchema
