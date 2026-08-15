@@ -234,6 +234,19 @@ public class MemberListCrossJoinArg implements CrossJoinArg {
      *
      * @return whether the input CJ arg is empty
      */
+    /**
+     * Whether this arg EXCLUDES its members rather than selecting them —
+     * the {@code Not In} / {@code Except} shape. A caller that turns the
+     * member list into a predicate must negate it; one that cannot must
+     * decline the arg rather than silently return the complement of the
+     * requested set.
+     *
+     * @return whether the members are excluded
+     */
+    public boolean isExclude() {
+        return exclude;
+    }
+
     public boolean isEmptyCrossJoinArg() {
         return (level == null && members.size() == 0);
     }

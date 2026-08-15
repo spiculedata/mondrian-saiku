@@ -26,7 +26,7 @@ import java.lang.reflect.*;
  * <pre>import java.sql.Connection;
  * Connection connection = ...;
  * Connection tracingConnection = (Connection) Proxy.newProxyInstance(
- *     null,
+ *     MyClass.class.getClassLoader(),
  *     new Class[] {Connection.class},
  *     new DelegatingInvocationHandler() {
  *         protected Object getTarget() {

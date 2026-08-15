@@ -573,6 +573,16 @@ public class CrossJoinArgFactory {
         if (member.isCalculated()) {
             return null;
         }
+        if (member.isNull()) {
+            // The null member has no descendants, but it also has no key to
+            // constrain the SQL with, so a native read of the level would
+            // return every member of it. Decline, and let the interpreted
+            // DescendantsFunDef return the empty set. Reached when
+            // IgnoreInvalidMembersDuringQuery substitutes the null member for
+            // one the query names but the schema does not have
+            // (MONDRIAN-977).
+            return null;
+        }
         final RolapCubeLevel level;
         if ((args[1] instanceof LevelExpr)) {
             level = (RolapCubeLevel) ((LevelExpr) args[1]).getLevel();

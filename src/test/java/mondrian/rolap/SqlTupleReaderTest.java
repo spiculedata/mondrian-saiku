@@ -33,7 +33,10 @@ public class SqlTupleReaderTest extends FoodMartTestCase {
 
     @Override
     protected void tearDown() throws Exception {
-        propSaver.reset();
+        // super.tearDown() is what resets propSaver. Duplicating its body
+        // instead means this class silently skips anything the base class
+        // starts cleaning up later.
+        super.tearDown();
     }
 
     public void testAddLevelMembersSqlOrderByAliasCalcExpr() {
@@ -58,7 +61,7 @@ public class SqlTupleReaderTest extends FoodMartTestCase {
             + "    customer.country as c0,\n"
             + "    customer.state_province as c1,\n"
             + "    customer.city as c2,\n"
-            + "    CONCAT(customer.fname, ' ', customer.lname) as c3,\n"
+            + "    customer.fullname as c3,\n"
             + "    customer.customer_id as c4\n"
             + "from\n"
             + "    customer as customer\n"
@@ -66,7 +69,7 @@ public class SqlTupleReaderTest extends FoodMartTestCase {
             + "    customer.country,\n"
             + "    customer.state_province,\n"
             + "    customer.city,\n"
-            + "    CONCAT(customer.fname, ' ', customer.lname),\n"
+            + "    customer.fullname,\n"
             + "    customer.customer_id\n"
             + "order by\n"
             + "    CASE WHEN c0 IS NULL THEN 1 ELSE 0 END, c0 ASC,\n"

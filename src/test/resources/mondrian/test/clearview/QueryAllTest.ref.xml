@@ -21,9 +21,9 @@ Axis #0:
 Axis #1:
 {[Measures].[Unit Sales]}
 Axis #2:
-{[Customers].[USA].[CA]}
-{[Customers].[USA].[OR]}
-{[Customers].[USA].[WA]}
+{[Customer].[Customers].[USA].[CA]}
+{[Customer].[Customers].[USA].[OR]}
+{[Customer].[Customers].[USA].[WA]}
 Row #0: 74,748
 Row #1: 67,659
 Row #2: 124,366

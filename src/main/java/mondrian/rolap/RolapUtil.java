@@ -283,6 +283,36 @@ public class RolapUtil {
     }
 
     /**
+     * Returns the {@link Execution} that a schema-internal SQL statement
+     * should be attributed to.
+     *
+     * <p>Normally that is the execution of the query in flight, taken from
+     * the current {@link Locus}. But member reads also happen during schema
+     * load — deriving a hierarchy's default member, or resolving a member by
+     * name while validating — which runs before any query, and therefore any
+     * Locus, exists. Callers on that path must not assume a Locus: this
+     * returns a fresh execution on the schema's internal statement instead.
+     *
+     * <p>The same fallback applies when a Locus is present but its connection
+     * carries no schema yet, which is the mid-load case.
+     *
+     * @param schema Schema to attribute the statement to when there is no
+     *     usable Locus
+     * @return Execution to attribute the statement to; never null
+     */
+    public static Execution executionFor(RolapSchema schema) {
+        final Locus locus = Locus.peekOrNull();
+        if (locus != null
+            && locus.execution.getMondrianStatement()
+                .getMondrianConnection().getSchema() != null)
+        {
+            return locus.execution;
+        }
+        return new Execution(
+            schema.getInternalConnection().getInternalStatement(), 0);
+    }
+
+    /**
      * Executes a query, printing to the trace log if tracing is enabled.
      *
      * <p>If the query fails, it wraps the {@link SQLException} in a runtime

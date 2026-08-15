@@ -511,7 +511,15 @@ public class RolapSchemaReader
     public List<Member> getLevelMembers(Level level, boolean includeCalculated)
     {
         List<Member> members = getLevelMembers(level, null);
-        if (!includeCalculated) {
+        if (includeCalculated) {
+            // The member reader answers with the level's STORED members;
+            // calculated members are held on the cube, so they have to be
+            // added rather than merely not-removed. Without this, asking a
+            // cube for its measures -- which is what an olap4j or XMLA client
+            // does to populate a measure list -- omitted every calculated
+            // measure the schema defines.
+            members = Util.addLevelCalculatedMembers(this, level, members);
+        } else {
             members = SqlConstraintUtils.removeCalculatedMembers(members);
         }
         return members;

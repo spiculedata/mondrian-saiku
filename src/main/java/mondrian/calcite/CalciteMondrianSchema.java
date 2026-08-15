@@ -79,6 +79,10 @@ public final class CalciteMondrianSchema {
     private static final boolean PROFILE =
         Boolean.getBoolean("harness.calcite.profile");
 
+    /** Suffix of the sibling schema that exposes only real database tables;
+     *  see the virtual-relation registration in the constructor. */
+    private static final String BASE_SCHEMA_SUFFIX = "$base";
+
     private final SchemaPlus root;
     private final SchemaPlus schema;
     private final String schemaName;
@@ -102,6 +106,28 @@ public final class CalciteMondrianSchema {
         new HashMap<>();
 
     public CalciteMondrianSchema(DataSource dataSource, String schemaName) {
+        this(dataSource, schemaName, Collections.<VirtualRelation>emptyList());
+    }
+
+    /**
+     * Creates a schema that also exposes the relations a Mondrian schema
+     * declares but the database does not have -- {@code <InlineTable>} and
+     * {@code <View>} / {@code <Query>}.
+     *
+     * <p>They are registered as Calcite tables under the alias the Mondrian
+     * schema refers to them by, which is the name
+     * {@code CalciteSqlPlanner.build} scans. Without them, every plan that
+     * touches one fails with {@code Table 'x' not found}.
+     *
+     * @param dataSource JDBC data source
+     * @param schemaName Calcite schema name
+     * @param virtualRelations Relations not backed by a database table
+     */
+    public CalciteMondrianSchema(
+        DataSource dataSource,
+        String schemaName,
+        List<VirtualRelation> virtualRelations)
+    {
         if (dataSource == null) {
             throw new IllegalArgumentException("dataSource is null");
         }
@@ -149,6 +175,29 @@ public final class CalciteMondrianSchema {
         //    metadata via RelMetadataQuery / RelMdColumnUniqueness.
         this.schema =
             root.add(schemaName, new DecoratingJdbcSchema(jdbc, schemaName));
+
+        // 5) Register the relations that exist only in the Mondrian schema.
+        //    CalciteSchema consults its explicit table map before the
+        //    underlying Schema, so these shadow nothing and cost nothing
+        //    when the list is empty (the overwhelmingly common case).
+        //
+        //    Their defining SQL resolves against a SECOND registration of the
+        //    same JdbcSchema that carries no virtual relations. A view is
+        //    routinely named after the table it selects from --
+        //    "<Query alias='product_class'>SELECT * FROM product_class" --
+        //    and resolving that reference against a schema containing the
+        //    view itself recurses until the stack overflows. The database
+        //    the legacy generator hands the SQL to only knows real tables,
+        //    so real tables are what the SQL must see.
+        if (!virtualRelations.isEmpty()) {
+            final String baseName = schemaName + BASE_SCHEMA_SUFFIX;
+            root.add(baseName, new DecoratingJdbcSchema(jdbc, baseName));
+            for (VirtualRelation vr : virtualRelations) {
+                this.schema.add(
+                    vr.alias,
+                    new VirtualRelationTable(vr, root, baseName));
+            }
+        }
         if (PROFILE) {
             CalciteProfile.record(
                 "CalciteMondrianSchema.ctor", System.nanoTime() - t0);
@@ -506,16 +555,32 @@ public final class CalciteMondrianSchema {
      *  don't implement {@link Connection#getCatalog()} /
      *  {@link Connection#getSchema()} and throw AbstractMethodError. */
     private static String safeCatalog(Connection c) {
-        try {
-            return c.getCatalog();
-        } catch (SQLException | AbstractMethodError e) {
-            return null;
-        }
+        return safeProbe(c, true);
     }
     private static String safeSchema(Connection c) {
+        return safeProbe(c, false);
+    }
+
+    /**
+     * Reads the connection's catalog or schema, answering null for anything
+     * that goes wrong.
+     *
+     * <p>Catching Throwable rather than {@code SQLException |
+     * AbstractMethodError} is deliberate: a Connection reached through a
+     * dynamic proxy -- some pools, and the SQL-capturing harness -- reports
+     * the driver's AbstractMethodError as an UndeclaredThrowableException,
+     * which is neither. These two values are hints used to narrow a
+     * DatabaseMetaData probe; there is nothing to do with a failure but
+     * carry on without them.
+     *
+     * @param c Connection
+     * @param catalog Whether to read the catalog rather than the schema
+     * @return the value, or null
+     */
+    private static String safeProbe(Connection c, boolean catalog) {
         try {
-            return c.getSchema();
-        } catch (SQLException | AbstractMethodError e) {
+            return catalog ? c.getCatalog() : c.getSchema();
+        } catch (Throwable t) {
             return null;
         }
     }

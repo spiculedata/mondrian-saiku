@@ -9,7 +9,7 @@
         <Resource name="mdx">
             <![CDATA[
 SELECT 
-{[Customers].[USA],
+{[Customer].[Customers].[USA],
  [Customers].[USA].[CA],
  [Customers].[USA].[CA].[Oakland]} ON ROWS,
 {[Measures].[Unit Sales]} ON COLUMNS
@@ -23,9 +23,9 @@ Axis #0:
 Axis #1:
 {[Measures].[Unit Sales]}
 Axis #2:
-{[Customers].[USA]}
-{[Customers].[USA].[CA]}
-{[Customers].[USA].[CA].[Oakland]}
+{[Customer].[Customers].[USA]}
+{[Customer].[Customers].[USA].[CA]}
+{[Customer].[Customers].[USA].[CA].[Oakland]}
 Row #0: 266,773
 Row #1: 74,748
 Row #2: 70

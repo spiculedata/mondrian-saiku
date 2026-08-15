@@ -24,6 +24,8 @@ import javax.sql.DataSource;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.*;
 
 public class RolapSchemaTest extends TestCase {
@@ -44,8 +46,8 @@ public class RolapSchemaTest extends TestCase {
             APPROX_CARD,
             physStatistic.getRelationCardinality(table, "alias", APPROX_CARD));
         verify(statsProv).getTableCardinality(
-            any(Dialect.class), any(DataSource.class),
-            anyString(), anyString(), anyString(), any(Execution.class));
+            nullable(Dialect.class), nullable(DataSource.class),
+            nullable(String.class), nullable(String.class), nullable(String.class), nullable(Execution.class));
     }
 
     public void testGetRelationCardinalityWithQuery() {
@@ -67,8 +69,8 @@ public class RolapSchemaTest extends TestCase {
         }
         verify(statsProv, times(relations.length))
             .getQueryCardinality(
-                any(Dialect.class), any(DataSource.class),
-                anyString(), any(Execution.class));
+                nullable(Dialect.class), nullable(DataSource.class),
+                nullable(String.class), nullable(Execution.class));
     }
 
     private RolapSchema.PhysStatistic buildTestPhysStatistic(
@@ -76,20 +78,24 @@ public class RolapSchemaTest extends TestCase {
     {
         when(
             statsProv.getTableCardinality(
-                any(Dialect.class),
-                any(DataSource.class),
-                anyString(), anyString(), anyString(), any(Execution.class)))
+                nullable(Dialect.class),
+                nullable(DataSource.class),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(Execution.class)))
             .thenReturn(TABLE_CARD_VAL);
         Dialect spyDialect = spy(new JdbcDialectImpl());
         when(statsProv.getQueryCardinality(
-            any(Dialect.class), any(DataSource.class),
-            anyString(), any(Execution.class))).thenReturn(QUERY_CARD_VAL);
-        when(spyDialect.getDatabaseProduct()).thenReturn(
-            Dialect.DatabaseProduct.MYSQL);
+            nullable(Dialect.class), nullable(DataSource.class),
+            nullable(String.class), nullable(Execution.class))).thenReturn(QUERY_CARD_VAL);
+        // doReturn/when for a SPY: when(spy.foo()) CALLS the real foo()
+        // while stubbing, which for getStatisticsProviders() returned the
+        // real provider list and left the stub unapplied — the test then
+        // measured the real provider (0) instead of the mock.
+        doReturn(Dialect.DatabaseProduct.MYSQL)
+            .when(spyDialect).getDatabaseProduct();
         List<StatisticsProvider> statsProvs =
             new ArrayList<StatisticsProvider>();
         statsProvs.add(statsProv);
-        when(spyDialect.getStatisticsProviders()).thenReturn(statsProvs);
+        doReturn(statsProvs).when(spyDialect).getStatisticsProviders();
         RolapConnection conn = mock(RolapConnection.class);
         Statement statement = mock(StatementImpl.class);
         when(conn.getInternalStatement()).thenReturn(statement);

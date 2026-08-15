@@ -28,14 +28,18 @@ public class MockDialect {
      * @return dialect of an required persuasion
      */
     public static Dialect of(Dialect.DatabaseProduct product) {
+        // Loader must see java.sql; null (bootstrap) does not, since
+        // java.sql became its own module in JDK 9. See
+        // SqlStatement.getWrappedResultSet.
+        final ClassLoader loader = MockDialect.class.getClassLoader();
         final DatabaseMetaData metaData =
             (DatabaseMetaData) Proxy.newProxyInstance(
-                null,
+                loader,
                 new Class<?>[]{DatabaseMetaData.class},
                 new DatabaseMetaDataInvocationHandler(product));
         final java.sql.Connection connection =
             (java.sql.Connection) Proxy.newProxyInstance(
-                null,
+                loader,
                 new Class<?>[] {java.sql.Connection.class},
                 new ConnectionInvocationHandler(metaData));
         final Dialect dialect = DialectManager.createDialect(null, connection);

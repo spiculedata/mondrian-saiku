@@ -320,10 +320,19 @@ public class SegmentLoader {
                         boolean known =
                             ex instanceof mondrian.calcite
                                 .UnsupportedTranslation;
+                        if (known
+                            && !mondrian.calcite.CalciteFallbackPolicy
+                                .unsupportedShapeMayFallBack())
+                        {
+                            // strict=full: never serve a Calcite-backed load
+                            // from the legacy generator (see
+                            // CalciteFallbackPolicy).
+                            throw mondrian.calcite.CalciteFallbackPolicy
+                                .noFallback("segment-load", ex);
+                        }
                         if (!known
-                            && !"false".equals(
-                                System.getProperty(
-                                    "mondrian.calcite.strict")))
+                            && !mondrian.calcite.CalciteFallbackPolicy
+                                .unknownFailureMayFallBack())
                         {
                             throw ex;
                         }

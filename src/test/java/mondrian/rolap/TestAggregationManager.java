@@ -1549,12 +1549,12 @@ public class TestAggregationManager extends BatchTestCase {
                 +    "<ColumnDefs>"
                 + "<CalculatedColumnDef name='qtr_expression_agg' type='String'>\n"
                 + "    <ExpressionView>\n"
-                + "        <SQL dialect='generic'>lower(time_quarter)</SQL>\n"
+                + "        <SQL dialect='generic'>lower(\"time_quarter\")</SQL>\n"
                 + "    </ExpressionView>\n"
                 + "</CalculatedColumnDef>"
                 + "<CalculatedColumnDef name='unit_sales_negative' type='Integer'>\n"
                 + "    <ExpressionView>\n"
-                + "        <SQL dialect='generic'>unit_sales_sum * -1</SQL>\n"
+                + "        <SQL dialect='generic'>\"unit_sales_sum\" * -1</SQL>\n"
                 + "    </ExpressionView>\n"
                 + "</CalculatedColumnDef>"
                 + "</ColumnDefs></Table>")
@@ -1563,7 +1563,7 @@ public class TestAggregationManager extends BatchTestCase {
                 "<ColumnDefs>"
                 + "<CalculatedColumnDef name='qtr_expression' type='String'>\n"
                 + "    <ExpressionView>\n"
-                + "        <SQL dialect='generic'>lower(quarter)</SQL>\n"
+                + "        <SQL dialect='generic'>lower(\"quarter\")</SQL>\n"
                 + "    </ExpressionView>\n"
                 + "</CalculatedColumnDef>"
                 + "</ColumnDefs>")

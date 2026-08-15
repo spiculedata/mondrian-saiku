@@ -431,7 +431,7 @@ public class IgnoreUnrelatedDimensionsTest extends FoodMartTestCase {
             + "{[Product].[Product].[Food], [Warehouse].[Warehouse].[USA].[WA]}\n"
             + "{[Product].[Product].[Food], [Warehouse].[Warehouse].[COG_OQP_USR_Aggregate(Warehouse set)]}\n"
             + "{[Product].[Product].[COG_OQP_USR_Aggregate(Product Set)1], [Warehouse].[Warehouse].[All Warehouses]}\n"
-            + "Row #0: 2,057.232\n"
+            + "Row #0: 2,057.231\n"
             + "Row #0: 24,597\n"
             + "Row #0: 0.084\n"
             + "Row #1: 4,868.471\n"

@@ -30,7 +30,7 @@ import java.util.concurrent.Future;
  * @author Thiyagu
  * @since 06-Jun-2007
  */
-public class BatchTestCase extends FoodMartTestCase {
+public abstract class BatchTestCase extends FoodMartTestCase {
 
     public BatchTestCase(String name) {
         super(name);

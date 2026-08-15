@@ -160,7 +160,12 @@ public class DialectTest extends TestCase {
             // Neither MySQL nor Infobright.
             assertFalse(dialect instanceof MySqlDialect);
             assertFalse(dialect instanceof InfobrightDialect);
-            assertNotSame("MySQL", databaseMetaData.getDatabaseProductName());
+            // Not assertNotSame: that compares REFERENCES, and a literal is
+            // never the same object as a string the driver built, so the
+            // assertion held for every database including MySQL itself.
+            assertFalse(
+                "product name should not be MySQL here",
+                "MySQL".equals(databaseMetaData.getDatabaseProductName()));
             break;
         }
     }
@@ -1575,7 +1580,7 @@ public class DialectTest extends TestCase {
 
         public ResultSetMetaData build() {
             return (ResultSetMetaData) Proxy.newProxyInstance(
-                null,
+                DialectTest.class.getClassLoader(),
                 new Class[] {ResultSetMetaData.class},
                 this);
         }

@@ -136,14 +136,48 @@ public class Larders {
         final String source,
         final String name)
     {
+        return prefix(larder, source, name, name);
+    }
+
+    /**
+     * As {@link #prefix(Larder, String, String)}, but qualifies the CAPTION
+     * with {@code caption} rather than {@code name}.
+     *
+     * <p>A caption is what an end user reads, so qualifying it with an
+     * internal name is wrong whenever the element carries a caption of its
+     * own: a dimension usage named {@code Time1} with caption
+     * {@code "Time usage caption"} produced the hierarchy caption
+     * "Time1.Time shared hierarchy caption" where it should read
+     * "Time usage caption.Time shared hierarchy caption". The description
+     * keeps the NAME, which is what identifies the usage.
+     *
+     * @param larder Larder to wrap
+     * @param source Name of the shared element being used
+     * @param name Name of the usage — qualifies every property but CAPTION
+     * @param caption Caption of the usage — qualifies CAPTION; when null the
+     *     name is used, so an uncaptioned usage behaves exactly as before
+     * @return wrapped larder
+     */
+    public static Larder prefix(
+        Larder larder,
+        final String source,
+        final String name,
+        final String caption)
+    {
         if (source == null || name == null || source.equals(name)) {
             return larder;
         }
+        final String captionPrefix = caption == null ? name : caption;
         return new DelegatingLarder((LarderImpl) larder) {
+            private String prefixFor(LocalizedProperty prop) {
+                return prop == LocalizedProperty.CAPTION
+                    ? captionPrefix
+                    : name;
+            }
             public String get(LocalizedProperty prop, Locale locale) {
                 final String value = super.get(prop, locale);
                 if (value != null) {
-                    return name + "." + value;
+                    return prefixFor(prop) + "." + value;
                 }
                 return value;
             }
@@ -155,7 +189,9 @@ public class Larders {
                     new LinkedHashMap<LocaleProp, String>(
                         (Map) super.translations());
                 for (Map.Entry<LocaleProp, String> entry : map.entrySet()) {
-                    entry.setValue(name + "." + entry.getValue());
+                    entry.setValue(
+                        prefixFor(entry.getKey().right) + "."
+                        + entry.getValue());
                 }
                 //noinspection unchecked
                 return (Map) map;

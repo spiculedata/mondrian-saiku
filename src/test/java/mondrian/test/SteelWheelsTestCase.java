@@ -22,7 +22,7 @@ import junit.framework.TestCase;
  * @author jhyde
  * @since 12 March 2009
  */
-public class SteelWheelsTestCase extends TestCase {
+public abstract class SteelWheelsTestCase extends TestCase {
 
     /** Creates a SteelWheelsTestCase. */
     public SteelWheelsTestCase() {

@@ -959,18 +959,13 @@ public class MemberCacheControlTest extends FoodMartTestCase {
             testContext.getConnection()
                 .getSchema().lookupCube("Sales", true);
 
-        // Direct log4j 1.x handle to the "mondrian.sql" logger so the
-        // WriterAppender/setLevel below still work — RolapUtil.SQL_LOGGER
-        // is now the SLF4J facade and doesn't expose those methods.
-        final Logger logger =
-            org.apache.log4j.LogManager.getLogger("mondrian.sql");
-        final Level level = logger.getLevel();
-        final StringWriter sw = new StringWriter();
-        final WriterAppender appender =
-            new WriterAppender(new SimpleLayout(), sw);
+        // Mondrian logs SQL through SLF4J to Log4j 2; a Log4j 1
+        // WriterAppender on a Log4j 1 Logger collects nothing, so every
+        // "did this run SQL?" check below silently compared "" with "".
+        final mondrian.test.LogCapture capture =
+            mondrian.test.LogCapture.attach(
+                "mondrian.sql", org.apache.logging.log4j.Level.DEBUG);
         try {
-            logger.setLevel(Level.DEBUG);
-            logger.addAppender(appender);
 
             final Hierarchy storeHierarchy =
                 salesCube.getDimensionList().get(1).getHierarchyList().get(0);
@@ -1001,7 +996,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                 };
 
             checkFlushHierarchy(
-                sw, true, storeFlusher,
+                capture, true, storeFlusher,
                 new Runnable() {
                     public void run() {
                         // Check that <Member>.Children uses cache when applied
@@ -1014,7 +1009,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                     }
                 });
             checkFlushHierarchy(
-                sw, true, storeFlusher,
+                capture, true, storeFlusher,
                 new Runnable() {
                     public void run() {
                         // Check that <Member>.Children uses cache when applied
@@ -1032,7 +1027,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
             // In contrast to preceding, flushing Yucatan should not affect
             // California.
             checkFlushHierarchy(
-                sw, false, storeYucatanFlusher,
+                capture, false, storeYucatanFlusher,
                 new Runnable() {
                     public void run() {
                         // Check that <Member>.Children uses cache when applied
@@ -1048,7 +1043,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                 });
 
             checkFlushHierarchy(
-                sw, true, storeFlusher, new Runnable() {
+                capture, true, storeFlusher, new Runnable() {
                     public void run() {
                         // Check that <Hierarchy>.Members uses cache.
                         testContext.assertExprReturns(
@@ -1056,7 +1051,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                     }
                 });
             checkFlushHierarchy(
-                sw, true, storeFlusher, new Runnable() {
+                capture, true, storeFlusher, new Runnable() {
                     public void run() {
                         // Check that <Level>.Members uses cache.
                         testContext.assertExprReturns(
@@ -1082,7 +1077,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                 };
 
             checkFlushHierarchy(
-                sw, true, timeFlusher,
+                capture, true, timeFlusher,
                 new Runnable() {
                     public void run() {
                         // Check that <Level>.Members uses cache.
@@ -1092,7 +1087,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                     }
                 });
             checkFlushHierarchy(
-                sw, true, timeFlusher,
+                capture, true, timeFlusher,
                 new Runnable() {
                     public void run() {
                         // Check that <Level>.Members uses cache.
@@ -1104,8 +1099,7 @@ public class MemberCacheControlTest extends FoodMartTestCase {
                     }
                 });
         } finally {
-            logger.setLevel(level);
-            logger.removeAppender(appender);
+            capture.detach();
         }
     }
 
@@ -1114,13 +1108,13 @@ public class MemberCacheControlTest extends FoodMartTestCase {
      * the 2nd and the 3rd, flushes the cache, and makes sure that the 3rd time
      * causes SQL to be executed.
      *
-     * @param writer Writer, written into each time a SQL statement is executed
+     * @param capture Collector of the SQL Mondrian logs
      * @param affected Whether the cache flush affects the command
      * @param flusher Functor that performs cache flushing action to be tested
      * @param command Command to execute that requires cache contents
      */
     private void checkFlushHierarchy(
-        StringWriter writer,
+        mondrian.test.LogCapture capture,
         boolean affected,
         Runnable flusher,
         Runnable command)
@@ -1132,19 +1126,21 @@ public class MemberCacheControlTest extends FoodMartTestCase {
         // require any additional SQL. (There is a small chance that GC will
         // kick in and we'll lose the cache, but we've never seen that happen
         // in the wild.)
-        int length1 = writer.getBuffer().length();
+        capture.clear();
         command.run();
-        final String since1 = writer.getBuffer().substring(length1);
-        assertEquals("", since1);
+        assertEquals(
+            "second run should be served from cache: " + capture.describe(),
+            0, capture.describe().size());
         flusher.run();
 
         // Now cache has been flushed, it should be impossible to execute the
         // command without running additional SQL.
-        int length2 = writer.getBuffer().length();
+        capture.clear();
         command.run();
-        final String since2 = writer.getBuffer().substring(length2);
         if (affected) {
-            assertNotSame("", since2);
+            assertTrue(
+                "flushing the hierarchy should force SQL to run again",
+                capture.describe().size() > 0);
         }
     }
 }

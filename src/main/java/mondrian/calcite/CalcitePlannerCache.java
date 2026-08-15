@@ -102,7 +102,18 @@ public final class CalcitePlannerCache {
         mondrian.rolap.RolapSchema rolapSchema)
     {
         boolean diag = Boolean.getBoolean("mondrian.calcite.trace");
-        Key key = Key.from(ds);
+        // Relations the Mondrian schema declares but the database does not
+        // have. They are part of the cache key: two schemas on the same
+        // database may declare different inline tables under the same alias,
+        // and must not share a planner. Schemas with none produce an empty
+        // digest, so the key is byte-for-byte what it always was.
+        final java.util.List<VirtualRelation> virtuals =
+            VirtualRelation.fromSchema(rolapSchema);
+        Key key =
+            Key.from(
+                ds,
+                VirtualRelation.digestOf(virtuals),
+                schemaIdentity(rolapSchema));
         if (UNSUPPORTED.contains(key)) {
             if (diag) {
                 System.err.println(
@@ -139,7 +150,7 @@ public final class CalcitePlannerCache {
             // hit this branch simultaneously for the same key.
             CalciteSqlPlanner built;
             try {
-                built = build(ds, rolapSchema, dialect);
+                built = build(ds, rolapSchema, dialect, virtuals);
             } catch (CalciteMondrianSchema.JdbcSchemaNotReadyException re) {
                 // Backing JDBC source not yet ready (H2 .mv.db lazy load,
                 // pool warmup race). Do NOT cache and do NOT mark as
@@ -193,13 +204,41 @@ public final class CalcitePlannerCache {
         return planner;
     }
 
+    /**
+     * Identity of the Mondrian schema a planner is built for, or a marker for
+     * "no schema" when the caller has none.
+     *
+     * <p>A planner holds a {@link CalciteMondrianSchema}, which reflects the
+     * database ONCE. Two Mondrian schemas can share a JDBC identity and yet
+     * see different tables -- most obviously when one of them creates its
+     * tables after the other's planner was built, at which point scanning
+     * them fails with "Table not found" for the life of the JVM. Keying on
+     * the schema as well means each gets a planner that reflected the
+     * database when that schema first needed one.
+     *
+     * @param rolapSchema Schema, may be null
+     * @return stable identity string
+     */
+    private static String schemaIdentity(
+        mondrian.rolap.RolapSchema rolapSchema)
+    {
+        if (rolapSchema == null) {
+            return "";
+        }
+        final Object checksum = rolapSchema.getChecksum();
+        return checksum == null
+            ? "schema@" + System.identityHashCode(rolapSchema)
+            : checksum.toString();
+    }
+
     private static CalciteSqlPlanner build(
         DataSource ds,
         mondrian.rolap.RolapSchema rolapSchema,
-        SqlDialect dialect)
+        SqlDialect dialect,
+        java.util.List<VirtualRelation> virtuals)
     {
         CalciteMondrianSchema schema =
-            new CalciteMondrianSchema(ds, "mondrian");
+            new CalciteMondrianSchema(ds, "mondrian", virtuals);
         CalciteSqlPlanner planner = new CalciteSqlPlanner(
             schema, dialect);
         if (rolapSchema != null) {
@@ -240,15 +279,33 @@ public final class CalcitePlannerCache {
         final String catalog;
         final String schema;
         final String user;
+        /** Digest of the Mondrian-only relations the planner was built with
+         *  (see {@link VirtualRelation#digestOf}). Empty when the schema
+         *  declares none, which is the common case. */
+        final String virtuals;
+        /** Identity of the Mondrian schema; see {@link #schemaIdentity}. */
+        final String mondrianSchema;
 
-        private Key(String url, String catalog, String schema, String user) {
+        private Key(
+            String url, String catalog, String schema, String user,
+            String virtuals, String mondrianSchema)
+        {
             this.url = url == null ? "" : url;
             this.catalog = catalog == null ? "" : catalog;
             this.schema = schema == null ? "" : schema;
             this.user = user == null ? "" : user;
+            this.virtuals = virtuals == null ? "" : virtuals;
+            this.mondrianSchema =
+                mondrianSchema == null ? "" : mondrianSchema;
         }
 
         static Key from(DataSource ds) {
+            return from(ds, "", "");
+        }
+
+        static Key from(
+            DataSource ds, String virtuals, String mondrianSchema)
+        {
             String url = "";
             String catalog = "";
             String schema = "";
@@ -268,9 +325,11 @@ public final class CalcitePlannerCache {
                 // rare — ds.getConnection() failing means nothing downstream
                 // is going to work anyway.
                 return new Key(
-                    "ds@" + System.identityHashCode(ds), "", "", "");
+                    "ds@" + System.identityHashCode(ds), "", "", "",
+                    virtuals, mondrianSchema);
             }
-            return new Key(url, catalog, schema, user);
+            return new Key(
+                url, catalog, schema, user, virtuals, mondrianSchema);
         }
 
         /** Functional interface for a metadata probe that may throw anything. */
@@ -299,12 +358,15 @@ public final class CalcitePlannerCache {
             return url.equals(k.url)
                 && catalog.equals(k.catalog)
                 && schema.equals(k.schema)
-                && user.equals(k.user);
+                && user.equals(k.user)
+                && virtuals.equals(k.virtuals)
+                && mondrianSchema.equals(k.mondrianSchema);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(url, catalog, schema, user);
+            return Objects.hash(
+                url, catalog, schema, user, virtuals, mondrianSchema);
         }
 
         @Override
@@ -314,6 +376,9 @@ public final class CalcitePlannerCache {
                 + ", catalog=" + catalog
                 + ", schema=" + schema
                 + ", user=" + user
+                + (virtuals.isEmpty() ? "" : ", virtuals=" + virtuals)
+                + (mondrianSchema.isEmpty()
+                    ? "" : ", mondrianSchema=" + mondrianSchema)
                 + "}";
         }
 

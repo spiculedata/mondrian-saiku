@@ -975,10 +975,51 @@ public class RolapStar {
 
         /**
          * Returns the condition by which a dimension table is connected to its
-         * {@link #getParentTable() parent}; or null if this is the fact table.
+         * {@link #getParentTable() parent}; or null if this is the fact table,
+         * or if the connection is not a single-column equi-join.
+         *
+         * <p>Mondrian 4 describes the connection as a {@link
+         * RolapSchema.PhysLink} on this table's {@link #path}, not as the
+         * Mondrian 3 {@link Condition} object. The aggregate-table machinery
+         * ({@link mondrian.rolap.aggmatcher.AggGen}, {@link
+         * mondrian.rolap.aggmatcher.AggStar}) still asks in the old terms, so
+         * the answer is derived from the link rather than left unimplemented
+         * -- a stub that threw made every query fail outright once aggregate
+         * SQL generation was switched on.
          */
         public Condition getJoinCondition() {
-            Util.deprecated("obsolete", true);
+            if (parent == null || path == null) {
+                return null;
+            }
+            for (RolapSchema.PhysHop hop : path.hopList) {
+                if (hop.link == null) {
+                    continue;
+                }
+                final RolapSchema.PhysRelation from = hop.fromRelation();
+                final RolapSchema.PhysRelation to = hop.toRelation();
+                final boolean joinsParent =
+                    (from == relation && to == parent.relation)
+                    || (to == relation && from == parent.relation);
+                if (!joinsParent) {
+                    continue;
+                }
+                final List<RolapSchema.PhysColumn> foreignKey =
+                    hop.link.getColumnList();
+                final List<RolapSchema.PhysColumn> primaryKey =
+                    hop.link.getSourceKey().getColumnList();
+                if (foreignKey.size() != 1 || primaryKey.size() != 1) {
+                    // Composite key. Condition holds a single column pair and
+                    // every caller reads only one side of it, so there is no
+                    // honest answer to give here.
+                    return null;
+                }
+                // The link's target relation holds the foreign key; its
+                // source key is the primary key. Condition.left is the
+                // parent's (usually the fact's) column.
+                return hop.link.targetRelation == parent.relation
+                    ? new Condition(foreignKey.get(0), primaryKey.get(0))
+                    : new Condition(primaryKey.get(0), foreignKey.get(0));
+            }
             return null;
         }
 
@@ -1400,7 +1441,6 @@ public class RolapStar {
             assert left != null;
             assert right != null;
 
-            Util.deprecated("obsolete class Condition", true);
             if (!(left instanceof RolapSchema.PhysRealColumn)) {
                 // TODO: Will this ever print?? if not then left should be
                 // of type MondrianDef.Column.
@@ -1474,7 +1514,21 @@ public class RolapStar {
         }
 
         public int compare(Column o1, Column o2) {
-            return o1.getName().compareTo(o2.getName());
+            final int c = o1.getName().compareTo(o2.getName());
+            if (c != 0) {
+                return c;
+            }
+            // Distinct columns MUST NOT compare equal. Names are not unique:
+            // a star column is shared by every attribute whose key includes
+            // it, so in FoodMart the four product_class columns
+            // (product_family, product_department, product_category,
+            // product_subcategory) are all named "Brand Name" — the last
+            // attribute whose composite key covers them. This comparator
+            // backs the TreeSet in GroupingSetsList.findRollupColumns, where
+            // conflating two columns silently dropped one of them from the
+            // rollup list and produced wrong GROUPING SETS handling. Bit
+            // position is unique within a star and stable across runs.
+            return Integer.compare(o1.getBitPosition(), o2.getBitPosition());
         }
     }
 

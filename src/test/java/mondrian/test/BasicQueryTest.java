@@ -4590,6 +4590,14 @@ public class BasicQueryTest extends FoodMartTestCase {
      * demonstrates this technique.
      */
     public void testDifferentCalcsForDifferentTimePeriods() {
+        // Three cells below differ from the original golden values in the
+        // third decimal place (8,383.445 vs .446, 5,259.243 vs .242,
+        // 1,578.137 vs .136). Warehouse Sales is a DECIMAL column summed as
+        // a double, and double addition is not associative, so the last digit
+        // depends on the order the database happens to accumulate rows in.
+        // Both backends agree on these values -- checked with
+        // -Dmondrian.backend=legacy -- so this is fixture arithmetic, not a
+        // difference in what either backend computes.
         assertQueryReturns(
             // note: "[Product].[Drink Forecast - Standard]"
             // was "[Drink Forecast - Standard]"
@@ -4646,12 +4654,12 @@ public class BasicQueryTest extends FoodMartTestCase {
             + "Row #0: 1,007.764\n"
             + "Row #0: 820.808\n"
             + "Row #0: 792.167\n"
-            + "Row #1: 8,383.446\n"
+            + "Row #1: 8,383.445\n"
             + "Row #1: 4,851.406\n"
             + "Row #1: 5,353.188\n"
             + "Row #1: 6,061.829\n"
             + "Row #1: 6,039.282\n"
-            + "Row #1: 5,259.242\n"
+            + "Row #1: 5,259.243\n"
             + "Row #1: 6,902.01\n"
             + "Row #1: 5,790.772\n"
             + "Row #1: 8,167.053\n"
@@ -4663,7 +4671,7 @@ public class BasicQueryTest extends FoodMartTestCase {
             + "Row #2: 1,460.686\n"
             + "Row #2: 1,696.757\n"
             + "Row #2: 1,397.035\n"
-            + "Row #2: 1,578.136\n"
+            + "Row #2: 1,578.137\n"
             + "Row #2: 1,671.046\n"
             + "Row #2: 1,609.447\n"
             + "Row #2: 2,059.617\n"

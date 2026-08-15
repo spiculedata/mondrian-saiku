@@ -327,6 +327,26 @@ public class Bug {
     public static final boolean VirtualCubeConversionMissesHiddenFixed = true;
 
     /**
+     * Whether the bug is fixed that loses a Mondrian 3 {@code <Level
+     * internalType='long'>} when the level keys on an {@code <InlineTable>}.
+     *
+     * <p>Mondrian 4 declares internalType on the {@code <ColumnDef>}, and the
+     * upgrade would have to carry the level's across. It cannot do so simply:
+     * the upgrade replaces the inline table with a view over the generated
+     * {@code SELECT ... UNION ALL} and re-probes that view's columns from the
+     * database, so the columns the level was converted against are discarded
+     * along with anything set on them.
+     *
+     * <p>The effect is the one internalType exists to prevent (MONDRIAN-896):
+     * a key larger than an int comes back as a double, and the member reads
+     * {@code 1.234567890123E12}. Declaring internalType on the Mondrian 4
+     * {@code <ColumnDef>} works -- see
+     * {@code SchemaTest.testLevelInternalType}; only the Mondrian 3 spelling
+     * is affected.
+     */
+    public static final boolean LegacyLevelInternalTypeFixed = false;
+
+    /**
      * Whether
      * <a href="http://jira.pentaho.com/browse/MONDRIAN-1324">bug MONDRIAN-1324,
      * Using the same table in multiple dimensions yields incorrect results

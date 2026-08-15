@@ -145,7 +145,7 @@ public class SelectNotInGroupByTest extends BatchTestCase {
         };
 
         // Use dimension with level-dependent property
-        TestContext tc = TestContext.instance().create(
+        TestContext tc = TestContext.instance().legacy().create(
             storeDimensionLevelDependent,
             cubeA,
             null,
@@ -164,7 +164,7 @@ public class SelectNotInGroupByTest extends BatchTestCase {
         };
 
         // Use dimension with level-independent property
-        TestContext tc = TestContext.instance().create(
+        TestContext tc = TestContext.instance().legacy().create(
             storeDimensionLevelIndependent,
             cubeA,
             null,
@@ -185,7 +185,7 @@ public class SelectNotInGroupByTest extends BatchTestCase {
         };
 
         // Use dimension with unique level & level-dependent properties
-        TestContext tc = TestContext.instance().create(
+        TestContext tc = TestContext.instance().legacy().create(
             storeDimensionUniqueLevelDependentProp,
             cubeA,
             null,
@@ -204,7 +204,7 @@ public class SelectNotInGroupByTest extends BatchTestCase {
         };
 
         // Use dimension with unique level but level-indpendent property
-        TestContext tc = TestContext.instance().create(
+        TestContext tc = TestContext.instance().legacy().create(
             storeDimensionUniqueLevelIndependentProp,
             cubeA,
             null,
