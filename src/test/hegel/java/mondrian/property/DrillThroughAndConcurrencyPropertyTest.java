@@ -12,6 +12,7 @@ package mondrian.property;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.hegel.HealthCheck;
 import dev.hegel.HegelTest;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
@@ -57,6 +58,43 @@ class DrillThroughAndConcurrencyPropertyTest {
 
     private static final int MEMBERS_SAMPLED_PER_LEVEL = 6;
 
+    /**
+     * Members at any depth that support drill-through, precomputed.
+     *
+     * <p>Unlike {@link #membersWithFewChildren()} this includes leaves, because a leaf cell is
+     * exactly where "does the count agree with emptiness" is most interesting.
+     */
+    private static List<String> drillableMembers() {
+        return DrillableHolder.MEMBERS;
+    }
+
+    private static final class DrillableHolder {
+        static final List<String> MEMBERS = discover();
+
+        private static List<String> discover() {
+            List<String> out = new ArrayList<>();
+            for (List<String> chain : FoodMart.levelChains()) {
+                for (String level : chain) {
+                    List<String> candidates = FoodMart.membersOfLevel(level);
+                    int limit = Math.min(candidates.size(), MEMBERS_SAMPLED_PER_LEVEL);
+                    for (String member : candidates.subList(0, limit)) {
+                        if (isKnownSecondaryHierarchyDefect(member)) {
+                            continue;
+                        }
+                        RolapCell cell = FoodMart.cellFor(member);
+                        if (cell.canDrillThrough() && cell.getDrillThroughCount() >= 0) {
+                            out.add(member);
+                        }
+                    }
+                }
+            }
+            if (out.isEmpty()) {
+                throw new IllegalStateException("no drillable members found; the property would be vacuous");
+            }
+            return List.copyOf(out);
+        }
+    }
+
     private static final class EligibleHolder {
         static final List<String> MEMBERS = discover();
 
@@ -72,8 +110,20 @@ class DrillThroughAndConcurrencyPropertyTest {
                     // level across every hierarchy is ample diversity for 30 test cases.
                     int limit = Math.min(candidates.size(), MEMBERS_SAMPLED_PER_LEVEL);
                     for (String member : candidates.subList(0, limit)) {
+                        if (isKnownSecondaryHierarchyDefect(member)) {
+                            continue;
+                        }
                         int children = FoodMart.membersOf(member + ".Children").size();
-                        if (children >= 1 && children <= 5) {
+                        if (children < 1 || children > 5) {
+                            continue;
+                        }
+                        // Drill-through capability is checked HERE, once, rather than with an
+                        // assume in the test body. Each rejection in the body costs a full MDX
+                        // query plus a drill-through COUNT(*), and on CI hardware that was enough
+                        // to trip Hegel's TooSlow health check (6 valid inputs in 30s) even though
+                        // the same code was comfortable locally. Rejections belong in the pool.
+                        RolapCell cell = FoodMart.cellFor(member);
+                        if (cell.canDrillThrough() && cell.getDrillThroughCount() >= 0) {
                             out.add(member);
                         }
                     }
@@ -93,18 +143,23 @@ class DrillThroughAndConcurrencyPropertyTest {
      * child, whatever the data happens to be. It catches a drill-through predicate that is too
      * broad (rows counted twice) or too narrow (rows dropped) without anyone knowing the true count.
      */
-    // Deliberately few cases: each one issues a drill-through COUNT(*) per cell, and those
-    // joins against an 86k-row fact table cost ~2s apiece. Measured: 30 cases took 58s.
-    @HegelTest(testCases = 12)
+    // Deliberately few cases: each issues a drill-through COUNT(*) per cell, and those joins
+    // against an 86k-row fact table cost ~2s apiece. Measured: 30 cases took 58s locally.
+    //
+    // TooSlow is suppressed, not worked around: each case issues drill-through COUNT(*) queries
+    // with joins against an 86k-row fact table, so cases are genuinely slow and always will be.
+    // The health check exists to catch generation that is *accidentally* slow (filter-bound); the
+    // rejections that caused that here have been moved into the pool above. What remains is the
+    // irreducible cost of the thing being tested.
+    @HegelTest(testCases = 12, suppressHealthCheck = HealthCheck.TOO_SLOW)
     void drillThroughCountIsAdditiveOverChildren(TestCase tc) {
+        // Every member in this pool is already known to have 1..5 children, to sit outside the
+        // characterised secondary-hierarchy defect, and to support drill-through — so there is
+        // nothing left to reject in the body, and no rejection costs a SQL round trip.
         String member = tc.draw(dev.hegel.Generators.sampledFrom(membersWithFewChildren()), "member");
-        tc.assume(!isKnownSecondaryHierarchyDefect(member));
 
         RolapCell parentCell = FoodMart.cellFor(member);
-        tc.assume(parentCell.canDrillThrough());
-
         int parentCount = parentCell.getDrillThroughCount();
-        tc.assume(parentCount >= 0);
 
         // One query for every child, rather than one per child.
         List<RolapCell> childCells = FoodMart.cellsFor(member + ".Children");
@@ -137,19 +192,16 @@ class DrillThroughAndConcurrencyPropertyTest {
      * cross-check. A non-empty cell with zero rows behind it means the aggregate was computed from
      * data the drill-through cannot find, which is the shape of a stale-cache bug.
      */
-    // As above, and measured more expensive still: 40 cases took 139s, the single slowest
+    // As above, and measured more expensive still: 40 cases took 139s locally, the single slowest
     // property in the suite. Deep members produce drill-through SQL with many joins.
-    @HegelTest(testCases = 15)
+    @HegelTest(testCases = 15, suppressHealthCheck = HealthCheck.TOO_SLOW)
     void drillThroughCountAgreesWithCellEmptiness(TestCase tc) {
-        List<String> memberAndLevel = tc.draw(MdxGenerator.memberWithLevel(), "member");
-        String member = memberAndLevel.get(1);
-        tc.assume(!isKnownSecondaryHierarchyDefect(member));
+        // Pre-filtered pool, same reasoning as above: no in-body rejection, so no rejection costs
+        // an MDX query plus a drill-through COUNT(*).
+        String member = tc.draw(dev.hegel.Generators.sampledFrom(drillableMembers()), "member");
 
         RolapCell cell = FoodMart.cellFor(member);
-        tc.assume(cell.canDrillThrough());
-
         int count = cell.getDrillThroughCount();
-        tc.assume(count >= 0);
 
         boolean hasValue = !cell.isNull();
         assertEquals(
