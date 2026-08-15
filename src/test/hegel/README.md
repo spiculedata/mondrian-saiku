@@ -109,6 +109,14 @@ test should be deleted and its property restored.
 
 Fixed here:
 
+- **[#140] `quoteIdentifier` emitted already-delimited input verbatim, with no escaping.**
+  `JdbcDialectImpl.quoteIdentifierImpl` short-circuited on `val.startsWith(q) && val.endsWith(q)`
+  ("already quoted - nothing to do"), assuming such a value was a well-formed quoted identifier.
+  It need not be. Three consequences, all minimal witnesses the generator produced: quoting was
+  **not injective** (`a` and `"a"` both became `"a"`); a **lone delimiter** passed through as itself,
+  emitting an unbalanced quote; and `"a" FROM t WHERE 1=1 --"` was copied verbatim into the SQL.
+  In the shared base implementation, so all 26 dialects. Now escaped unconditionally; callers must
+  pass a raw identifier, and the two-argument overload remains for qualified names.
 - **`Util.parseConnectString` crashed on any input ending in `==`** — `StringIndexOutOfBoundsException`
   out of `parseName`, reachable from configuration and from XMLA. This is a surviving instance of
   MONDRIAN-397; the original fix covered the trailing-`;` and trailing-space cases the reporter hit
@@ -118,6 +126,13 @@ Fixed here:
 Found and characterised, not fixed. Each is tracked as a GitHub issue and pinned by a test
 that fails the day it is fixed:
 
+- **[#146] Impala and Hive string literals do not escape backslashes**
+  (`DialectQuotingPropertyTest`). Both dialects use backslash escaping but never escape a backslash
+  in the value, so `\` becomes `'\'` — a literal that escapes its own closing quote and never
+  terminates. **The more serious of the two quoting surfaces**: identifiers come from the schema, but
+  string literals carry data (captions, key values read from the fact table), so this needs no
+  privileged access. The shared base is not at fault — `Util.singleQuoteString` produces the same
+  text, which is correct under standard SQL where backslash is not an escape.
 - **[#138] Drill-through on an empty cell of a secondary hierarchy returns the entire fact table**
   (`DrillThroughAndConcurrencyPropertyTest`). `[Time].[Weekly].[1998]` has no value — FoodMart's
   fact data is 1997 — yet its drill-through count is **86,837**, which is exactly
@@ -129,16 +144,6 @@ that fails the day it is fixed:
   hierarchy on the Time dimension, which is what distinguishes it from the working cases. Drill-through
   exists to let a user verify a number; showing them the whole fact table instead of nothing defeats
   exactly that.
-- **[#140] `quoteIdentifier` emits already-delimited input verbatim, with no escaping** (`DialectQuotingPropertyTest`).
-  `JdbcDialectImpl.quoteIdentifierImpl` short-circuits on
-  `val.startsWith(q) && val.endsWith(q)` with the comment "already quoted - nothing to do". The
-  assumption is that such a value is a well-formed quoted identifier; it need not be.
-  `"a" FROM t WHERE 1=1 --"` begins and ends with `"`, so it is copied straight into the generated
-  SQL — the leading `"a"` closes, the rest is parsed as statement text, and the trailing quote is
-  swallowed by the comment. It is in the shared base implementation, so **all 26 dialects** are
-  affected; correctly-escaping input is unaffected (`a"b` still becomes `"a""b"`). Reachability
-  depends on whether schema identifiers are attacker-influenced in a given deployment — trusted-admin
-  schemas make it latent, user-uploaded schemas make it live.
 - **[#139] `Hierarchize(TopCount(...))` / `Hierarchize(BottomCount(...))` throw `UnsupportedOperationException`**
   (`MdxEngineMetamorphicPropertyTest`). "Top N in hierarchy order" is a bread-and-butter BI query and
   this is a crash, not a wrong number. Root cause traced to the line: `FunUtil.stablePartialSort`
