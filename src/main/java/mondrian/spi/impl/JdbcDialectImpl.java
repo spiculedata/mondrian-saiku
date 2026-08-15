@@ -1302,15 +1302,34 @@ public class JdbcDialectImpl implements Dialect {
             // quoting is not supported
             return buf.append(val);
         }
-        // if the value is already quoted, do nothing
-        //  if not, then check for a dot qualified expression
-        //  like "owner.table".
-        //  In that case, prefix the single parts separately.
-        if (val.startsWith(q) && val.endsWith(q)) {
-            // already quoted - nothing to do
-            return buf.append(val);
-        }
-
+        // Historically there was an "already quoted - nothing to do" short-circuit here:
+        //
+        //     if (val.startsWith(q) && val.endsWith(q)) {
+        //         return buf.append(val);
+        //     }
+        //
+        // It assumed that a value beginning and ending with the quote character was
+        // already a well-formed quoted identifier. It need not be, and the consequences
+        // were severe enough to remove it outright (see issue #140):
+        //
+        //   * Not injective. quoteIdentifier("a") and quoteIdentifier("\"a\"") both
+        //     produced "a", so two different identifiers became indistinguishable in the
+        //     generated SQL and the quoting could not be undone. Likewise "" and "\"\"".
+        //   * A lone quote character passed through as itself, emitting an unbalanced
+        //     delimiter into the statement. A single character both starts and ends with
+        //     itself, so `"` satisfied the condition.
+        //   * Injection. `"a" FROM t WHERE 1=1 --"` begins and ends with the delimiter, so
+        //     it was copied verbatim: the leading "a" closed immediately, the rest was
+        //     parsed as statement text, and the trailing quote was swallowed by the
+        //     comment.
+        //
+        // Every identifier is now escaped unconditionally. Callers must pass a raw
+        // identifier, not a pre-quoted fragment; the two-argument overload exists for
+        // qualified names.
+        //
+        // The dot handling below is deliberately kept: quoteIdentifier(String) is
+        // documented by usage to accept "owner.table" and split it into a qualified
+        // reference.
         int k = val.indexOf('.');
         if (k > 0) {
             // qualified

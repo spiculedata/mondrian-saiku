@@ -129,12 +129,6 @@ class DialectQuotingPropertyTest {
         String delimiter = dialect.getQuoteIdentifierString();
         // A dialect that declares no delimiter cannot make this guarantee and does not claim to.
         tc.assume(delimiter != null && delimiter.length() == 1);
-        // Excluded: input that already begins and ends with the delimiter takes the verbatim
-        // pass-through branch, a characterised defect -- see
-        // quoteIdentifierPassesAlreadyDelimitedInputThroughUnescaped. Everything else stays under
-        // test. Delete this assume when that branch is fixed.
-        tc.assume(!isAlreadyDelimited(name, delimiter));
-
         String quoted = dialect.quoteIdentifier(name);
 
         char q = delimiter.charAt(0);
@@ -152,79 +146,45 @@ class DialectQuotingPropertyTest {
     }
 
     /**
-     * Characterisation test for a CONFIRMED DEFECT found by this suite:
-     * <strong>{@code quoteIdentifier} emits an identifier verbatim, with no escaping at all, when
-     * it already begins and ends with the dialect's quote character.</strong> Tracked as issue #140.
+     * Regression test for issue #140: {@code quoteIdentifier} escapes every identifier, including
+     * one that already begins and ends with the dialect's quote character.
      *
-     * <p>The branch is explicit in {@code JdbcDialectImpl.quoteIdentifierImpl}:
-     *
-     * <pre>{@code   if (val.startsWith(q) && val.endsWith(q)) {
-     *       // already quoted - nothing to do
-     *       return buf.append(val);
-     *   }}</pre>
-     *
-     * <p>The assumption is that such a value is already a well-formed quoted identifier. It need
-     * not be. {@code "a" FROM t WHERE 1=1 --"} begins and ends with {@code "}, so it is copied
-     * straight into the generated SQL: the leading {@code "a"} closes immediately, everything after
-     * it is parsed as statement text, and the trailing quote is swallowed by the {@code --} comment.
-     * That is SQL injection through an identifier.
-     *
-     * <p>It is in the shared base implementation, so it affects <em>all</em> {@value #DIALECT_COUNT_NOTE}
-     * dialects, not one. Correctly-escaping inputs are unaffected — {@code a"b} still becomes
-     * {@code "a""b"} — so only this branch is at fault.
-     *
-     * <p><strong>Reachability, stated precisely.</strong> Identifiers come from the schema
-     * (table, column and expression names). In a deployment where schemas are authored only by
-     * trusted administrators this is a latent bug; where schemas can be uploaded or edited by
-     * ordinary users — which Saiku supports — it is a live injection vector. Which of those applies
-     * is a deployment question, so the severity is not for this test to settle.
-     *
-     * <p>Left unfixed: removing the branch changes what every dialect emits for any identifier that
-     * happens to be delimiter-wrapped, and callers may be relying on the pass-through to hand
-     * pre-quoted SQL fragments through. That is a product call.
+     * <p>{@code JdbcDialectImpl.quoteIdentifierImpl} used to short-circuit on
+     * {@code val.startsWith(q) && val.endsWith(q)} with the comment "already quoted - nothing to
+     * do", assuming such a value was a well-formed quoted identifier. It need not be. These are the
+     * three minimal witnesses the property suite produced, kept as a deterministic guard so the
+     * short-circuit cannot come back:
      */
     @org.junit.jupiter.api.Test
-    void quoteIdentifierPassesAlreadyDelimitedInputThroughUnescaped() {
+    void quoteIdentifierEscapesAlreadyDelimitedInput() {
         Dialect oracle = MockDialect.of(Dialect.DatabaseProduct.ORACLE);
 
-        // Three consequences of the one branch, all minimal, all found by the generator rather
-        // than constructed:
-
-        // (a) NOT INJECTIVE. Two different identifiers produce byte-identical SQL, so the quoting
-        //     cannot be undone and two distinct schema objects become indistinguishable.
-        assertEquals(
+        // (a) INJECTIVE. Two different identifiers must not collapse onto the same SQL text.
+        assertNotEquals(
                 oracle.quoteIdentifier("a"),
                 oracle.quoteIdentifier("\"a\""),
-                "witness changed - quoteIdentifier may have become injective");
-        assertEquals("\"a\"", oracle.quoteIdentifier("a"), "both collapse onto the same text");
+                "distinct identifiers must quote to distinct text");
+        assertNotEquals(
+                oracle.quoteIdentifier(""),
+                oracle.quoteIdentifier("\"\""),
+                "the empty identifier and a doubled delimiter must not collide");
 
-        // (b) A LONE DELIMITER passes through as itself, emitting an unbalanced quote into the SQL
-        //     that swallows whatever follows it. This is the shortest possible malicious input.
-        assertEquals("\"", oracle.quoteIdentifier("\""), "a single quote character is emitted bare");
+        // (b) A LONE DELIMITER is escaped rather than emitted bare, so the token stays balanced.
+        assertEquals("\"\"\"\"", oracle.quoteIdentifier("\""), "a single quote character must be escaped");
 
-        // (c) The empty identifier and a doubled delimiter also collide.
-        assertEquals(oracle.quoteIdentifier(""), oracle.quoteIdentifier("\"\""), "empty vs doubled collide");
-
+        // (c) The injection witness is now inert: it comes back as one delimited token, so the
+        //     ` FROM t WHERE 1=1 --` is data inside an identifier rather than statement text.
         String hostile = "\"a\" FROM t WHERE 1=1 --\"";
-
+        String quoted = oracle.quoteIdentifier(hostile);
         assertEquals(
-                hostile,
-                oracle.quoteIdentifier(hostile),
-                "witness changed — the already-quoted pass-through may have been fixed; if so, delete "
-                        + "this test, as quotedIdentifiersCannotBeTerminatedEarly already covers it");
+                quoted.length(),
+                scanQualifiedIdentifier(quoted, '"'),
+                () -> "the hostile identifier still terminates early: " + show(quoted));
 
-        // The scan stops after `"a"`, so everything from ` FROM` onward reaches the database as SQL.
-        assertEquals(
-                3,
-                scanQualifiedIdentifier(hostile, '"'),
-                "the injected text is expected to begin at offset 3");
-
-        // For contrast: ordinary input containing the delimiter IS escaped correctly.
+        // Ordinary escaping is unchanged.
         assertEquals("\"a\"\"b\"", oracle.quoteIdentifier("a\"b"), "normal escaping is unaffected");
+        assertEquals("\"emp\"", oracle.quoteIdentifier("emp"), "a plain identifier is unaffected");
     }
-
-    /** Referenced from the javadoc above so the dialect count cannot drift out of sync silently. */
-    private static final String DIALECT_COUNT_NOTE = "26";
 
     /**
      * {@code quoteIdentifier} is injective: different names never quote to the same text.
@@ -238,11 +198,6 @@ class DialectQuotingPropertyTest {
         String first = tc.draw(Generators.adversarialText(), "first");
         String second = tc.draw(Generators.adversarialText(), "second");
         tc.assume(!first.equals(second));
-        // Same exclusion as above: the pass-through branch is what breaks injectivity, and it is
-        // already pinned deterministically below.
-        String delimiter = dialect.getQuoteIdentifierString();
-        tc.assume(!isAlreadyDelimited(first, delimiter) && !isAlreadyDelimited(second, delimiter));
-
         assertNotEquals(
                 dialect.quoteIdentifier(first),
                 dialect.quoteIdentifier(second),
@@ -280,17 +235,61 @@ class DialectQuotingPropertyTest {
         dialect.quoteStringLiteral(buf, value);
         String literal = buf.toString();
 
+        // The delimiter is read off the output rather than assumed to be '\''. Impala deliberately
+        // switches to '"' when the value contains a single quote, which is a legal SQL string
+        // literal and not a defect -- asserting '\'' unconditionally failed on correct behaviour.
         assertTrue(
-                literal.length() >= 2 && literal.charAt(0) == '\'' && literal.charAt(literal.length() - 1) == '\'',
+                literal.length() >= 2
+                        && (literal.charAt(0) == '\'' || literal.charAt(0) == '"')
+                        && literal.charAt(literal.length() - 1) == literal.charAt(0),
                 () -> product(dialect) + " produced an undelimited literal " + show(literal) + " for " + show(value));
 
-        int end = scanDelimited(literal, '\'');
+        int end = scanDelimited(literal, literal.charAt(0));
         assertEquals(
                 literal.length(),
                 end,
                 () -> product(dialect) + ": literal " + show(literal) + " for input " + show(value)
                         + " ends at offset " + end + " — the remaining " + (literal.length() - end)
                         + " characters would be read as SQL");
+    }
+
+    /**
+     * Regression test for issue #146: Impala escapes backslashes in string literals.
+     *
+     * <p>{@code ImpalaDialect.quoteStringLiteral} uses backslash escaping — its own source writes
+     * {@code \\} + the delimiter — but did not escape a backslash appearing in the <em>value</em>.
+     * So {@code \} produced {@code '\'}, a literal that escapes its own closing quote and never
+     * terminates, running on into the rest of the statement.
+     *
+     * <p>This was the more serious of the two quoting surfaces fixed here. Identifiers (issue #140)
+     * come from the schema, so exploiting them needs schema-authoring access; string literals carry
+     * <em>data</em> — captions and key values read from the fact table — so this needed none.
+     *
+     * <p>Order matters in the fix and is asserted below: the backslash must be escaped before the
+     * delimiter, because escaping the delimiter introduces backslashes of its own.
+     *
+     * <p><strong>Hive is deliberately not asserted here.</strong> {@code HiveDialect} does not
+     * override {@code quoteStringLiteral} — it inherits the base doubling implementation, which is
+     * correct under standard SQL — and this suite has no evidence about Hive's own string-literal
+     * semantics. Deciding that would mean executing SQL against a real Hive, which is what
+     * {@code pages/decisions/integration-testing-stance} in the project wiki requires before
+     * claiming a dialect capability. See issue #146 for that open question.
+     */
+    @org.junit.jupiter.api.Test
+    void impalaEscapesBackslashesInStringLiterals() {
+        Dialect impala = MockDialect.of(Dialect.DatabaseProduct.IMPALA);
+
+        assertEquals("'\\\\'", literalOf(impala, "\\"), "a lone backslash must be escaped");
+        assertEquals("'a\\\\'", literalOf(impala, "a\\"), "a trailing backslash must be escaped");
+
+        // Backslash escaped before the delimiter: the value contains a quote, so the delimiter
+        // switches to '"', and the backslash is still escaped exactly once.
+        assertEquals("\"\\\\'\"", literalOf(impala, "\\'"), "backslash escaped before the delimiter");
+
+        // The delimiter switch itself is correct behaviour and is preserved.
+        assertEquals("\"'\"", literalOf(impala, "'"), "delimiter switches when the value holds a quote");
+        assertEquals("'a\"b'", literalOf(impala, "a\"b"), "a double quote needs no escape inside '...'");
+        assertEquals("'a'", literalOf(impala, "a"), "an ordinary value is unaffected");
     }
 
     /** {@code quoteStringLiteral} is injective. */
@@ -313,20 +312,6 @@ class DialectQuotingPropertyTest {
         StringBuilder buf = new StringBuilder();
         dialect.quoteStringLiteral(buf, value);
         return buf.toString();
-    }
-
-    /**
-     * Whether {@code value} already begins and ends with the dialect's delimiter — the condition
-     * that triggers {@code quoteIdentifierImpl}'s verbatim pass-through.
-     *
-     * <p>Note it is true for a <em>single</em> delimiter character, since one character both starts
-     * and ends with itself. That is how the generator found the lone-quote witness.
-     */
-    private static boolean isAlreadyDelimited(String value, String delimiter) {
-        return delimiter != null
-                && !delimiter.isEmpty()
-                && value.startsWith(delimiter)
-                && value.endsWith(delimiter);
     }
 
     private static String product(Dialect dialect) {
