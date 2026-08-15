@@ -109,7 +109,11 @@ public final class CalcitePlannerCache {
         // digest, so the key is byte-for-byte what it always was.
         final java.util.List<VirtualRelation> virtuals =
             VirtualRelation.fromSchema(rolapSchema);
-        Key key = Key.from(ds, VirtualRelation.digestOf(virtuals));
+        Key key =
+            Key.from(
+                ds,
+                VirtualRelation.digestOf(virtuals),
+                schemaIdentity(rolapSchema));
         if (UNSUPPORTED.contains(key)) {
             if (diag) {
                 System.err.println(
@@ -200,6 +204,33 @@ public final class CalcitePlannerCache {
         return planner;
     }
 
+    /**
+     * Identity of the Mondrian schema a planner is built for, or a marker for
+     * "no schema" when the caller has none.
+     *
+     * <p>A planner holds a {@link CalciteMondrianSchema}, which reflects the
+     * database ONCE. Two Mondrian schemas can share a JDBC identity and yet
+     * see different tables -- most obviously when one of them creates its
+     * tables after the other's planner was built, at which point scanning
+     * them fails with "Table not found" for the life of the JVM. Keying on
+     * the schema as well means each gets a planner that reflected the
+     * database when that schema first needed one.
+     *
+     * @param rolapSchema Schema, may be null
+     * @return stable identity string
+     */
+    private static String schemaIdentity(
+        mondrian.rolap.RolapSchema rolapSchema)
+    {
+        if (rolapSchema == null) {
+            return "";
+        }
+        final Object checksum = rolapSchema.getChecksum();
+        return checksum == null
+            ? "schema@" + System.identityHashCode(rolapSchema)
+            : checksum.toString();
+    }
+
     private static CalciteSqlPlanner build(
         DataSource ds,
         mondrian.rolap.RolapSchema rolapSchema,
@@ -252,23 +283,29 @@ public final class CalcitePlannerCache {
          *  (see {@link VirtualRelation#digestOf}). Empty when the schema
          *  declares none, which is the common case. */
         final String virtuals;
+        /** Identity of the Mondrian schema; see {@link #schemaIdentity}. */
+        final String mondrianSchema;
 
         private Key(
             String url, String catalog, String schema, String user,
-            String virtuals)
+            String virtuals, String mondrianSchema)
         {
             this.url = url == null ? "" : url;
             this.catalog = catalog == null ? "" : catalog;
             this.schema = schema == null ? "" : schema;
             this.user = user == null ? "" : user;
             this.virtuals = virtuals == null ? "" : virtuals;
+            this.mondrianSchema =
+                mondrianSchema == null ? "" : mondrianSchema;
         }
 
         static Key from(DataSource ds) {
-            return from(ds, "");
+            return from(ds, "", "");
         }
 
-        static Key from(DataSource ds, String virtuals) {
+        static Key from(
+            DataSource ds, String virtuals, String mondrianSchema)
+        {
             String url = "";
             String catalog = "";
             String schema = "";
@@ -289,9 +326,10 @@ public final class CalcitePlannerCache {
                 // is going to work anyway.
                 return new Key(
                     "ds@" + System.identityHashCode(ds), "", "", "",
-                    virtuals);
+                    virtuals, mondrianSchema);
             }
-            return new Key(url, catalog, schema, user, virtuals);
+            return new Key(
+                url, catalog, schema, user, virtuals, mondrianSchema);
         }
 
         /** Functional interface for a metadata probe that may throw anything. */
@@ -321,12 +359,14 @@ public final class CalcitePlannerCache {
                 && catalog.equals(k.catalog)
                 && schema.equals(k.schema)
                 && user.equals(k.user)
-                && virtuals.equals(k.virtuals);
+                && virtuals.equals(k.virtuals)
+                && mondrianSchema.equals(k.mondrianSchema);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(url, catalog, schema, user, virtuals);
+            return Objects.hash(
+                url, catalog, schema, user, virtuals, mondrianSchema);
         }
 
         @Override
@@ -337,6 +377,8 @@ public final class CalcitePlannerCache {
                 + ", schema=" + schema
                 + ", user=" + user
                 + (virtuals.isEmpty() ? "" : ", virtuals=" + virtuals)
+                + (mondrianSchema.isEmpty()
+                    ? "" : ", mondrianSchema=" + mondrianSchema)
                 + "}";
         }
 

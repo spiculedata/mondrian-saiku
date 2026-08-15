@@ -546,6 +546,13 @@ class MondrianServerVersion {
                I18nTest are written against. Tests that need another locale
                set it explicitly. -->
           <argLine>@{argLine} --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Duser.language=en -Duser.country=US -Duser.timezone=UTC</argLine>
+          <!-- Deterministic, and the SAME order everywhere. Surefire's
+               default is 'filesystem', which differs between macOS and the
+               Linux CI runner: a suite that shares a JVM-wide cache then
+               passes on one and fails on the other, and the failure cannot
+               be reproduced locally. Alphabetical costs nothing and makes a
+               red CI run something a developer can reproduce. -->
+          <runOrder>alphabetical</runOrder>
           <!-- Exclude tests that depend on olap4j-tck (not in deps), or legacy JUnit 3 loader. -->
           <excludes>
             <exclude>**/AbstractMondrianOlap4jTester.java</exclude>
