@@ -52,3 +52,7 @@ hs_err_pid*.log
 *.swp
 *.swo
 
+
+# Hegel property-based testing: local database of failing examples
+# (see the `hegel` profile in pom.xml). Machine-local, never shared.
+.hegel/

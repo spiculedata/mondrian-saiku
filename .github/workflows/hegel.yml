@@ -1,0 +1,52 @@
+name: property tests
+
+# The property-based suite (src/test/hegel/java, run via -Phegel).
+#
+# It gets its own workflow and its own JDK because Hegel drives a native engine
+# through the Foreign Function & Memory API and needs Java 22+, while build.yml
+# and coverage.yml are pinned to JDK 21. Wiring it into those would force the
+# whole project onto 22.
+#
+# This job is the reason the -Phegel profile is safe to leave opt-in: nobody has
+# to remember to run it, so the suite cannot rot into un-compilable code without
+# CI saying so.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  property-tests:
+    name: Property tests (JDK 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 22
+        uses: actions/setup-java@v4
+        with:
+          java-version: '22'
+          distribution: 'temurin'
+          cache: maven
+
+      # Hegel disables its example database automatically when CI=true (set by
+      # Actions), so runs here are pure generation with no replay of a local
+      # .hegel/ directory. Each run therefore explores fresh inputs — a property
+      # that passed yesterday can legitimately fail today, which is the point.
+      - name: Run property suite
+        run: mvn -B -ntp -Phegel test
+
+      # The reports name the falsifying example for each failed property, which
+      # is the whole diagnosis — worth keeping even though the job log has it too,
+      # since a shrunk counterexample is what you paste into a reproducer.
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hegel-surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 14
