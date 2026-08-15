@@ -2931,6 +2931,26 @@ public class Util extends XOMUtil {
                         // doubled equals sign; take one of them, and carry on
                         i++;
                         nameBuf.append(c);
+                        if (i >= n) {
+                            // The doubled '=' ran to the end of the string, so
+                            // the name is never terminated by its own '='. Fall
+                            // out here with what we have rather than looping
+                            // back to s.charAt(i) with i == n.
+                            //
+                            // Without this, any connect string ending in "=="
+                            // ("a==", "x=1;a==", or a PropertyList whose last
+                            // value begins with '=') threw
+                            // StringIndexOutOfBoundsException from charAt. That
+                            // is the same failure mode as MONDRIAN-397; see
+                            // UtilTestCase.testBugMondrian397, whose fix caught
+                            // the trailing-';' and trailing-space cases but not
+                            // this one. Returning the partial name matches what
+                            // the 'default' branch below already does when the
+                            // string ends mid-name.
+                            //
+                            // Found by mondrian.property.UtilQuotingPropertyTest.
+                            return nameBuf.toString().trim();
+                        }
                         break;
                     }
                     String name = nameBuf.toString();

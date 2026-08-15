@@ -27,6 +27,9 @@
     <eigenbase.xom.version>1.3.1</eigenbase.xom.version>
     <eigenbase.resgen.version>1.3.1</eigenbase.resgen.version>
     <eigenbase.properties.version>1.1.2</eigenbase.properties.version>
+    <!-- Property-based testing engine; used only by the opt-in `hegel` profile
+         below, which is why it is not in the top-level <dependencies> block. -->
+    <hegel.version>0.4.2</hegel.version>
     <olap4j.version>1.2.0-spicule-1</olap4j.version>
     <olap4j-xmlaserver.version>1.3.0-spicule-jakarta</olap4j-xmlaserver.version>
   </properties>
@@ -633,6 +636,108 @@ class MondrianServerVersion {
   </build>
 
   <profiles>
+    <!--
+      Opt-in property-based test suite (Hegel, github.com/hegeldev/hegel-java).
+      Usage:
+          mvn test -Phegel                 # whole suite
+          mvn test -Phegel -Dtest=UtilQuotingPropertyTest
+
+      Why a profile and not a plain test dependency: Hegel drives a native
+      engine through the Foreign Function & Memory API, so it needs a **Java 22+
+      JVM**. The default build (and CI's build.yml/coverage.yml) is pinned to
+      JDK 21, and adding the dependency unconditionally would break `mvn test`
+      for everyone below 22. The profile keeps the JDK-21 build byte-identical.
+
+      Activation is explicit rather than <jdk>[22,)</jdk> auto-activation. Auto-
+      activation would mean the suite silently runs for some developers and
+      silently vanishes for others depending on their local JDK — the worst
+      property a test suite can have. Instead it runs when asked, and the
+      dedicated JDK-22 job in .github/workflows/hegel.yml asks on every push, so
+      the suite cannot rot unnoticed.
+
+      The sources live in their own root (src/test/hegel/java) rather than
+      src/test/java precisely BECAUSE the profile is opt-in: under JDK 21 they
+      are not on the compile path at all, so they can neither break the default
+      build nor be half-compiled against a missing dependency.
+    -->
+    <profile>
+      <id>hegel</id>
+      <properties>
+        <!-- `mvn test -Phegel` runs ONLY the property suite (see the surefire
+             includes below), so the isolated-JVM cache tests — which belong to
+             the default build — are switched off here, exactly as
+             calcite-harness does. -->
+        <isolatedCacheTestsPhase>none</isolatedCacheTestsPhase>
+        <!-- Hegel's own classes are compiled at release 22, and the property
+             tests use modern syntax (var, text blocks, switch expressions).
+             Only the TEST compile is raised; main stays at 1.8 so the published
+             artifact's bytecode level is unchanged by running this suite. -->
+        <maven.compiler.testSource>22</maven.compiler.testSource>
+        <maven.compiler.testTarget>22</maven.compiler.testTarget>
+      </properties>
+      <dependencies>
+        <dependency>
+          <groupId>dev.hegel</groupId>
+          <artifactId>hegel</artifactId>
+          <version>${hegel.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>add-hegel-test-source</id>
+                <phase>generate-test-sources</phase>
+                <goals><goal>add-test-source</goal></goals>
+                <configuration>
+                  <sources>
+                    <source>src/test/hegel/java</source>
+                  </sources>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <!-- The enable-native-access flag silences the JVM's
+                   native-access warning for the FFM downcalls into libhegel;
+                   without it every run prints a WARNING banner that buries
+                   real output.
+                   -Dhegel.database=... is NOT set here: Hegel defaults to a
+                   .hegel/ directory (gitignored) holding failing examples so a
+                   local re-run replays the counterexample first, and disables
+                   itself automatically when CI=true. -->
+              <argLine>@{argLine} --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED -Duser.language=en -Duser.country=US -Duser.timezone=UTC</argLine>
+              <!-- Property suite only. The 300-odd example-based tests already
+                   run in the default JDK-21 build; re-running them here would
+                   double CI time and misattribute their failures to this
+                   profile. -->
+              <includes>
+                <include>**/mondrian/property/*Test.java</include>
+                <!-- A few property tests live in the package of the class they
+                     test, so they can reach package-private invariant checks
+                     (ChunkList.isValid asserts the chunk-link structure, which
+                     is exactly what a model-based test wants to check after
+                     every operation). -->
+                <include>**/mondrian/util/*PropertyTest.java</include>
+                <!-- Calcite differential; same package-private-access reason as
+                     above (FoodMartCapture.executeCold). Disabled unless
+                     -Dhegel.calcite=true, because each case is two cold
+                     executions. -->
+                <include>**/mondrian/test/calcite/*PropertyTest.java</include>
+              </includes>
+              <excludes combine.self="override"/>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
     <!--
       Opt-in profile that overrides surefire's default excludes to run ONLY
       the expensive Calcite equivalence tests. Usage:
