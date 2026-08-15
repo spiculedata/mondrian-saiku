@@ -18,6 +18,9 @@
   </licenses>
 
   <properties>
+    <!-- Phase of the isolated-cache-tests surefire execution; set to 'none'
+         by profiles that run only their own tests. -->
+    <isolatedCacheTestsPhase>test</isolatedCacheTestsPhase>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
@@ -582,11 +585,13 @@ class MondrianServerVersion {
           -->
           <execution>
             <id>isolated-cache-tests</id>
-            <phase>test</phase>
+            <!-- A profile that runs only its own tests switches this off by
+                 setting the phase to none; see calcite-harness. -->
+            <phase>${isolatedCacheTestsPhase}</phase>
             <goals><goal>test</goal></goals>
             <configuration>
               <reuseForks>false</reuseForks>
-              <includes>
+              <includes combine.children="override">
                 <include>**/mondrian/test/CacheTest.java</include>
                 <include>**/mondrian/rolap/CacheControlTest.java</include>
               </includes>
@@ -628,6 +633,9 @@ class MondrianServerVersion {
     -->
     <profile>
       <id>calcite-harness</id>
+      <properties>
+        <isolatedCacheTestsPhase>none</isolatedCacheTestsPhase>
+      </properties>
       <build>
         <plugins>
           <plugin>
