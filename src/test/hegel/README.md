@@ -109,6 +109,14 @@ test should be deleted and its property restored.
 
 Fixed here:
 
+- **[#146] Impala string literals did not escape backslashes.** `ImpalaDialect.quoteStringLiteral`
+  uses backslash escaping but never escaped a backslash in the value, so `\` produced `'\'` — a
+  literal that escapes its own closing quote and never terminates. **The more reachable of the two
+  quoting surfaces**: identifiers come from the schema, but string literals carry data (captions,
+  key values read from the fact table), so this needed no privileged access. Fixed by escaping the
+  backslash *before* the delimiter. Hive was deliberately left alone — it inherits the base doubling
+  implementation, which is correct under standard SQL, and deciding otherwise needs verification
+  against a real Hive per the project's integration-testing stance.
 - **[#140] `quoteIdentifier` emitted already-delimited input verbatim, with no escaping.**
   `JdbcDialectImpl.quoteIdentifierImpl` short-circuited on `val.startsWith(q) && val.endsWith(q)`
   ("already quoted - nothing to do"), assuming such a value was a well-formed quoted identifier.
@@ -126,13 +134,6 @@ Fixed here:
 Found and characterised, not fixed. Each is tracked as a GitHub issue and pinned by a test
 that fails the day it is fixed:
 
-- **[#146] Impala and Hive string literals do not escape backslashes**
-  (`DialectQuotingPropertyTest`). Both dialects use backslash escaping but never escape a backslash
-  in the value, so `\` becomes `'\'` — a literal that escapes its own closing quote and never
-  terminates. **The more serious of the two quoting surfaces**: identifiers come from the schema, but
-  string literals carry data (captions, key values read from the fact table), so this needs no
-  privileged access. The shared base is not at fault — `Util.singleQuoteString` produces the same
-  text, which is correct under standard SQL where backslash is not an escape.
 - **[#138] Drill-through on an empty cell of a secondary hierarchy returns the entire fact table**
   (`DrillThroughAndConcurrencyPropertyTest`). `[Time].[Weekly].[1998]` has no value — FoodMart's
   fact data is 1997 — yet its drill-through count is **86,837**, which is exactly

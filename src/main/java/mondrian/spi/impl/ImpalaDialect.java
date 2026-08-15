@@ -147,23 +147,30 @@ public class ImpalaDialect extends HiveDialect {
         StringBuilder buf,
         String value)
     {
-        // REVIEW: Are Impala's rules for string literals so very different
-        // from the standard? Or from Hive's?
-        String quote = "\'";
-        String s0 = value;
+        // Impala string literals use BACKSLASH escaping (unlike the standard, which
+        // doubles the quote), and may be delimited by either quote character. The
+        // delimiter is switched to '"' when the value contains a single quote, which
+        // keeps the common case free of escapes.
+        //
+        // The backslash must be escaped, and must be escaped FIRST (issue #146).
+        // Escaping the delimiter introduces backslashes of its own, so doing it in the
+        // other order would escape those too and corrupt the value.
+        //
+        // Previously the backslash was not escaped at all, so any value containing one
+        // produced a literal that escaped its own closing quote and never terminated:
+        // "\" became '\', which runs on into the rest of the statement. String literals
+        // carry data — captions and key values read from the fact table — so that was
+        // reachable without any schema-authoring access.
+        final String quote = value.indexOf('\'') >= 0 ? "\"" : "'";
 
-        if (value.contains("'")) {
-            quote = "\"";
-        }
-
-        if (value.contains(quote)) {
-            s0 = value.replaceAll(quote, "\\\\" + quote);
-        }
+        // Literal replace(), not replaceAll(): the latter treats its first argument as a
+        // regex and its second as a replacement template, in both of which a backslash
+        // is significant.
+        final String escaped =
+            value.replace("\\", "\\\\").replace(quote, "\\" + quote);
 
         buf.append(quote);
-
-        buf.append(s0);
-
+        buf.append(escaped);
         buf.append(quote);
     }
 

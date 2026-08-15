@@ -231,12 +231,6 @@ class DialectQuotingPropertyTest {
         Dialect dialect = tc.draw(dialect(), "dialect");
         String value = tc.draw(Generators.adversarialText(), "value");
 
-        // Backslash is excluded for the two dialects that escape with backslashes but never escape
-        // the backslash itself -- a confirmed defect (issue #146), pinned by
-        // impalaAndHiveDoNotEscapeBackslashesInStringLiterals. Every other dialect keeps it under
-        // test, and these two keep every other character under test.
-        tc.assume(!(usesBackslashEscaping(dialect) && value.indexOf('\\') >= 0));
-
         StringBuilder buf = new StringBuilder();
         dialect.quoteStringLiteral(buf, value);
         String literal = buf.toString();
@@ -260,56 +254,42 @@ class DialectQuotingPropertyTest {
     }
 
     /**
-     * Whether {@code dialect} escapes string literals with backslashes rather than by doubling.
+     * Regression test for issue #146: Impala escapes backslashes in string literals.
      *
-     * <p>Impala and Hive both do. The distinction matters because the same output text is a valid
-     * literal under one convention and malformed under the other.
-     */
-    private static boolean usesBackslashEscaping(Dialect dialect) {
-        Dialect.DatabaseProduct product = dialect.getDatabaseProduct();
-        return product == Dialect.DatabaseProduct.IMPALA || product == Dialect.DatabaseProduct.HIVE;
-    }
-
-    /**
-     * Characterisation test for a CONFIRMED DEFECT found by this suite: <strong>Impala and Hive
-     * escape quotes in string literals but never escape the backslash itself.</strong> Tracked as
-     * issue #146.
+     * <p>{@code ImpalaDialect.quoteStringLiteral} uses backslash escaping — its own source writes
+     * {@code \\} + the delimiter — but did not escape a backslash appearing in the <em>value</em>.
+     * So {@code \} produced {@code '\'}, a literal that escapes its own closing quote and never
+     * terminates, running on into the rest of the statement.
      *
-     * <p>Both dialects use backslash escaping — {@code ImpalaDialect.quoteStringLiteral} writes
-     * {@code \\} + the delimiter, and its own source carries a {@code REVIEW:} comment asking
-     * whether the rules really differ from the standard. Neither escapes a backslash that appears
-     * in the <em>value</em>, so:
+     * <p>This was the more serious of the two quoting surfaces fixed here. Identifiers (issue #140)
+     * come from the schema, so exploiting them needs schema-authoring access; string literals carry
+     * <em>data</em> — captions and key values read from the fact table — so this needed none.
      *
-     * <pre>{@code   value "\\"   ->  '\\'     // the closing quote is escaped; the literal never terminates
-     *   value "a\\"  ->  'a\\'}</pre>
+     * <p>Order matters in the fix and is asserted below: the backslash must be escaped before the
+     * delimiter, because escaping the delimiter introduces backslashes of its own.
      *
-     * <p>Under a convention where {@code \} escapes the next character, {@code '\'} opens a literal
-     * and then escapes its own closing quote, so the literal runs on and swallows the rest of the
-     * statement.
-     *
-     * <p><strong>Why this is the more serious surface.</strong> Identifiers come from the schema, so
-     * exploiting issue #140 needs schema-authoring access. String literals carry <em>data</em> —
-     * member captions and key values read from the fact table — so this one is reachable by anyone
-     * who can get a backslash into a dimension value.
-     *
-     * <p>The base implementation is not at fault: {@code Util.singleQuoteString} produces
-     * {@code '\'} too, which is a correct one-character literal under standard SQL where backslash
-     * is not an escape. It is specifically the two dialects that opted into backslash escaping
-     * without escaping backslashes.
+     * <p><strong>Hive is deliberately not asserted here.</strong> {@code HiveDialect} does not
+     * override {@code quoteStringLiteral} — it inherits the base doubling implementation, which is
+     * correct under standard SQL — and this suite has no evidence about Hive's own string-literal
+     * semantics. Deciding that would mean executing SQL against a real Hive, which is what
+     * {@code pages/decisions/integration-testing-stance} in the project wiki requires before
+     * claiming a dialect capability. See issue #146 for that open question.
      */
     @org.junit.jupiter.api.Test
-    void impalaAndHiveDoNotEscapeBackslashesInStringLiterals() {
-        for (Dialect.DatabaseProduct product :
-                new Dialect.DatabaseProduct[] {Dialect.DatabaseProduct.IMPALA, Dialect.DatabaseProduct.HIVE}) {
-            Dialect dialect = MockDialect.of(product);
-            StringBuilder buf = new StringBuilder();
-            dialect.quoteStringLiteral(buf, "\\");
-            assertEquals(
-                    "'\\'",
-                    buf.toString(),
-                    () -> product + " witness changed — backslash escaping may have been fixed; if so, delete "
-                            + "this test and the usesBackslashEscaping exclusion");
-        }
+    void impalaEscapesBackslashesInStringLiterals() {
+        Dialect impala = MockDialect.of(Dialect.DatabaseProduct.IMPALA);
+
+        assertEquals("'\\\\'", literalOf(impala, "\\"), "a lone backslash must be escaped");
+        assertEquals("'a\\\\'", literalOf(impala, "a\\"), "a trailing backslash must be escaped");
+
+        // Backslash escaped before the delimiter: the value contains a quote, so the delimiter
+        // switches to '"', and the backslash is still escaped exactly once.
+        assertEquals("\"\\\\'\"", literalOf(impala, "\\'"), "backslash escaped before the delimiter");
+
+        // The delimiter switch itself is correct behaviour and is preserved.
+        assertEquals("\"'\"", literalOf(impala, "'"), "delimiter switches when the value holds a quote");
+        assertEquals("'a\"b'", literalOf(impala, "a\"b"), "a double quote needs no escape inside '...'");
+        assertEquals("'a'", literalOf(impala, "a"), "an ordinary value is unaffected");
     }
 
     /** {@code quoteStringLiteral} is injective. */
